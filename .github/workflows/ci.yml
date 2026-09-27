@@ -1,0 +1,110 @@
+name: DealFlow CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+      - "fix/**"
+      - "security/**"
+      - "docs/**"
+      - "refactor/**"
+      - "spike/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dealflow-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-validation:
+    name: Repository Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate repository structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_paths=(
+            ".github/workflows"
+            "backend"
+            "docs"
+            "frontend"
+            "infrastructure"
+            "scripts"
+            "tests"
+          )
+
+          for path in "${required_paths[@]}"; do
+            if [[ ! -e "$path" ]]; then
+              echo "Missing required path: $path"
+              exit 1
+            fi
+          done
+
+          echo "Repository structure validation passed."
+
+      - name: Validate required documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_files=(
+            "docs/adr/README.md"
+            "docs/adr/0001-adr-template.md"
+            "docs/development/git-workflow.md"
+            "docs/governance/definition-of-ready-and-done.md"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "Missing required documentation file: $file"
+              exit 1
+            fi
+          done
+
+          echo "Documentation validation passed."
+
+      - name: Check for obvious secret files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden_files=(
+            ".env"
+            ".env.local"
+            ".env.production"
+            ".env.development"
+          )
+
+          for file in "${forbidden_files[@]}"; do
+            if [[ -f "$file" ]]; then
+              echo "Forbidden secret/environment file detected: $file"
+              exit 1
+            fi
+          done
+
+          echo "Secret file baseline validation passed."
+
+  ci-status:
+    name: CI Baseline
+    runs-on: ubuntu-latest
+    needs:
+      - repository-validation
+
+    steps:
+      - name: CI baseline passed
+        run: echo "DealFlow CI baseline passed."
