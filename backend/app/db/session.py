@@ -3,10 +3,12 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-DATABASE_URL = "postgresql+psycopg://postgres@localhost:5432/dealflow"
+from app.config import get_settings
+
+settings = get_settings()
 
 engine = create_engine(
-    DATABASE_URL,
+    settings.database_url,
     pool_pre_ping=True,
 )
 
