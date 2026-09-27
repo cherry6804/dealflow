@@ -1,0 +1,29 @@
+[project]
+name = "dealflow-api"
+version = "0.1.0"
+description = "DealFlow backend API"
+requires-python = ">=3.13,<3.14"
+readme = "README.md"
+dependencies = [
+    "fastapi>=0.141,<1.0",
+    "uvicorn[standard]>=0.35,<1.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1.0",
+    "pytest>=8.4,<9.0",
+]
+
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
