@@ -1,10 +1,16 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Uuid, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.db.models.membership_role import MembershipRole
+    from app.db.models.organization import Organization
+    from app.db.models.user import User
 
 
 class Membership(Base):
@@ -67,4 +73,10 @@ class Membership(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization",
         back_populates="memberships",
+    )
+
+    membership_roles: Mapped[list["MembershipRole"]] = relationship(
+        "MembershipRole",
+        back_populates="membership",
+        cascade="all, delete-orphan",
     )

@@ -2,20 +2,19 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import TYPE_CHECKING
+
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.db.models.auth_session import AuthSession
-    from app.db.models.membership import Membership
+    from app.db.models.role_permission import RolePermission
 
 
-class User(Base):
-    """Represent an authenticated DealFlow user."""
+class Permission(Base):
+    """Represent a stable authorization permission."""
 
-    __tablename__ = "users"
+    __tablename__ = "permissions"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
@@ -23,21 +22,16 @@ class User(Base):
         default=uuid.uuid4,
     )
 
-    email: Mapped[str] = mapped_column(
-        String(320),
+    key: Mapped[str] = mapped_column(
+        String(150),
         unique=True,
         nullable=False,
         index=True,
     )
 
-    display_name: Mapped[str] = mapped_column(
-        String(200),
-        nullable=False,
-    )
-
-    password_hash: Mapped[str] = mapped_column(
-        String(512),
-        nullable=False,
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )
 
     is_active: Mapped[bool] = mapped_column(
@@ -59,14 +53,8 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    memberships: Mapped[list["Membership"]] = relationship(
-        "Membership",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-
-    auth_sessions: Mapped[list["AuthSession"]] = relationship(
-        "AuthSession",
-        back_populates="user",
+    role_permissions: Mapped[list["RolePermission"]] = relationship(
+        "RolePermission",
+        back_populates="permission",
         cascade="all, delete-orphan",
     )
