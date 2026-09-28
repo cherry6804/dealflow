@@ -6,6 +6,8 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.service import persist_authorization_audit_event
+from app.db.models.audit_event import AuditDecision
 from app.db.models.membership_role import MembershipRole
 from app.db.models.permission import Permission
 from app.db.models.role import Role
@@ -24,6 +26,9 @@ def require_permission(
     membership and its assigned roles and permissions.
 
     The client cannot provide or override roles or permissions.
+
+    Successful and denied authorization decisions are recorded through
+    an independent audit transaction.
     """
 
     normalized_permission_key = permission_key.strip()
@@ -35,17 +40,7 @@ def require_permission(
         tenant_context: TenantContext = Depends(get_tenant_context),
         db: Session = Depends(get_db_session),
     ) -> TenantContext:
-        """
-        Require the configured permission for the current tenant context.
-
-        TenantContext has already established:
-        - authenticated user
-        - active organization membership
-        - active organization
-
-        This dependency then evaluates:
-        Membership → Role → RolePermission → Permission
-        """
+        """Require the configured permission for the current tenant."""
 
         statement = (
             select(Permission.id)
@@ -73,10 +68,26 @@ def require_permission(
         permission_id = db.scalar(statement)
 
         if permission_id is None:
+            persist_authorization_audit_event(
+                user_id=tenant_context.membership.user_id,
+                organization_id=tenant_context.organization_id,
+                action=normalized_permission_key,
+                decision=AuditDecision.DENIED,
+                permission_key=normalized_permission_key,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission denied.",
             )
+
+        persist_authorization_audit_event(
+            user_id=tenant_context.membership.user_id,
+            organization_id=tenant_context.organization_id,
+            action=normalized_permission_key,
+            decision=AuditDecision.ALLOWED,
+            permission_key=normalized_permission_key,
+        )
 
         return tenant_context
 

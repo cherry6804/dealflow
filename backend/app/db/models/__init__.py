@@ -1,5 +1,6 @@
 """DealFlow database models."""
 
+from app.db.models.audit_event import AuditEvent
 from app.db.models.auth_session import AuthSession
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
@@ -10,6 +11,7 @@ from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 
 __all__ = [
+    "AuditEvent",
     "AuthSession",
     "Membership",
     "MembershipRole",
