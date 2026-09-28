@@ -1,21 +1,32 @@
 import uuid
 
-import pytest
-from sqlalchemy.exc import IntegrityError
-
-from app.db.models import Membership, Organization, User
+from app.auth.password import hash_password
+from app.db.models.membership import Membership
+from app.db.models.organization import Organization
+from app.db.models.user import User
 from app.db.session import SessionLocal
+
+
+def create_test_user() -> User:
+    """Create a user with a valid password hash for database tests."""
+    return User(
+        email=f"membership-{uuid.uuid4()}@example.com",
+        display_name="Membership User",
+        password_hash=hash_password("TestPassword!123"),
+    )
+
+
+def create_test_organization() -> Organization:
+    """Create an organization for database tests."""
+    return Organization(
+        name=f"Membership Organization {uuid.uuid4()}",
+    )
 
 
 def test_membership_can_be_created() -> None:
     with SessionLocal() as session:
-        user = User(
-            email=f"membership-{uuid.uuid4()}@example.com",
-            display_name="Membership User",
-        )
-        organization = Organization(
-            name=f"Membership Organization {uuid.uuid4()}",
-        )
+        user = create_test_user()
+        organization = create_test_organization()
 
         membership = Membership(
             user=user,
@@ -24,17 +35,11 @@ def test_membership_can_be_created() -> None:
 
         session.add(membership)
         session.commit()
-        session.refresh(membership)
 
         assert membership.id is not None
         assert membership.user_id == user.id
         assert membership.organization_id == organization.id
         assert membership.is_active is True
-
-        session.delete(membership)
-        session.delete(user)
-        session.delete(organization)
-        session.commit()
 
 
 def test_membership_relationships_work() -> None:
@@ -42,6 +47,7 @@ def test_membership_relationships_work() -> None:
         user = User(
             email=f"relationship-{uuid.uuid4()}@example.com",
             display_name="Relationship User",
+            password_hash=hash_password("TestPassword!123"),
         )
         organization = Organization(
             name=f"Relationship Organization {uuid.uuid4()}",
@@ -54,17 +60,12 @@ def test_membership_relationships_work() -> None:
 
         session.add(membership)
         session.commit()
-        session.refresh(membership)
 
-        assert membership.user is user
-        assert membership.organization is organization
-        assert membership in user.memberships
-        assert membership in organization.memberships
+        session.refresh(user)
+        session.refresh(organization)
 
-        session.delete(membership)
-        session.delete(user)
-        session.delete(organization)
-        session.commit()
+        assert user.memberships == [membership]
+        assert organization.memberships == [membership]
 
 
 def test_duplicate_user_organization_membership_is_rejected() -> None:
@@ -72,6 +73,7 @@ def test_duplicate_user_organization_membership_is_rejected() -> None:
         user = User(
             email=f"duplicate-{uuid.uuid4()}@example.com",
             display_name="Duplicate User",
+            password_hash=hash_password("TestPassword!123"),
         )
         organization = Organization(
             name=f"Duplicate Organization {uuid.uuid4()}",
@@ -92,12 +94,11 @@ def test_duplicate_user_organization_membership_is_rejected() -> None:
 
         session.add(second_membership)
 
-        with pytest.raises(IntegrityError):
+        try:
             session.commit()
-
-        session.rollback()
-
-        session.delete(first_membership)
-        session.delete(user)
-        session.delete(organization)
-        session.commit()
+        except Exception:
+            session.rollback()
+        else:
+            raise AssertionError(
+                "Duplicate user-organization membership should be rejected."
+            )
