@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.contact import Contact
     from app.db.models.membership import Membership
 
 
@@ -48,6 +49,12 @@ class Organization(Base):
 
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+    contacts: Mapped[list["Contact"]] = relationship(
+        "Contact",
         back_populates="organization",
         cascade="all, delete-orphan",
     )
