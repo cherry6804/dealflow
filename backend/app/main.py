@@ -2,6 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
 from app.errors import register_error_handlers
 from app.logging import configure_logging
 
@@ -17,6 +18,8 @@ def create_app() -> FastAPI:
     )
 
     register_error_handlers(app)
+
+    app.include_router(auth_router)
 
     logger = logging.getLogger(__name__)
     logger.info("DealFlow API application initialized")

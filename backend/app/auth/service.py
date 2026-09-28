@@ -60,9 +60,14 @@ def get_active_session(
     if session is None:
         return None
 
+    expires_at = session.expires_at
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
     now = datetime.now(timezone.utc)
 
-    if session.expires_at <= now:
+    if expires_at <= now:
         return None
 
     return session
