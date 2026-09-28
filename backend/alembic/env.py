@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.db.base import Base
 from app.db.models.organization import Organization
 from app.db.models.user import User
+from app.db.models.membership import Membership
 
 config = context.config
 
