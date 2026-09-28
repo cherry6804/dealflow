@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from typing import TYPE_CHECKING
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.auth_session import AuthSession
     from app.db.models.membership import Membership
 
 
@@ -60,6 +61,12 @@ class User(Base):
 
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    auth_sessions: Mapped[list["AuthSession"]] = relationship(
+        "AuthSession",
         back_populates="user",
         cascade="all, delete-orphan",
     )

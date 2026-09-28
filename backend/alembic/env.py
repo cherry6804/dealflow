@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.db.models.organization import Organization
 from app.db.models.user import User
 from app.db.models.membership import Membership
+from app.db.models.auth_session import AuthSession
 
 config = context.config
 
