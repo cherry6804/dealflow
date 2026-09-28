@@ -1,8 +1,18 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +26,14 @@ class Contact(Base):
     """Represent a tenant-owned DealFlow contact."""
 
     __tablename__ = "contacts"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_contacts_id_organization_id",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
@@ -80,4 +98,5 @@ class Contact(Base):
         "CustomerProfile",
         back_populates="contact",
         uselist=False,
+        overlaps="organization,customer_profiles",
     )
