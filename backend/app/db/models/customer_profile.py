@@ -8,14 +8,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.db.models.customer_profile import CustomerProfile
+    from app.db.models.contact import Contact
     from app.db.models.organization import Organization
 
 
-class Contact(Base):
-    """Represent a tenant-owned DealFlow contact."""
+class CustomerProfile(Base):
+    """Represent tenant-owned customer-specific business context."""
 
-    __tablename__ = "contacts"
+    __tablename__ = "customer_profiles"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
@@ -30,25 +30,11 @@ class Contact(Base):
         index=True,
     )
 
-    first_name: Mapped[str] = mapped_column(
-        String(100),
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("contacts.id", ondelete="CASCADE"),
         nullable=False,
-    )
-
-    last_name: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-    )
-
-    email: Mapped[str | None] = mapped_column(
-        String(320),
-        nullable=True,
-        index=True,
-    )
-
-    phone: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
+        unique=True,
         index=True,
     )
 
@@ -56,6 +42,11 @@ class Contact(Base):
         Boolean,
         nullable=False,
         default=True,
+    )
+
+    customer_notes: Mapped[str | None] = mapped_column(
+        String(2000),
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -73,11 +64,10 @@ class Contact(Base):
 
     organization: Mapped["Organization"] = relationship(
         "Organization",
-        back_populates="contacts",
+        back_populates="customer_profiles",
     )
 
-    customer_profile: Mapped["CustomerProfile | None"] = relationship(
-        "CustomerProfile",
-        back_populates="contact",
-        uselist=False,
+    contact: Mapped["Contact"] = relationship(
+        "Contact",
+        back_populates="customer_profile",
     )
