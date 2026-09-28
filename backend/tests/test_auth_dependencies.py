@@ -8,12 +8,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import (
+    CurrentUserContext,
+    get_current_user,
+    get_current_user_context,
+)
 from app.auth.password import hash_password
 from app.auth.service import create_session
 from app.config import get_settings
 from app.db.base import Base
-from app.db.models.auth_session import AuthSession
 from app.db.models.user import User
 from app.db.session import get_db_session
 
@@ -42,12 +45,12 @@ def override_get_db_session() -> Generator[Session, None, None]:
         session.close()
 
 
-test_app = FastAPI()
+api_test_app = FastAPI()
 
-test_app.dependency_overrides[get_db_session] = override_get_db_session
+api_test_app.dependency_overrides[get_db_session] = override_get_db_session
 
 
-@test_app.get("/protected")
+@api_test_app.get("/protected")
 def protected_endpoint(
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
@@ -58,7 +61,18 @@ def protected_endpoint(
     }
 
 
-client = TestClient(test_app)
+@api_test_app.get("/protected-context")
+def protected_context_endpoint(
+    context: CurrentUserContext = Depends(get_current_user_context),
+) -> dict[str, str]:
+    """Return identity information from the current-user context."""
+    return {
+        "id": str(context.user_id),
+        "email": context.user.email,
+    }
+
+
+client = TestClient(api_test_app)
 
 
 def setup_function() -> None:
@@ -69,6 +83,11 @@ def setup_function() -> None:
 def teardown_function() -> None:
     """Remove all test tables after each test."""
     Base.metadata.drop_all(engine)
+
+
+def teardown_module() -> None:
+    """Clear dependency overrides after the module finishes."""
+    api_test_app.dependency_overrides.clear()
 
 
 def create_user(
@@ -122,6 +141,24 @@ def create_session_for_user(
         session.close()
 
 
+def test_get_current_user_context_accepts_valid_session() -> None:
+    user = create_user()
+    token = create_session_for_user(user)
+
+    response = client.get(
+        "/protected-context",
+        cookies={
+            get_settings().auth_cookie_name: token,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": str(user.id),
+        "email": user.email,
+    }
+
+
 def test_get_current_user_accepts_valid_session() -> None:
     user = create_user()
     token = create_session_for_user(user)
@@ -149,9 +186,32 @@ def test_get_current_user_rejects_missing_cookie() -> None:
     }
 
 
+def test_get_current_user_context_rejects_missing_cookie() -> None:
+    response = client.get("/protected-context")
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Authentication required.",
+    }
+
+
 def test_get_current_user_rejects_invalid_token() -> None:
     response = client.get(
         "/protected",
+        cookies={
+            get_settings().auth_cookie_name: "invalid-token",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Authentication required.",
+    }
+
+
+def test_get_current_user_context_rejects_invalid_token() -> None:
+    response = client.get(
+        "/protected-context",
         cookies={
             get_settings().auth_cookie_name: "invalid-token",
         },
@@ -184,6 +244,27 @@ def test_get_current_user_rejects_revoked_session() -> None:
     }
 
 
+def test_get_current_user_context_rejects_revoked_session() -> None:
+    user = create_user()
+
+    token = create_session_for_user(
+        user,
+        revoked_at=datetime.now(timezone.utc),
+    )
+
+    response = client.get(
+        "/protected-context",
+        cookies={
+            get_settings().auth_cookie_name: token,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Authentication required.",
+    }
+
+
 def test_get_current_user_rejects_expired_session() -> None:
     user = create_user()
 
@@ -205,12 +286,50 @@ def test_get_current_user_rejects_expired_session() -> None:
     }
 
 
+def test_get_current_user_context_rejects_expired_session() -> None:
+    user = create_user()
+
+    token = create_session_for_user(
+        user,
+        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+
+    response = client.get(
+        "/protected-context",
+        cookies={
+            get_settings().auth_cookie_name: token,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Authentication required.",
+    }
+
+
 def test_get_current_user_rejects_inactive_user() -> None:
     user = create_user(is_active=False)
     token = create_session_for_user(user)
 
     response = client.get(
         "/protected",
+        cookies={
+            get_settings().auth_cookie_name: token,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Authentication required.",
+    }
+
+
+def test_get_current_user_context_rejects_inactive_user() -> None:
+    user = create_user(is_active=False)
+    token = create_session_for_user(user)
+
+    response = client.get(
+        "/protected-context",
         cookies={
             get_settings().auth_cookie_name: token,
         },
