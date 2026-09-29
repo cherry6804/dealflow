@@ -636,6 +636,7 @@ def test_list_contacts_successfully() -> None:
             email="rahul@example.com",
             phone="+919876543210",
         )
+
         second_contact = create_contact(
             db,
             organization=organization,
@@ -743,6 +744,7 @@ def test_list_contacts_supports_pagination() -> None:
             str(contacts[1].id),
             str(contacts[2].id),
         }
+
         returned_ids = {
             item["id"]
             for item in payload["items"]
@@ -767,6 +769,7 @@ def test_list_contacts_searches_first_name() -> None:
             first_name="Rahul",
             last_name="Sharma",
         )
+
         create_contact(
             db,
             organization=organization,
@@ -808,6 +811,7 @@ def test_list_contacts_searches_last_name() -> None:
             first_name="Rahul",
             last_name="Sharma",
         )
+
         create_contact(
             db,
             organization=organization,
@@ -848,6 +852,7 @@ def test_list_contacts_searches_email() -> None:
             first_name="Rahul",
             email="rahul.sharma@example.com",
         )
+
         create_contact(
             db,
             organization=organization,
@@ -887,6 +892,7 @@ def test_list_contacts_searches_phone() -> None:
             first_name="Rahul",
             phone="+919876543210",
         )
+
         create_contact(
             db,
             organization=organization,
@@ -960,6 +966,7 @@ def test_list_contacts_filters_active_contacts() -> None:
             first_name="Active",
             is_active=True,
         )
+
         create_contact(
             db,
             organization=organization,
@@ -1001,6 +1008,7 @@ def test_list_contacts_filters_inactive_contacts() -> None:
             first_name="Active",
             is_active=True,
         )
+
         inactive_contact = create_contact(
             db,
             organization=organization,
@@ -1072,6 +1080,7 @@ def test_list_contacts_prevents_cross_tenant_access() -> None:
             organization=organization_a,
             first_name="Visible",
         )
+
         contact_b = create_contact(
             db,
             organization=organization_b,
@@ -1225,11 +1234,13 @@ def test_list_contacts_uses_deterministic_ordering() -> None:
             organization=organization,
             first_name="First",
         )
+
         second_contact = create_contact(
             db,
             organization=organization,
             first_name="Second",
         )
+
         third_contact = create_contact(
             db,
             organization=organization,
@@ -1255,3 +1266,526 @@ def test_list_contacts_uses_deterministic_ordering() -> None:
             str(second_contact.id),
             str(first_contact.id),
         ]
+
+
+def test_update_contact_successfully() -> None:
+    """Partially update a Contact within the verified tenant."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "phone": "+919999999999",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(contact.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["first_name"] == "Rahul"
+        assert payload["last_name"] == "Sharma"
+        assert payload["email"] == "rahul@example.com"
+        assert payload["phone"] == "+919999999999"
+        assert payload["is_active"] is True
+
+
+def test_update_contact_supports_multiple_fields() -> None:
+    """Update multiple Contact fields in one request."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "Rohit",
+                    "last_name": "Verma",
+                    "email": "rohit@example.com",
+                    "phone": "+919111111111",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["first_name"] == "Rohit"
+        assert payload["last_name"] == "Verma"
+        assert payload["email"] == "rohit@example.com"
+        assert payload["phone"] == "+919111111111"
+
+
+def test_update_contact_preserves_omitted_fields() -> None:
+    """Preserve existing Contact fields omitted from the PATCH request."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "Rohit",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["first_name"] == "Rohit"
+        assert payload["last_name"] == "Sharma"
+        assert payload["email"] == "rahul@example.com"
+        assert payload["phone"] == "+919876543210"
+        assert payload["is_active"] is True
+
+
+def test_update_contact_can_clear_nullable_fields() -> None:
+    """Allow explicit null values to clear nullable Contact fields."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "last_name": None,
+                    "email": None,
+                    "phone": None,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["first_name"] == "Rahul"
+        assert payload["last_name"] is None
+        assert payload["email"] is None
+        assert payload["phone"] is None
+
+
+def test_update_contact_deactivates_contact() -> None:
+    """Deactivate a Contact without deleting its data."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            is_active=True,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(contact.id)
+        assert payload["first_name"] == "Rahul"
+        assert payload["is_active"] is False
+
+        with TestingSessionLocal() as verification_db:
+            persisted_contact = verification_db.get(Contact, contact.id)
+
+            assert persisted_contact is not None
+            assert persisted_contact.first_name == "Rahul"
+            assert persisted_contact.is_active is False
+
+
+def test_update_contact_reactivates_contact() -> None:
+    """Reactivate an inactive Contact."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            is_active=False,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "is_active": True,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(contact.id)
+        assert payload["first_name"] == "Rahul"
+        assert payload["is_active"] is True
+
+
+def test_update_contact_returns_404_for_missing_contact() -> None:
+    """Return 404 when the Contact does not exist."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{uuid4()}",
+                json={
+                    "first_name": "Missing",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Contact not found.",
+        }
+
+
+def test_update_contact_prevents_cross_tenant_access() -> None:
+    """Do not update a Contact owned by another tenant."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        organization_b = create_organization(db)
+
+        contact_b = create_contact(
+            db,
+            organization=organization_b,
+            first_name="Private",
+            last_name="Contact",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact_b.id}",
+                json={
+                    "first_name": "ShouldNotChange",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Contact not found.",
+        }
+
+        with TestingSessionLocal() as verification_db:
+            persisted_contact = verification_db.get(Contact, contact_b.id)
+
+            assert persisted_contact is not None
+            assert persisted_contact.first_name == "Private"
+
+
+def test_update_contact_requires_permission() -> None:
+    """Reject Contact updates when contacts.update is missing."""
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Protected",
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "Unauthorized",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_contact_requires_tenant_context() -> None:
+    """Reject Contact updates without tenant context."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="MissingTenant",
+        )
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "ShouldFail",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_update_contact_validates_first_name() -> None:
+    """Reject an explicitly empty first_name."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_contact_validates_field_lengths() -> None:
+    """Reject Contact update values exceeding their defined lengths."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "A" * 101,
+                    "last_name": "B" * 101,
+                    "email": "C" * 321,
+                    "phone": "D" * 51,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_contact_does_not_change_tenant_ownership() -> None:
+    """Ignore client attempts to change tenant ownership."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Tenant",
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={
+                    "first_name": "Updated",
+                    "organization_id": str(other_organization.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["organization_id"] == str(organization.id)
+
+        with TestingSessionLocal() as verification_db:
+            persisted_contact = verification_db.get(Contact, contact.id)
+
+            assert persisted_contact is not None
+            assert persisted_contact.organization_id == organization.id
+            assert persisted_contact.first_name == "Updated"
+
+
+def test_update_contact_with_empty_payload_preserves_contact() -> None:
+    """Allow an empty PATCH while preserving the Contact."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+            is_active=True,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{contact.id}",
+                json={},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(contact.id)
+        assert payload["first_name"] == "Rahul"
+        assert payload["last_name"] == "Sharma"
+        assert payload["email"] == "rahul@example.com"
+        assert payload["phone"] == "+919876543210"
+        assert payload["is_active"] is True

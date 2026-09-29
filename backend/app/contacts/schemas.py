@@ -15,6 +15,16 @@ class ContactCreateRequest(BaseModel):
     phone: str | None = Field(default=None, max_length=50)
 
 
+class ContactUpdateRequest(BaseModel):
+    """Request payload for partially updating a Contact."""
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=50)
+    is_active: bool | None = None
+
+
 class ContactResponse(BaseModel):
     """Response representation of a Contact."""
 
