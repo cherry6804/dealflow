@@ -10,6 +10,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.db.models.contact import Contact
     from app.db.models.customer_profile import CustomerProfile
+    from app.db.models.lead import Lead
     from app.db.models.membership import Membership
 
 
@@ -64,4 +65,11 @@ class Organization(Base):
         "CustomerProfile",
         back_populates="organization",
         cascade="all, delete-orphan",
+    )
+
+    leads: Mapped[list["Lead"]] = relationship(
+        "Lead",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        overlaps="contact,leads",
     )
