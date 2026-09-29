@@ -12,8 +12,14 @@ from app.contacts.schemas import (
     ContactListQuery,
     ContactListResponse,
     ContactResponse,
+    ContactUpdateRequest,
 )
-from app.contacts.service import create_contact, get_contact, list_contacts
+from app.contacts.service import (
+    create_contact,
+    get_contact,
+    list_contacts,
+    update_contact,
+)
 from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext
 
@@ -112,4 +118,37 @@ def get_contact_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Contact not found.",
         )
+    return ContactResponse.model_validate(contact)
+
+
+@router.patch(
+    "/{contact_id}",
+    response_model=ContactResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_contact_endpoint(
+    contact_id: UUID,
+    payload: ContactUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("contacts.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ContactResponse:
+    """Partially update a Contact within the verified tenant."""
+    contact = update_contact(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        contact_id=contact_id,
+        payload=payload,
+    )
+
+    if contact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact not found.",
+        )
+
+    db.commit()
+    db.refresh(contact)
+
     return ContactResponse.model_validate(contact)

@@ -7,7 +7,11 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.contacts.schemas import ContactCreateRequest, ContactListQuery
+from app.contacts.schemas import (
+    ContactCreateRequest,
+    ContactListQuery,
+    ContactUpdateRequest,
+)
 from app.db.models.contact import Contact
 
 
@@ -44,6 +48,34 @@ def get_contact(
         Contact.organization_id == organization_id,
     )
     return db.scalar(statement)
+
+
+def update_contact(
+    db: Session,
+    *,
+    organization_id: UUID,
+    contact_id: UUID,
+    payload: ContactUpdateRequest,
+) -> Contact | None:
+    """Partially update a Contact within the supplied organization."""
+    contact = get_contact(
+        db=db,
+        organization_id=organization_id,
+        contact_id=contact_id,
+    )
+
+    if contact is None:
+        return None
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    for field_name, value in update_data.items():
+        setattr(contact, field_name, value)
+
+    db.flush()
+    db.refresh(contact)
+
+    return contact
 
 
 def list_contacts(
