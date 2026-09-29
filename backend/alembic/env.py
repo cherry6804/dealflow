@@ -5,9 +5,11 @@ from sqlalchemy import create_engine, pool
 
 from app.config import get_settings
 from app.db.base import Base
+from app.db.models.audit_event import AuditEvent
 from app.db.models.auth_session import AuthSession
 from app.db.models.contact import Contact
 from app.db.models.customer_profile import CustomerProfile
+from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
