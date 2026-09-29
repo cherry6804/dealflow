@@ -236,6 +236,31 @@ def create_authorized_user(
     return user, organization
 
 
+def create_contact(
+    db: Session,
+    *,
+    organization: Organization,
+    first_name: str,
+    last_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    is_active: bool = True,
+) -> Contact:
+    """Create and persist a test Contact."""
+    contact = Contact(
+        organization_id=organization.id,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        is_active=is_active,
+    )
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
 def create_test_app(
     *,
     user: User,
@@ -591,3 +616,642 @@ def test_create_contact_allows_optional_contact_fields_to_be_omitted() -> None:
         assert payload["last_name"] is None
         assert payload["email"] is None
         assert payload["phone"] is None
+
+
+def test_list_contacts_successfully() -> None:
+    """List Contacts within the verified tenant."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        first_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+        second_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            last_name="Rao",
+            email="anita@example.com",
+            phone="+919876543211",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 2
+        assert payload["total_pages"] == 1
+        assert len(payload["items"]) == 2
+
+        returned_ids = {item["id"] for item in payload["items"]}
+
+        assert str(first_contact.id) in returned_ids
+        assert str(second_contact.id) in returned_ids
+
+
+def test_list_contacts_uses_default_pagination() -> None:
+    """Use the documented default pagination values."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        for index in range(3):
+            create_contact(
+                db,
+                organization=organization,
+                first_name=f"Contact{index}",
+            )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 3
+        assert payload["total_pages"] == 1
+        assert len(payload["items"]) == 3
+
+
+def test_list_contacts_supports_pagination() -> None:
+    """Return the requested page and pagination metadata."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contacts = [
+            create_contact(
+                db,
+                organization=organization,
+                first_name=f"Contact{index}",
+            )
+            for index in range(5)
+        ]
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={
+                    "page": 2,
+                    "page_size": 2,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 2
+        assert payload["page_size"] == 2
+        assert payload["total"] == 5
+        assert payload["total_pages"] == 3
+        assert len(payload["items"]) == 2
+
+        expected_ids = {
+            str(contacts[1].id),
+            str(contacts[2].id),
+        }
+        returned_ids = {
+            item["id"]
+            for item in payload["items"]
+        }
+
+        assert returned_ids == expected_ids
+
+
+def test_list_contacts_searches_first_name() -> None:
+    """Search Contacts by first name."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            last_name="Rao",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "Rahul"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["total_pages"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["id"] == str(matching_contact.id)
+
+
+def test_list_contacts_searches_last_name() -> None:
+    """Search Contacts by last name."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            last_name="Rao",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "Sharma"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["id"] == str(matching_contact.id)
+
+
+def test_list_contacts_searches_email() -> None:
+    """Search Contacts by email."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            email="rahul.sharma@example.com",
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            email="anita.rao@example.com",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "rahul.sharma@example.com"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_contact.id)
+
+
+def test_list_contacts_searches_phone() -> None:
+    """Search Contacts by phone."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            phone="+919876543210",
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            phone="+919876543211",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "9876543210"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_contact.id)
+
+
+def test_list_contacts_search_is_case_insensitive() -> None:
+    """Perform case-insensitive Contact searches."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="Rahul.Sharma@example.com",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "RAHUL"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_contact.id)
+
+
+def test_list_contacts_filters_active_contacts() -> None:
+    """Return only active Contacts when requested."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        active_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Active",
+            is_active=True,
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Inactive",
+            is_active=False,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"is_active": "true"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["id"] == str(active_contact.id)
+        assert payload["items"][0]["is_active"] is True
+
+
+def test_list_contacts_filters_inactive_contacts() -> None:
+    """Return only inactive Contacts when requested."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Active",
+            is_active=True,
+        )
+        inactive_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Inactive",
+            is_active=False,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"is_active": "false"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["id"] == str(inactive_contact.id)
+        assert payload["items"][0]["is_active"] is False
+
+
+def test_list_contacts_returns_empty_result() -> None:
+    """Return an empty successful response when no Contacts match."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"search": "does-not-exist"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["items"] == []
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 0
+        assert payload["total_pages"] == 0
+
+
+def test_list_contacts_prevents_cross_tenant_access() -> None:
+    """Never return Contacts belonging to another tenant."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        organization_b = create_organization(db)
+
+        contact_a = create_contact(
+            db,
+            organization=organization_a,
+            first_name="Visible",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization_b,
+            first_name="Private",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        returned_ids = {
+            item["id"]
+            for item in payload["items"]
+        }
+
+        assert str(contact_a.id) in returned_ids
+        assert str(contact_b.id) not in returned_ids
+        assert payload["total"] == 1
+
+
+def test_list_contacts_requires_permission() -> None:
+    """Reject Contact listing when contacts.read is missing."""
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Protected",
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_list_contacts_requires_tenant_context() -> None:
+    """Reject Contact listing without tenant context."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, _ = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_list_contacts_validates_page() -> None:
+    """Reject page values below one."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"page": 0},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_contacts_validates_page_size_lower_bound() -> None:
+    """Reject page_size values below one."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"page_size": 0},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_contacts_validates_page_size_upper_bound() -> None:
+    """Reject page_size values above the maximum."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/contacts",
+                params={"page_size": 101},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_contacts_uses_deterministic_ordering() -> None:
+    """Return Contacts in the service-defined deterministic order."""
+    permission_key = "contacts.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        first_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="First",
+        )
+        second_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Second",
+        )
+        third_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Third",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/contacts")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        returned_ids = [
+            item["id"]
+            for item in payload["items"]
+        ]
+
+        assert returned_ids == [
+            str(third_contact.id),
+            str(second_contact.id),
+            str(first_contact.id),
+        ]
