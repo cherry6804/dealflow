@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -112,7 +113,6 @@ def get_or_create_permission(
         if permission.is_active != is_active:
             permission.is_active = is_active
             db.flush()
-
         return permission
 
     permission = Permission(
@@ -982,6 +982,1109 @@ def test_get_lead_validates_lead_id() -> None:
 
             response = client.get(
                 "/api/v1/leads/not-a-uuid",
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_leads_successfully() -> None:
+    """List Leads within the verified tenant."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_a = create_contact(
+            db,
+            organization=organization,
+            first_name="Rahul",
+            last_name="Sharma",
+            email="rahul@example.com",
+            phone="+919876543210",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization,
+            first_name="Anita",
+            last_name="Rao",
+            email="anita@example.com",
+            phone="+919876543211",
+        )
+
+        lead_a = create_lead(
+            db,
+            organization=organization,
+            contact=contact_a,
+            interest="HIGH",
+            next_action="Call Rahul",
+        )
+        lead_b = create_lead(
+            db,
+            organization=organization,
+            contact=contact_b,
+            interest="MEDIUM",
+            next_action="Call Anita",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 2
+        assert payload["total_pages"] == 1
+
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert str(lead_a.id) in returned_ids
+        assert str(lead_b.id) in returned_ids
+
+
+def test_list_leads_uses_default_pagination() -> None:
+    """Use page one and page size twenty by default."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        for index in range(3):
+            contact = create_contact(
+                db,
+                organization=organization,
+                first_name=f"Lead{index}",
+            )
+            create_lead(
+                db,
+                organization=organization,
+                contact=contact,
+            )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 3
+        assert payload["total_pages"] == 1
+        assert len(payload["items"]) == 3
+
+
+def test_list_leads_supports_custom_pagination() -> None:
+    """Respect requested page and page size."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        for index in range(5):
+            contact = create_contact(
+                db,
+                organization=organization,
+                first_name=f"Pagination{index}",
+            )
+            create_lead(
+                db,
+                organization=organization,
+                contact=contact,
+            )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={
+                    "page": 2,
+                    "page_size": 2,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 2
+        assert payload["page_size"] == 2
+        assert payload["total"] == 5
+        assert payload["total_pages"] == 3
+        assert len(payload["items"]) == 2
+
+
+def test_list_leads_returns_empty_result() -> None:
+    """Return a valid empty paginated response."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["items"] == []
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 0
+        assert payload["total_pages"] == 0
+
+
+def test_list_leads_supports_search_by_contact_first_name() -> None:
+    """Search Leads using the associated Contact first name."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Priyanka",
+            last_name="Sharma",
+        )
+        other_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Ravi",
+            last_name="Kumar",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=other_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "priyanka"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_supports_search_by_contact_last_name() -> None:
+    """Search Leads using the associated Contact last name."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Suresh",
+            last_name="Iyer",
+        )
+        other_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Mohan",
+            last_name="Reddy",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=other_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "iyer"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_supports_search_by_contact_email() -> None:
+    """Search Leads using the associated Contact email."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Email",
+            email="specific.customer@example.com",
+        )
+        other_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Other",
+            email="other.customer@example.com",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=other_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "specific.customer"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_supports_search_by_contact_phone() -> None:
+    """Search Leads using the associated Contact phone."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Phone",
+            phone="+919900112233",
+        )
+        other_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Other",
+            phone="+919900445566",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=other_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "9900112233"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_supports_search_by_next_action() -> None:
+    """Search Leads using next-action text."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_a = create_contact(
+            db,
+            organization=organization,
+            first_name="Action",
+            last_name="Match",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization,
+            first_name="Action",
+            last_name="Other",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_a,
+            next_action="Schedule premium property visit",
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=contact_b,
+            next_action="Send brochure",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "PREMIUM PROPERTY"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_search_is_tenant_scoped() -> None:
+    """Search must never return another tenant's Lead."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        organization_b = create_organization(db)
+
+        contact_a = create_contact(
+            db,
+            organization=organization_a,
+            first_name="Shared",
+            last_name="Name",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization_b,
+            first_name="Shared",
+            last_name="Name",
+        )
+
+        lead_a = create_lead(
+            db,
+            organization=organization_a,
+            contact=contact_a,
+        )
+        lead_b = create_lead(
+            db,
+            organization=organization_b,
+            contact=contact_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "Shared"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(lead_a.id) in returned_ids
+        assert str(lead_b.id) not in returned_ids
+
+
+def test_list_leads_filters_by_status() -> None:
+    """Filter Leads by lifecycle status."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Qualified",
+        )
+        other_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="New",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+            status=Lead.STATUS_QUALIFIED,
+        )
+        other_lead = create_lead(
+            db,
+            organization=organization,
+            contact=other_contact,
+            status=Lead.STATUS_NEW,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"status": Lead.STATUS_QUALIFIED},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(matching_lead.id) in returned_ids
+        assert str(other_lead.id) not in returned_ids
+
+
+def test_list_leads_filters_by_interest() -> None:
+    """Filter Leads by interest."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_a = create_contact(
+            db,
+            organization=organization,
+            first_name="High",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization,
+            first_name="Low",
+        )
+
+        high_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_a,
+            interest="HIGH",
+        )
+        low_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_b,
+            interest="LOW",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"interest": "HIGH"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(high_lead.id) in returned_ids
+        assert str(low_lead.id) not in returned_ids
+
+
+def test_list_leads_filters_by_outcome() -> None:
+    """Filter Leads by outcome."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_a = create_contact(
+            db,
+            organization=organization,
+            first_name="Successful",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization,
+            first_name="Unsuccessful",
+        )
+
+        successful_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_a,
+            outcome="SUCCESSFUL",
+        )
+        unsuccessful_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_b,
+            outcome="UNSUCCESSFUL",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"outcome": "SUCCESSFUL"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(successful_lead.id) in returned_ids
+        assert str(unsuccessful_lead.id) not in returned_ids
+
+
+def test_list_leads_filters_by_owner() -> None:
+    """Filter Leads by assigned owner."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        owner = create_user(db)
+        create_membership(
+            db,
+            user=owner,
+            organization=organization,
+        )
+        db.commit()
+
+        contact_a = create_contact(
+            db,
+            organization=organization,
+            first_name="Owned",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization,
+            first_name="Unowned",
+        )
+
+        owned_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_a,
+            owner_user_id=owner.id,
+        )
+        unowned_lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"owner_user_id": str(owner.id)},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(owned_lead.id) in returned_ids
+        assert str(unowned_lead.id) not in returned_ids
+
+
+def test_list_leads_filters_by_active_state() -> None:
+    """Filter Leads by active lifecycle state."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        active_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Active",
+        )
+        inactive_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Inactive",
+        )
+
+        active_lead = create_lead(
+            db,
+            organization=organization,
+            contact=active_contact,
+            is_active=True,
+        )
+        inactive_lead = create_lead(
+            db,
+            organization=organization,
+            contact=inactive_contact,
+            is_active=False,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            active_response = client.get(
+                "/api/v1/leads",
+                params={"is_active": "true"},
+            )
+            inactive_response = client.get(
+                "/api/v1/leads",
+                params={"is_active": "false"},
+            )
+
+        assert active_response.status_code == 200
+        assert inactive_response.status_code == 200
+
+        active_payload = active_response.json()
+        inactive_payload = inactive_response.json()
+
+        active_ids = [item["id"] for item in active_payload["items"]]
+        inactive_ids = [item["id"] for item in inactive_payload["items"]]
+
+        assert active_payload["total"] == 1
+        assert inactive_payload["total"] == 1
+        assert str(active_lead.id) in active_ids
+        assert str(inactive_lead.id) in inactive_ids
+
+
+def test_list_leads_orders_by_created_at_desc_then_id_desc() -> None:
+    """Return Leads using deterministic newest-first ordering."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contacts = []
+        leads = []
+
+        for index in range(3):
+            contact = create_contact(
+                db,
+                organization=organization,
+                first_name=f"Order{index}",
+            )
+            contacts.append(contact)
+
+            lead = create_lead(
+                db,
+                organization=organization,
+                contact=contact,
+            )
+            leads.append(lead)
+
+        oldest, middle, newest = leads
+
+        now = datetime.now(timezone.utc)
+
+        oldest.created_at = now - timedelta(minutes=30)
+        middle.created_at = now - timedelta(minutes=20)
+        newest.created_at = now - timedelta(minutes=10)
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert returned_ids == [
+            str(newest.id),
+            str(middle.id),
+            str(oldest.id),
+        ]
+
+
+def test_list_leads_rejects_invalid_status() -> None:
+    """Reject unsupported Lead status values."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"status": "INVALID_STATUS"},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_leads_rejects_invalid_interest() -> None:
+    """Reject unsupported Lead interest values."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"interest": "INVALID_INTEREST"},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_leads_rejects_invalid_outcome() -> None:
+    """Reject unsupported Lead outcome values."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"outcome": "INVALID_OUTCOME"},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_leads_validates_pagination() -> None:
+    """Reject invalid pagination parameters."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            page_response = client.get(
+                "/api/v1/leads",
+                params={"page": 0},
+            )
+            page_size_response = client.get(
+                "/api/v1/leads",
+                params={"page_size": 101},
+            )
+
+        assert page_response.status_code == 422
+        assert page_size_response.status_code == 422
+
+
+def test_list_leads_validates_owner_user_id() -> None:
+    """Reject an invalid owner UUID."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"owner_user_id": "not-a-uuid"},
+            )
+
+        assert response.status_code == 422
+
+
+def test_list_leads_requires_permission() -> None:
+    """Reject Lead listing when leads.read is missing."""
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_list_leads_requires_tenant_context() -> None:
+    """Reject Lead listing without tenant context."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, _ = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_list_leads_prevents_cross_tenant_results() -> None:
+    """Never return Leads belonging to another tenant."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        organization_b = create_organization(db)
+
+        contact_a = create_contact(
+            db,
+            organization=organization_a,
+            first_name="TenantA",
+        )
+        contact_b = create_contact(
+            db,
+            organization=organization_b,
+            first_name="TenantB",
+        )
+
+        lead_a = create_lead(
+            db,
+            organization=organization_a,
+            contact=contact_a,
+        )
+        lead_b = create_lead(
+            db,
+            organization=organization_b,
+            contact=contact_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get("/api/v1/leads")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+        returned_ids = [item["id"] for item in payload["items"]]
+
+        assert payload["total"] == 1
+        assert str(lead_a.id) in returned_ids
+        assert str(lead_b.id) not in returned_ids
+
+
+def test_list_leads_supports_combined_filters() -> None:
+    """Apply multiple Lead filters together."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Combined",
+        )
+        status_only_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="StatusOnly",
+        )
+        interest_only_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="InterestOnly",
+        )
+
+        matching_lead = create_lead(
+            db,
+            organization=organization,
+            contact=matching_contact,
+            status=Lead.STATUS_QUALIFIED,
+            interest="HIGH",
+            outcome="SUCCESSFUL",
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=status_only_contact,
+            status=Lead.STATUS_QUALIFIED,
+            interest="LOW",
+            outcome="SUCCESSFUL",
+        )
+        create_lead(
+            db,
+            organization=organization,
+            contact=interest_only_contact,
+            status=Lead.STATUS_NEW,
+            interest="HIGH",
+            outcome="SUCCESSFUL",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={
+                    "status": Lead.STATUS_QUALIFIED,
+                    "interest": "HIGH",
+                    "outcome": "SUCCESSFUL",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_lead.id)
+
+
+def test_list_leads_rejects_search_longer_than_allowed_length() -> None:
+    """Reject search strings exceeding the API limit."""
+    permission_key = "leads.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/leads",
+                params={"search": "A" * 321},
             )
 
         assert response.status_code == 422

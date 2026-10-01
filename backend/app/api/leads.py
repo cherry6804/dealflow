@@ -1,14 +1,23 @@
 """Lead API routes for DealFlow."""
 
+from math import ceil
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
-from app.leads.schemas import LeadCreateRequest, LeadResponse
-from app.leads.service import create_lead, get_lead
+from app.leads.schemas import (
+    LeadCreateRequest,
+    LeadInterest,
+    LeadListQuery,
+    LeadListResponse,
+    LeadOutcome,
+    LeadResponse,
+    LeadStatus,
+)
+from app.leads.service import create_lead, get_lead, list_leads
 from app.tenant.dependencies import TenantContext
 
 router = APIRouter(
@@ -46,6 +55,57 @@ def create_lead_endpoint(
     db.refresh(lead)
 
     return LeadResponse.model_validate(lead)
+
+
+@router.get(
+    "",
+    response_model=LeadListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_leads_endpoint(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None, min_length=1, max_length=320),
+    lead_status: LeadStatus | None = Query(default=None, alias="status"),
+    interest: LeadInterest | None = Query(default=None),
+    outcome: LeadOutcome | None = Query(default=None),
+    owner_user_id: UUID | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> LeadListResponse:
+    """List, search, and filter Leads within the verified tenant."""
+    query = LeadListQuery(
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=lead_status,
+        interest=interest,
+        outcome=outcome,
+        owner_user_id=owner_user_id,
+        is_active=is_active,
+    )
+
+    leads, total = list_leads(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        query=query,
+    )
+
+    total_pages = ceil(total / page_size) if total else 0
+
+    return LeadListResponse(
+        items=[
+            LeadResponse.model_validate(lead)
+            for lead in leads
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=total_pages,
+    )
 
 
 @router.get(
