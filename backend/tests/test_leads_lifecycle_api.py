@@ -1984,3 +1984,260 @@ def test_role_is_global_and_tenant_assignment_is_membership_scoped() -> None:
     finally:
         db.rollback()
         db.close()
+
+def test_reassign_owner_to_another_active_same_tenant_member() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        organization = create_organization(db)
+        user = create_user(db)
+        owner_a = create_user(db)
+        owner_b = create_user(db)
+
+        membership = create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+        create_membership(
+            db,
+            user=owner_a,
+            organization=organization,
+        )
+        create_membership(
+            db,
+            user=owner_b,
+            organization=organization,
+        )
+
+        role = create_role(db)
+        assign_role_to_membership(
+            db,
+            membership=membership,
+            role=role,
+        )
+
+        permission = get_or_create_permission(
+            db,
+            permission_key="leads.update",
+        )
+        assign_permission_to_role(
+            db,
+            role=role,
+            permission=permission,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            owner_user_id=owner_a.id,
+        )
+
+        db.commit()
+
+        test_app = create_test_app(user=user)
+
+        with TestClient(test_app) as client:
+            response = client.patch(
+                f"/api/v1/leads/{lead.id}",
+                headers={
+                    "X-Organization-ID": str(organization.id),
+                },
+                json={
+                    "owner_user_id": str(owner_b.id),
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["owner_user_id"] == str(owner_b.id)
+
+        db.expire_all()
+
+        refreshed_lead = db.get(Lead, lead.id)
+
+        assert refreshed_lead is not None
+        assert refreshed_lead.owner_user_id == owner_b.id
+        assert refreshed_lead.owner_user_id != owner_a.id
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_invalid_owner_reassignment_preserves_existing_owner() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        organization = create_organization(db)
+        other_organization = create_organization(db)
+
+        user = create_user(db)
+        current_owner = create_user(db)
+        invalid_owner = create_user(db)
+
+        membership = create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+        create_membership(
+            db,
+            user=current_owner,
+            organization=organization,
+        )
+        create_membership(
+            db,
+            user=invalid_owner,
+            organization=other_organization,
+        )
+
+        role = create_role(db)
+        assign_role_to_membership(
+            db,
+            membership=membership,
+            role=role,
+        )
+
+        permission = get_or_create_permission(
+            db,
+            permission_key="leads.update",
+        )
+        assign_permission_to_role(
+            db,
+            role=role,
+            permission=permission,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            owner_user_id=current_owner.id,
+        )
+
+        db.commit()
+
+        test_app = create_test_app(user=user)
+
+        with TestClient(test_app) as client:
+            response = client.patch(
+                f"/api/v1/leads/{lead.id}",
+                headers={
+                    "X-Organization-ID": str(organization.id),
+                },
+                json={
+                    "owner_user_id": str(invalid_owner.id),
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Lead owner must belong to the organization."
+        )
+
+        db.expire_all()
+
+        refreshed_lead = db.get(Lead, lead.id)
+
+        assert refreshed_lead is not None
+        assert refreshed_lead.owner_user_id == current_owner.id
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_owner_can_be_member_of_multiple_organizations() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        organization_a = create_organization(db)
+        organization_b = create_organization(db)
+
+        actor = create_user(db)
+        owner = create_user(db)
+
+        actor_membership = create_membership(
+            db,
+            user=actor,
+            organization=organization_a,
+        )
+        create_membership(
+            db,
+            user=owner,
+            organization=organization_a,
+        )
+        create_membership(
+            db,
+            user=owner,
+            organization=organization_b,
+        )
+
+        role = create_role(db)
+        assign_role_to_membership(
+            db,
+            membership=actor_membership,
+            role=role,
+        )
+
+        permission = get_or_create_permission(
+            db,
+            permission_key="leads.update",
+        )
+        assign_permission_to_role(
+            db,
+            role=role,
+            permission=permission,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization_a,
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization_a,
+            contact=contact,
+        )
+
+        db.commit()
+
+        test_app = create_test_app(user=actor)
+
+        with TestClient(test_app) as client:
+            response = client.patch(
+                f"/api/v1/leads/{lead.id}",
+                headers={
+                    "X-Organization-ID": str(organization_a.id),
+                },
+                json={
+                    "owner_user_id": str(owner.id),
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["owner_user_id"] == str(owner.id)
+
+        db.expire_all()
+
+        refreshed_lead = db.get(Lead, lead.id)
+
+        assert refreshed_lead is not None
+        assert refreshed_lead.organization_id == organization_a.id
+        assert refreshed_lead.owner_user_id == owner.id
+
+    finally:
+        db.rollback()
+        db.close()
