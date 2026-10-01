@@ -2241,3 +2241,504 @@ def test_owner_can_be_member_of_multiple_organizations() -> None:
     finally:
         db.rollback()
         db.close()
+
+def test_update_next_action_preserves_existing_next_action_at() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        existing_next_action_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            next_action="Existing action",
+            next_action_at=existing_next_action_at,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "next_action": "Updated action",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["next_action"] == "Updated action"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.next_action == "Updated action"
+        assert persisted.next_action_at is not None
+        assert persisted.next_action_at == existing_next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_update_next_action_at_preserves_existing_next_action() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        existing_next_action_at = datetime.now(timezone.utc) + timedelta(days=1)
+        updated_next_action_at = datetime.now(timezone.utc) + timedelta(days=3)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            next_action="Existing action",
+            next_action_at=existing_next_action_at,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "next_action_at": updated_next_action_at.isoformat(),
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["next_action"] == "Existing action"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.next_action == "Existing action"
+        assert persisted.next_action_at is not None
+        assert persisted.next_action_at != existing_next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_clear_next_action_preserves_existing_next_action_at() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        existing_next_action_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            next_action="Call customer",
+            next_action_at=existing_next_action_at,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "next_action": None,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["next_action"] is None
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.next_action is None
+        assert persisted.next_action_at is not None
+        assert persisted.next_action_at == existing_next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_clear_next_action_at_preserves_existing_next_action() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            next_action="Call customer",
+            next_action_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "next_action_at": None,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["next_action"] == "Call customer"
+        assert body["next_action_at"] is None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.next_action == "Call customer"
+        assert persisted.next_action_at is None
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_update_outcome_preserves_next_action_fields() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        existing_next_action_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            status=Lead.STATUS_NEGOTIATION,
+            next_action="Follow up on negotiation",
+            next_action_at=existing_next_action_at,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "outcome": Lead.OUTCOME_SUCCESSFUL,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["outcome"] == Lead.OUTCOME_SUCCESSFUL
+        assert body["next_action"] == "Follow up on negotiation"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.outcome == Lead.OUTCOME_SUCCESSFUL
+        assert persisted.next_action == "Follow up on negotiation"
+        assert persisted.next_action_at == existing_next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_update_next_action_fields_preserves_existing_outcome() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            status=Lead.STATUS_NEGOTIATION,
+            outcome=Lead.OUTCOME_SUCCESSFUL,
+        )
+
+        db.commit()
+
+        next_action_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "next_action": "Schedule final discussion",
+                    "next_action_at": next_action_at.isoformat(),
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["outcome"] == Lead.OUTCOME_SUCCESSFUL
+        assert body["next_action"] == "Schedule final discussion"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.outcome == Lead.OUTCOME_SUCCESSFUL
+        assert persisted.next_action == "Schedule final discussion"
+        assert persisted.next_action_at is not None
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_deactivating_lead_preserves_operational_fields() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        next_action_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            status=Lead.STATUS_CONTACTED,
+            outcome=Lead.OUTCOME_SUCCESSFUL,
+            next_action="Follow up with customer",
+            next_action_at=next_action_at,
+            is_active=True,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["is_active"] is False
+        assert body["outcome"] == Lead.OUTCOME_SUCCESSFUL
+        assert body["next_action"] == "Follow up with customer"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.is_active is False
+        assert persisted.outcome == Lead.OUTCOME_SUCCESSFUL
+        assert persisted.next_action == "Follow up with customer"
+        assert persisted.next_action_at == next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_reactivating_lead_preserves_operational_fields() -> None:
+    db = TestingSessionLocal()
+
+    try:
+        user, organization, _, _, _ = create_authorized_user(
+            db,
+            permission_key="leads.update",
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+        )
+
+        next_action_at = datetime.now(timezone.utc) + timedelta(days=3)
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+            status=Lead.STATUS_CONTACTED,
+            outcome=Lead.OUTCOME_UNSUCCESSFUL,
+            next_action="Review alternative properties",
+            next_action_at=next_action_at,
+            is_active=False,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            response = patch_lead(
+                client,
+                organization=organization,
+                lead_id=lead.id,
+                payload={
+                    "is_active": True,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+
+        assert body["is_active"] is True
+        assert body["outcome"] == Lead.OUTCOME_UNSUCCESSFUL
+        assert body["next_action"] == "Review alternative properties"
+        assert body["next_action_at"] is not None
+
+        db.expire_all()
+
+        persisted = get_persisted_lead(
+            db,
+            organization_id=organization.id,
+            lead_id=lead.id,
+        )
+
+        assert persisted is not None
+        assert persisted.is_active is True
+        assert persisted.outcome == Lead.OUTCOME_UNSUCCESSFUL
+        assert persisted.next_action == "Review alternative properties"
+        assert persisted.next_action_at == next_action_at
+
+    finally:
+        db.rollback()
+        db.close()
