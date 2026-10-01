@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db.models.contact import Contact
 from app.db.models.lead import Lead
-from app.db.models.membership import Membership
 from app.leads.lifecycle import (
     validate_status_outcome,
     validate_status_transition,
 )
+from app.leads.ownership import validate_lead_owner
 from app.leads.schemas import (
     LeadCreateRequest,
     LeadListQuery,
@@ -119,21 +119,11 @@ def update_lead(
     )
 
     if "owner_user_id" in updates:
-        owner_user_id = updates["owner_user_id"]
-
-        if owner_user_id is not None:
-            membership_statement = select(Membership).where(
-                Membership.organization_id == organization_id,
-                Membership.user_id == owner_user_id,
-                Membership.is_active.is_(True),
-            )
-
-            membership = db.scalar(membership_statement)
-
-            if membership is None:
-                raise ValueError(
-                    "Lead owner must belong to the organization."
-                )
+        validate_lead_owner(
+            db=db,
+            organization_id=organization_id,
+            owner_user_id=updates["owner_user_id"],
+        )
 
     for field_name, value in updates.items():
         setattr(
