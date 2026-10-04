@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -25,6 +26,8 @@ class CustomerRequirement(Base):
         STATUS_ACTIVE,
         STATUS_INACTIVE,
     )
+
+    DEFAULT_BUDGET_CURRENCY = "INR"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
@@ -51,6 +54,21 @@ class CustomerRequirement(Base):
         nullable=False,
         default=True,
         index=True,
+    )
+
+    budget_min: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2),
+        nullable=True,
+    )
+
+    budget_max: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2),
+        nullable=True,
+    )
+
+    budget_currency: Mapped[str | None] = mapped_column(
+        String(3),
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
