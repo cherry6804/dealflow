@@ -10,6 +10,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.db.models.contact import Contact
     from app.db.models.customer_profile import CustomerProfile
+    from app.db.models.customer_requirement import CustomerRequirement
     from app.db.models.lead import Lead
     from app.db.models.membership import Membership
 
@@ -63,6 +64,12 @@ class Organization(Base):
 
     customer_profiles: Mapped[list["CustomerProfile"]] = relationship(
         "CustomerProfile",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+    customer_requirements: Mapped[list["CustomerRequirement"]] = relationship(
+        "CustomerRequirement",
         back_populates="organization",
         cascade="all, delete-orphan",
     )
