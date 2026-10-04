@@ -4,6 +4,7 @@ from app.db.models.audit_event import AuditEvent
 from app.db.models.auth_session import AuthSession
 from app.db.models.contact import Contact
 from app.db.models.customer_profile import CustomerProfile
+from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
@@ -18,6 +19,7 @@ __all__ = [
     "AuthSession",
     "Contact",
     "CustomerProfile",
+    "CustomerRequirement",
     "Lead",
     "Membership",
     "MembershipRole",
