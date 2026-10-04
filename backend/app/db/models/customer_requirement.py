@@ -5,12 +5,24 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.customer_requirement_location import (
+        CustomerRequirementLocation,
+    )
     from app.db.models.organization import Organization
 
 
@@ -18,6 +30,13 @@ class CustomerRequirement(Base):
     """Represent a tenant-owned customer requirement in DealFlow."""
 
     __tablename__ = "customer_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_customer_requirements_id_organization_id",
+        ),
+    )
 
     STATUS_ACTIVE = "ACTIVE"
     STATUS_INACTIVE = "INACTIVE"
@@ -87,4 +106,10 @@ class CustomerRequirement(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization",
         back_populates="customer_requirements",
+    )
+
+    locations: Mapped[list["CustomerRequirementLocation"]] = relationship(
+        "CustomerRequirementLocation",
+        back_populates="customer_requirement",
+        cascade="all, delete-orphan",
     )

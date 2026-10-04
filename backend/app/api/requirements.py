@@ -11,13 +11,20 @@ from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
 from app.requirements.schemas import (
     CustomerRequirementCreateRequest,
+    CustomerRequirementLocationCreateRequest,
+    CustomerRequirementLocationResponse,
+    CustomerRequirementLocationUpdateRequest,
     CustomerRequirementResponse,
     CustomerRequirementUpdateRequest,
 )
 from app.requirements.service import (
     create_customer_requirement,
+    create_customer_requirement_location,
     get_customer_requirement,
+    get_customer_requirement_location,
+    list_customer_requirement_locations,
     update_customer_requirement_budget,
+    update_customer_requirement_location,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -140,3 +147,118 @@ def update_requirement(
     db.refresh(requirement)
 
     return CustomerRequirementResponse.model_validate(requirement)
+
+
+@router.post(
+    "/{requirement_id}/locations",
+    response_model=CustomerRequirementLocationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_requirement_location(
+    requirement_id: UUID,
+    payload: CustomerRequirementLocationCreateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementLocationResponse:
+    """Create a location for a tenant-owned customer requirement."""
+
+    try:
+        location = create_customer_requirement_location(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            customer_requirement_id=requirement_id,
+            city=payload.city,
+            locality=payload.locality,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(location)
+
+    return CustomerRequirementLocationResponse.model_validate(location)
+
+
+@router.get(
+    "/{requirement_id}/locations",
+    response_model=list[CustomerRequirementLocationResponse],
+    status_code=status.HTTP_200_OK,
+)
+def list_requirement_locations(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> list[CustomerRequirementLocationResponse]:
+    """List locations for a tenant-owned customer requirement."""
+
+    try:
+        locations = list_customer_requirement_locations(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            customer_requirement_id=requirement_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return [
+        CustomerRequirementLocationResponse.model_validate(location)
+        for location in locations
+    ]
+
+
+@router.patch(
+    "/{requirement_id}/locations/{location_id}",
+    response_model=CustomerRequirementLocationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_requirement_location(
+    requirement_id: UUID,
+    location_id: UUID,
+    payload: CustomerRequirementLocationUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementLocationResponse:
+    """Update a location within its tenant-owned requirement."""
+
+    location = get_customer_requirement_location(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        customer_requirement_id=requirement_id,
+        location_id=location_id,
+    )
+
+    if location is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement location not found.",
+        )
+
+    fields_set = payload.model_fields_set
+
+    location = update_customer_requirement_location(
+        db=db,
+        location=location,
+        city=payload.city,
+        locality=payload.locality,
+        is_active=payload.is_active,
+        update_city="city" in fields_set,
+        update_locality="locality" in fields_set,
+        update_is_active="is_active" in fields_set,
+    )
+
+    db.commit()
+    db.refresh(location)
+
+    return CustomerRequirementLocationResponse.model_validate(location)

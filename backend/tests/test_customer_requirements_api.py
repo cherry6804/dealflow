@@ -13,6 +13,9 @@ from decimal import Decimal
 from app.api.requirements import router as requirements_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.db.models.customer_requirement import CustomerRequirement
+from app.db.models.customer_requirement_location import (
+    CustomerRequirementLocation,
+)
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -1249,3 +1252,840 @@ def test_update_customer_requirement_budget_rejects_invalid_currency() -> None:
             )
 
         assert response.status_code == 422
+
+def test_create_customer_requirement_location_successfully() -> None:
+    """DF-52: Create a location for a customer requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": " Chennai ",
+                    "locality": " Tambaram ",
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert UUID(payload["id"])
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["city"] == "Chennai"
+        assert payload["locality"] == "Tambaram"
+        assert payload["is_active"] is True
+        assert payload["created_at"]
+        assert payload["updated_at"]
+
+
+def test_create_customer_requirement_location_persists_record() -> None:
+    """DF-52: Created locations are persisted for the requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Velachery",
+                },
+            )
+
+        assert response.status_code == 201
+
+        location_id = UUID(response.json()["id"])
+
+        persisted_location = db.scalar(
+            select(CustomerRequirementLocation).where(
+                CustomerRequirementLocation.id == location_id,
+                CustomerRequirementLocation.organization_id
+                == organization.id,
+                CustomerRequirementLocation.customer_requirement_id
+                == requirement.id,
+            )
+        )
+
+        assert persisted_location is not None
+        assert persisted_location.city == "Chennai"
+        assert persisted_location.locality == "Velachery"
+        assert persisted_location.is_active is True
+
+
+def test_create_customer_requirement_location_supports_multiple_locations() -> None:
+    """DF-52: A requirement can contain multiple preferred locations."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            first_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram",
+                },
+            )
+
+            second_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Velachery",
+                },
+            )
+
+        assert first_response.status_code == 201
+        assert second_response.status_code == 201
+
+        with TestingSessionLocal() as verification_db:
+            locations = list(
+                verification_db.scalars(
+                    select(CustomerRequirementLocation)
+                    .where(
+                        CustomerRequirementLocation.organization_id
+                        == organization.id,
+                        CustomerRequirementLocation.customer_requirement_id
+                        == requirement.id,
+                    )
+                    .order_by(CustomerRequirementLocation.created_at.asc())
+                ).all()
+            )
+
+        assert len(locations) == 2
+        assert {location.locality for location in locations} == {
+            "Tambaram",
+            "Velachery",
+        }
+
+
+def test_create_customer_requirement_location_rejects_blank_city() -> None:
+    """DF-52: Blank city values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "   ",
+                    "locality": "Tambaram",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_location_rejects_blank_locality() -> None:
+    """DF-52: Blank locality values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "   ",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_location_rejects_unknown_fields() -> None:
+    """DF-52: Location creation rejects fields outside the contract."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram",
+                    "organization_id": str(organization.id),
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_location_returns_404_for_missing_requirement() -> None:
+    """DF-52: A location cannot be created for a missing requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{uuid4()}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_location_prevents_cross_tenant_access() -> None:
+    """DF-52: A location cannot be created for another tenant's requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement_b.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_location_requires_update_permission() -> None:
+    """DF-52: Creating a location requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_list_customer_requirement_locations_successfully() -> None:
+    """DF-52: List all locations belonging to a requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        first_location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        second_location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Velachery",
+            is_active=True,
+        )
+
+        db.add_all([first_location, second_location])
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert len(payload) == 2
+        assert payload[0]["customer_requirement_id"] == str(requirement.id)
+        assert payload[1]["customer_requirement_id"] == str(requirement.id)
+        assert {item["locality"] for item in payload} == {
+            "Tambaram",
+            "Velachery",
+        }
+
+
+def test_list_customer_requirement_locations_returns_empty_list() -> None:
+    """DF-52: A requirement can exist without preferred locations."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+            )
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+def test_list_customer_requirement_locations_prevents_cross_tenant_access() -> None:
+    """DF-52: Locations cannot be listed from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        location_b = CustomerRequirementLocation(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location_b)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement_b.id}/locations",
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_list_customer_requirement_locations_requires_read_permission() -> None:
+    """DF-52: Listing locations requires requirements.read."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/locations",
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_location_successfully() -> None:
+    """DF-52: Update city, locality, and active state."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram East",
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(location.id)
+        assert payload["city"] == "Chennai"
+        assert payload["locality"] == "Tambaram East"
+        assert payload["is_active"] is False
+
+
+def test_update_customer_requirement_location_preserves_omitted_fields() -> None:
+    """DF-52: PATCH preserves location fields that are omitted."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "locality": "Tambaram East",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["city"] == "Chennai"
+        assert payload["locality"] == "Tambaram East"
+        assert payload["is_active"] is True
+
+
+def test_update_customer_requirement_location_explicit_null_does_not_clear_required_fields() -> None:
+    """DF-52: Required location fields cannot be cleared with null."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "city": None,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_location_rejects_blank_values() -> None:
+    """DF-52: Required location text cannot be blank."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "locality": "   ",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_location_returns_404_for_missing_location() -> None:
+    """DF-52: Updating a missing location returns 404."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{uuid4()}"
+                ),
+                json={
+                    "locality": "Tambaram East",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement location not found.",
+        }
+
+
+def test_update_customer_requirement_location_prevents_cross_tenant_access() -> None:
+    """DF-52: A location cannot be updated from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        location_b = CustomerRequirementLocation(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location_b)
+        db.commit()
+        db.refresh(location_b)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement_b.id}"
+                    f"/locations/{location_b.id}"
+                ),
+                json={
+                    "locality": "Tambaram East",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement location not found.",
+        }
+
+
+def test_update_customer_requirement_location_requires_update_permission() -> None:
+    """DF-52: Updating a location requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "locality": "Tambaram East",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_location_can_deactivate_without_deleting() -> None:
+    """DF-52: Deactivation retains the location record."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        location_id = location.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["is_active"] is False
+
+        with TestingSessionLocal() as verification_db:
+            persisted_location = verification_db.scalar(
+                select(CustomerRequirementLocation).where(
+                    CustomerRequirementLocation.id == location_id,
+                    CustomerRequirementLocation.organization_id
+                    == organization.id,
+                )
+            )
+
+        assert persisted_location is not None
+        assert persisted_location.is_active is False

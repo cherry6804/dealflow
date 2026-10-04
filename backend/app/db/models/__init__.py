@@ -5,6 +5,7 @@ from app.db.models.auth_session import AuthSession
 from app.db.models.contact import Contact
 from app.db.models.customer_profile import CustomerProfile
 from app.db.models.customer_requirement import CustomerRequirement
+from app.db.models.customer_requirement_location import CustomerRequirementLocation
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
@@ -20,6 +21,7 @@ __all__ = [
     "Contact",
     "CustomerProfile",
     "CustomerRequirement",
+    "CustomerRequirementLocation",
     "Lead",
     "Membership",
     "MembershipRole",
