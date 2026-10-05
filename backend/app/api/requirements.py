@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
 from app.requirements.schemas import (
+    CustomerRequirementAssociationRequest,
+    CustomerRequirementAssociationResponse,
     CustomerRequirementCreateRequest,
     CustomerRequirementLocationCreateRequest,
     CustomerRequirementLocationResponse,
@@ -25,6 +27,7 @@ from app.requirements.schemas import (
 )
 from app.requirements.service import (
     create_customer_requirement,
+    get_customer_requirement_association,
     create_customer_requirement_location,
     create_customer_requirement_possession_parking_preference,
     create_customer_requirement_property_preference,
@@ -34,6 +37,7 @@ from app.requirements.service import (
     get_customer_requirement_property_preference,
     list_customer_requirement_locations,
     list_customer_requirement_property_preferences,
+    update_customer_requirement_association,
     update_customer_requirement_budget,
     update_customer_requirement_location,
     update_customer_requirement_possession_parking_preference,
@@ -528,4 +532,164 @@ def update_requirement_possession_parking_preference(
 
     return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
         preference
+    )
+
+@router.post(
+    "/{requirement_id}/association",
+    response_model=CustomerRequirementAssociationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_requirement_association(
+    requirement_id: UUID,
+    payload: CustomerRequirementAssociationRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementAssociationResponse:
+    """Create associations for a tenant-owned customer requirement."""
+
+    requirement = get_customer_requirement_association(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        requirement_id=requirement_id,
+    )
+
+    if requirement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement not found.",
+        )
+
+    fields_set = payload.model_fields_set
+
+    if not fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one association field must be provided.",
+        )
+
+    try:
+        requirement = update_customer_requirement_association(
+            db=db,
+            requirement=requirement,
+            organization_id=tenant_context.organization_id,
+            lead_id=payload.lead_id,
+            customer_profile_id=payload.customer_profile_id,
+            update_lead_id="lead_id" in fields_set,
+            update_customer_profile_id="customer_profile_id" in fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(requirement)
+
+    return CustomerRequirementAssociationResponse(
+        customer_requirement_id=requirement.id,
+        organization_id=requirement.organization_id,
+        lead_id=requirement.lead_id,
+        customer_profile_id=requirement.customer_profile_id,
+        updated_at=requirement.updated_at,
+    )
+
+
+@router.get(
+    "/{requirement_id}/association",
+    response_model=CustomerRequirementAssociationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_association(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementAssociationResponse:
+    """Retrieve associations for a tenant-owned customer requirement."""
+
+    requirement = get_customer_requirement_association(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        requirement_id=requirement_id,
+    )
+
+    if requirement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement not found.",
+        )
+
+    return CustomerRequirementAssociationResponse(
+        customer_requirement_id=requirement.id,
+        organization_id=requirement.organization_id,
+        lead_id=requirement.lead_id,
+        customer_profile_id=requirement.customer_profile_id,
+        updated_at=requirement.updated_at,
+    )
+
+
+@router.patch(
+    "/{requirement_id}/association",
+    response_model=CustomerRequirementAssociationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_requirement_association(
+    requirement_id: UUID,
+    payload: CustomerRequirementAssociationRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementAssociationResponse:
+    """Update associations for a tenant-owned customer requirement."""
+
+    requirement = get_customer_requirement_association(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        requirement_id=requirement_id,
+    )
+
+    if requirement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement not found.",
+        )
+
+    fields_set = payload.model_fields_set
+
+    if not fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one association field must be provided.",
+        )
+
+    try:
+        requirement = update_customer_requirement_association(
+            db=db,
+            requirement=requirement,
+            organization_id=tenant_context.organization_id,
+            lead_id=payload.lead_id,
+            customer_profile_id=payload.customer_profile_id,
+            update_lead_id="lead_id" in fields_set,
+            update_customer_profile_id="customer_profile_id" in fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(requirement)
+
+    return CustomerRequirementAssociationResponse(
+        customer_requirement_id=requirement.id,
+        organization_id=requirement.organization_id,
+        lead_id=requirement.lead_id,
+        customer_profile_id=requirement.customer_profile_id,
+        updated_at=requirement.updated_at,
     )

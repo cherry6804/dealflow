@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from uuid import UUID, uuid4
-
+import uuid
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from decimal import Decimal
 from app.api.requirements import router as requirements_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
+from app.db.models.contact import Contact
+from app.db.models.customer_profile import CustomerProfile
+from app.db.models.lead import Lead
 from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_location import (
     CustomerRequirementLocation,
@@ -247,6 +250,80 @@ def create_customer_requirement(
 
     return requirement
 
+def create_contact(
+    db: Session,
+    *,
+    organization: Organization,
+    first_name: str,
+    last_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    is_active: bool = True,
+) -> Contact:
+    """Create and persist a test Contact."""
+
+    contact = Contact(
+        organization_id=organization.id,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        is_active=is_active,
+    )
+
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+
+    return contact
+
+
+def create_lead(
+    db: Session,
+    *,
+    organization: Organization,
+    contact: Contact,
+    status: str = Lead.STATUS_NEW,
+    is_active: bool = True,
+) -> Lead:
+    """Create and persist a test Lead."""
+
+    lead = Lead(
+        organization_id=organization.id,
+        contact_id=contact.id,
+        status=status,
+        is_active=is_active,
+    )
+
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+
+    return lead
+
+
+def create_customer_profile(
+    db: Session,
+    *,
+    organization: Organization,
+    contact: Contact,
+    is_active: bool = True,
+    customer_notes: str | None = None,
+) -> CustomerProfile:
+    """Create and persist a test Customer Profile."""
+
+    customer_profile = CustomerProfile(
+        organization_id=organization.id,
+        contact_id=contact.id,
+        is_active=is_active,
+        customer_notes=customer_notes,
+    )
+
+    db.add(customer_profile)
+    db.commit()
+    db.refresh(customer_profile)
+
+    return customer_profile
 
 def create_test_app(
     *,
@@ -4506,3 +4583,975 @@ def test_update_customer_requirement_possession_parking_preference_persists_chan
     assert persisted_preference.possession_preference == "AFTER_12_MONTHS"
     assert persisted_preference.parking_preference == "ANY"
     assert persisted_preference.parking_spaces_min == 3
+
+def test_create_customer_requirement_association_with_lead() -> None:
+    """Associate a Customer Requirement with a tenant-owned Lead."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Customer",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["lead_id"] == str(lead.id)
+        assert payload["customer_profile_id"] is None
+
+
+def test_create_customer_requirement_association_with_customer_profile() -> None:
+    """Associate a Customer Requirement with a tenant-owned Customer Profile."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Profile",
+        )
+
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["lead_id"] is None
+        assert payload["customer_profile_id"] == str(customer_profile.id)
+
+
+def test_create_customer_requirement_association_with_lead_and_customer_profile() -> None:
+    """Associate a Customer Requirement with both supported entities."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Contact",
+        )
+
+        profile_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Profile",
+            last_name="Contact",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=profile_contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["lead_id"] == str(lead.id)
+        assert payload["customer_profile_id"] == str(customer_profile.id)
+
+
+def test_get_customer_requirement_association_returns_empty_association() -> None:
+    """Return null associations when none have been configured."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["lead_id"] is None
+        assert payload["customer_profile_id"] is None
+
+
+def test_get_customer_requirement_association_returns_persisted_values() -> None:
+    """Return persisted Lead and Customer Profile associations."""
+
+    update_permission = "requirements.update"
+    read_permission = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=update_permission,
+        )
+
+        membership = db.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.organization_id == organization.id,
+            )
+        )
+        assert membership is not None
+
+        role = db.scalar(
+            select(Role).join(
+                MembershipRole,
+                MembershipRole.role_id == Role.id,
+            ).where(
+                MembershipRole.membership_id == membership.id,
+            )
+        )
+        assert role is not None
+
+        read_permission_record = get_or_create_permission(
+            db,
+            key=read_permission,
+            is_active=True,
+        )
+
+        assign_permission_to_role(
+            db,
+            role=role,
+            permission=read_permission_record,
+        )
+
+        db.commit()
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Persisted",
+            last_name="Lead",
+        )
+
+        profile_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Persisted",
+            last_name="Profile",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=profile_contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        requirement.lead_id = lead.id
+        requirement.customer_profile_id = customer_profile.id
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["lead_id"] == str(lead.id)
+        assert payload["customer_profile_id"] == str(customer_profile.id)
+
+def test_update_customer_requirement_association_with_lead() -> None:
+    """Update a Customer Requirement from one tenant-owned Lead to another."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_one = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="One",
+        )
+        contact_two = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Two",
+        )
+
+        lead_one = create_lead(
+            db,
+            organization=organization,
+            contact=contact_one,
+        )
+        lead_two = create_lead(
+            db,
+            organization=organization,
+            contact=contact_two,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(lead_one.id)},
+            )
+
+            assert create_response.status_code == 201
+
+            update_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(lead_two.id)},
+            )
+
+            assert update_response.status_code == 200
+            assert update_response.json()["lead_id"] == str(lead_two.id)
+            assert update_response.json()["customer_profile_id"] is None
+
+
+def test_update_customer_requirement_association_with_customer_profile() -> None:
+    """Update a Customer Requirement from one Customer Profile to another."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact_one = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="One",
+        )
+        contact_two = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Two",
+        )
+
+        customer_profile_one = create_customer_profile(
+            db,
+            organization=organization,
+            contact=contact_one,
+        )
+        customer_profile_two = create_customer_profile(
+            db,
+            organization=organization,
+            contact=contact_two,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(customer_profile_one.id),
+                },
+            )
+
+            assert create_response.status_code == 201
+
+            update_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(customer_profile_two.id),
+                },
+            )
+
+            assert update_response.status_code == 200
+            assert (
+                update_response.json()["customer_profile_id"]
+                == str(customer_profile_two.id)
+            )
+            assert update_response.json()["lead_id"] is None
+
+
+def test_update_customer_requirement_association_with_both() -> None:
+    """Set both Lead and Customer Profile associations together."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Both",
+        )
+        customer_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Both",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=customer_contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+            assert response.status_code == 200
+            assert response.json()["lead_id"] == str(lead.id)
+            assert (
+                response.json()["customer_profile_id"]
+                == str(customer_profile.id)
+            )
+
+
+def test_clear_customer_requirement_lead_association() -> None:
+    """Clear an existing Lead association."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Clear",
+        )
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(lead.id)},
+            )
+
+            assert create_response.status_code == 201
+
+            clear_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": None},
+            )
+
+            assert clear_response.status_code == 200
+            assert clear_response.json()["lead_id"] is None
+
+
+def test_clear_customer_requirement_customer_profile_association() -> None:
+    """Clear an existing Customer Profile association."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Clear",
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+            assert create_response.status_code == 201
+
+            clear_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"customer_profile_id": None},
+            )
+
+            assert clear_response.status_code == 200
+            assert clear_response.json()["customer_profile_id"] is None
+
+
+def test_clear_customer_requirement_both_associations() -> None:
+    """Clear both Lead and Customer Profile associations."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Clear",
+        )
+        customer_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Clear",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=customer_contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+            assert create_response.status_code == 201
+
+            clear_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": None,
+                    "customer_profile_id": None,
+                },
+            )
+
+            assert clear_response.status_code == 200
+            assert clear_response.json()["lead_id"] is None
+            assert clear_response.json()["customer_profile_id"] is None
+
+
+def test_customer_requirement_association_rejects_cross_tenant_lead() -> None:
+    """A Lead belonging to another tenant cannot be associated."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        _, other_organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=other_organization,
+            first_name="Other",
+            last_name="Lead",
+        )
+        lead = create_lead(
+            db,
+            organization=other_organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(lead.id)},
+            )
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Lead not found."
+
+
+def test_customer_requirement_association_rejects_cross_tenant_customer_profile() -> None:
+    """A Customer Profile belonging to another tenant cannot be associated."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        _, other_organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        contact = create_contact(
+            db,
+            organization=other_organization,
+            first_name="Other",
+            last_name="Customer",
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=other_organization,
+            contact=contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Customer profile not found."
+
+
+def test_customer_requirement_association_rejects_nonexistent_lead() -> None:
+    """A nonexistent Lead cannot be associated."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(uuid.uuid4())},
+            )
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Lead not found."
+
+
+def test_customer_requirement_association_rejects_nonexistent_customer_profile() -> None:
+    """A nonexistent Customer Profile cannot be associated."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "customer_profile_id": str(uuid.uuid4()),
+                },
+            )
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Customer profile not found."
+
+
+def test_customer_requirement_association_rejects_cross_tenant_requirement() -> None:
+    """A requirement belonging to another tenant cannot be modified."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        _, other_organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=other_organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": str(uuid.uuid4())},
+            )
+
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Customer requirement not found."
+
+
+def test_customer_requirement_association_rejects_empty_payload() -> None:
+    """An empty association payload is rejected."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={},
+            )
+
+            assert response.status_code == 400
+            assert (
+                response.json()["detail"]
+                == "At least one association field must be provided."
+            )
+
+
+def test_customer_requirement_association_rejects_invalid_uuid() -> None:
+    """An invalid association UUID is rejected by request validation."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": "not-a-uuid"},
+            )
+
+            assert response.status_code == 422
+
+
+def test_customer_requirement_association_requires_update_permission() -> None:
+    """Association mutation requires the requirements.update permission."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={"lead_id": None},
+            )
+
+            assert response.status_code == 403
+
+
+def test_customer_requirement_association_persists_after_update() -> None:
+    """Association values remain persisted after the update transaction."""
+
+    permission_key = "requirements.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+            last_name="Persist",
+        )
+        customer_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+            last_name="Persist",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=customer_contact,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+            assert response.status_code == 200
+
+        db.expire_all()
+
+        persisted_requirement = (
+            db.query(CustomerRequirement)
+            .filter(
+                CustomerRequirement.id == requirement.id,
+                CustomerRequirement.organization_id == organization.id,
+            )
+            .one()
+        )
+
+        assert persisted_requirement.lead_id == lead.id
+        assert persisted_requirement.customer_profile_id == customer_profile.id
