@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     String,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -29,6 +30,11 @@ class Lead(Base):
     __tablename__ = "leads"
 
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_leads_id_organization_id",
+        ),
         ForeignKeyConstraint(
             ["contact_id", "organization_id"],
             ["contacts.id", "contacts.organization_id"],

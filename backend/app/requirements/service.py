@@ -19,7 +19,8 @@ from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
 from app.db.models.organization import Organization
-
+from app.db.models.customer_profile import CustomerProfile
+from app.db.models.lead import Lead
 
 def create_customer_requirement(
     db: Session,
@@ -527,3 +528,68 @@ def update_customer_requirement_possession_parking_preference(
     db.refresh(preference)
 
     return preference
+
+def get_customer_requirement_association(
+    db: Session,
+    *,
+    organization_id: UUID,
+    requirement_id: UUID,
+) -> CustomerRequirement | None:
+    """Retrieve a customer requirement with its tenant-scoped associations."""
+
+    statement = select(CustomerRequirement).where(
+        CustomerRequirement.id == requirement_id,
+        CustomerRequirement.organization_id == organization_id,
+    )
+
+    return db.scalar(statement)
+
+
+def update_customer_requirement_association(
+    db: Session,
+    *,
+    requirement: CustomerRequirement,
+    organization_id: UUID,
+    lead_id: UUID | None = None,
+    customer_profile_id: UUID | None = None,
+    update_lead_id: bool = False,
+    update_customer_profile_id: bool = False,
+) -> CustomerRequirement:
+    """Update the tenant-scoped Lead and Customer Profile associations."""
+
+    if requirement.organization_id != organization_id:
+        raise ValueError("Customer requirement not found.")
+
+    if update_lead_id:
+        if lead_id is not None:
+            lead_statement = select(Lead).where(
+                Lead.id == lead_id,
+                Lead.organization_id == organization_id,
+            )
+
+            lead = db.scalar(lead_statement)
+
+            if lead is None:
+                raise ValueError("Lead not found.")
+
+        requirement.lead_id = lead_id
+
+    if update_customer_profile_id:
+        if customer_profile_id is not None:
+            customer_profile_statement = select(CustomerProfile).where(
+                CustomerProfile.id == customer_profile_id,
+                CustomerProfile.organization_id == organization_id,
+            )
+
+            customer_profile = db.scalar(customer_profile_statement)
+
+            if customer_profile is None:
+                raise ValueError("Customer profile not found.")
+
+        requirement.customer_profile_id = customer_profile_id
+
+    db.add(requirement)
+    db.flush()
+    db.refresh(requirement)
+
+    return requirement

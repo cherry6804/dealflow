@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Numeric,
     String,
     UniqueConstraint,
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.customer_profile import CustomerProfile
     from app.db.models.customer_requirement_location import (
         CustomerRequirementLocation,
     )
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from app.db.models.customer_requirement_property_preference import (
         CustomerRequirementPropertyPreference,
     )
+    from app.db.models.lead import Lead
     from app.db.models.organization import Organization
 
 
@@ -41,6 +44,16 @@ class CustomerRequirement(Base):
             "id",
             "organization_id",
             name="uq_customer_requirements_id_organization_id",
+        ),
+        ForeignKeyConstraint(
+            ["lead_id", "organization_id"],
+            ["leads.id", "leads.organization_id"],
+            name="fk_customer_requirements_lead_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["customer_profile_id", "organization_id"],
+            ["customer_profiles.id", "customer_profiles.organization_id"],
+            name="fk_customer_requirements_customer_profile_tenant",
         ),
     )
 
@@ -64,6 +77,18 @@ class CustomerRequirement(Base):
         Uuid,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+
+    lead_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        index=True,
+    )
+
+    customer_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
         index=True,
     )
 
@@ -112,6 +137,31 @@ class CustomerRequirement(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization",
         back_populates="customer_requirements",
+        overlaps="lead,customer_profile",
+    )
+
+    lead: Mapped["Lead | None"] = relationship(
+        "Lead",
+        foreign_keys=[lead_id, organization_id],
+        primaryjoin=(
+            "and_("
+            "CustomerRequirement.lead_id == Lead.id, "
+            "CustomerRequirement.organization_id == Lead.organization_id"
+            ")"
+        ),
+        overlaps="organization,customer_profile",
+    )
+
+    customer_profile: Mapped["CustomerProfile | None"] = relationship(
+        "CustomerProfile",
+        foreign_keys=[customer_profile_id, organization_id],
+        primaryjoin=(
+            "and_("
+            "CustomerRequirement.customer_profile_id == CustomerProfile.id, "
+            "CustomerRequirement.organization_id == CustomerProfile.organization_id"
+            ")"
+        ),
+        overlaps="organization,lead",
     )
 
     locations: Mapped[list["CustomerRequirementLocation"]] = relationship(

@@ -355,3 +355,20 @@ class CustomerRequirementPossessionParkingPreferenceResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class CustomerRequirementAssociationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: UUID | None = None
+    customer_profile_id: UUID | None = None
+
+
+class CustomerRequirementAssociationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    customer_requirement_id: UUID
+    organization_id: UUID
+    lead_id: UUID | None
+    customer_profile_id: UUID | None
+    updated_at: datetime

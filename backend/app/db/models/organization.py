@@ -72,6 +72,7 @@ class Organization(Base):
         "CustomerRequirement",
         back_populates="organization",
         cascade="all, delete-orphan",
+        overlaps="lead,customer_profile",
     )
 
     leads: Mapped[list["Lead"]] = relationship(
