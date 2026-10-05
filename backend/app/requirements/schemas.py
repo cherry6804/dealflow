@@ -10,6 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 RequirementStatus = Literal["ACTIVE", "INACTIVE"]
 
+PropertyType = Literal[
+    "APARTMENT",
+    "VILLA",
+    "INDEPENDENT_HOUSE",
+    "PLOT",
+    "COMMERCIAL",
+    "OTHER",
+]
+
 
 class CustomerRequirementCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -82,6 +91,7 @@ class CustomerRequirementUpdateRequest(BaseModel):
                 )
 
         return self
+
 
 class CustomerRequirementBudgetUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -220,6 +230,75 @@ class CustomerRequirementLocationResponse(BaseModel):
     customer_requirement_id: UUID
     city: str
     locality: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerRequirementPropertyPreferenceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    property_type: PropertyType
+
+    bhk_min: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    bhk_max: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
+    @model_validator(mode="after")
+    def validate_bhk_range(
+        self,
+    ) -> "CustomerRequirementPropertyPreferenceCreateRequest":
+        if self.bhk_min is not None and self.bhk_max is not None:
+            if self.bhk_min > self.bhk_max:
+                raise ValueError(
+                    "BHK minimum cannot be greater than BHK maximum."
+                )
+
+        return self
+
+
+class CustomerRequirementPropertyPreferenceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    property_type: PropertyType | None = None
+
+    bhk_min: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    bhk_max: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_bhk_range(
+        self,
+    ) -> "CustomerRequirementPropertyPreferenceUpdateRequest":
+        if self.bhk_min is not None and self.bhk_max is not None:
+            if self.bhk_min > self.bhk_max:
+                raise ValueError(
+                    "BHK minimum cannot be greater than BHK maximum."
+                )
+
+        return self
+
+
+class CustomerRequirementPropertyPreferenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    customer_requirement_id: UUID
+    property_type: PropertyType
+    bhk_min: int | None
+    bhk_max: int | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

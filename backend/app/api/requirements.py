@@ -14,17 +14,24 @@ from app.requirements.schemas import (
     CustomerRequirementLocationCreateRequest,
     CustomerRequirementLocationResponse,
     CustomerRequirementLocationUpdateRequest,
+    CustomerRequirementPropertyPreferenceCreateRequest,
+    CustomerRequirementPropertyPreferenceResponse,
+    CustomerRequirementPropertyPreferenceUpdateRequest,
     CustomerRequirementResponse,
     CustomerRequirementUpdateRequest,
 )
 from app.requirements.service import (
     create_customer_requirement,
     create_customer_requirement_location,
+    create_customer_requirement_property_preference,
     get_customer_requirement,
     get_customer_requirement_location,
+    get_customer_requirement_property_preference,
     list_customer_requirement_locations,
+    list_customer_requirement_property_preferences,
     update_customer_requirement_budget,
     update_customer_requirement_location,
+    update_customer_requirement_property_preference,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -262,3 +269,133 @@ def update_requirement_location(
     db.refresh(location)
 
     return CustomerRequirementLocationResponse.model_validate(location)
+
+
+@router.post(
+    "/{requirement_id}/property-preferences",
+    response_model=CustomerRequirementPropertyPreferenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_requirement_property_preference(
+    requirement_id: UUID,
+    payload: CustomerRequirementPropertyPreferenceCreateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementPropertyPreferenceResponse:
+    """Create a property type and BHK preference for a requirement."""
+
+    try:
+        preference = create_customer_requirement_property_preference(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            customer_requirement_id=requirement_id,
+            property_type=payload.property_type,
+            bhk_min=payload.bhk_min,
+            bhk_max=payload.bhk_max,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(preference)
+
+    return CustomerRequirementPropertyPreferenceResponse.model_validate(
+        preference
+    )
+
+
+@router.get(
+    "/{requirement_id}/property-preferences",
+    response_model=list[CustomerRequirementPropertyPreferenceResponse],
+    status_code=status.HTTP_200_OK,
+)
+def list_requirement_property_preferences(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> list[CustomerRequirementPropertyPreferenceResponse]:
+    """List property preferences for a requirement."""
+
+    try:
+        preferences = list_customer_requirement_property_preferences(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            customer_requirement_id=requirement_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return [
+        CustomerRequirementPropertyPreferenceResponse.model_validate(
+            preference
+        )
+        for preference in preferences
+    ]
+
+
+@router.patch(
+    "/{requirement_id}/property-preferences/{preference_id}",
+    response_model=CustomerRequirementPropertyPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_requirement_property_preference(
+    requirement_id: UUID,
+    preference_id: UUID,
+    payload: CustomerRequirementPropertyPreferenceUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementPropertyPreferenceResponse:
+    """Update a property preference within its requirement."""
+
+    preference = get_customer_requirement_property_preference(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        customer_requirement_id=requirement_id,
+        preference_id=preference_id,
+    )
+
+    if preference is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement property preference not found.",
+        )
+
+    fields_set = payload.model_fields_set
+
+    try:
+        preference = update_customer_requirement_property_preference(
+            db=db,
+            preference=preference,
+            property_type=payload.property_type,
+            bhk_min=payload.bhk_min,
+            bhk_max=payload.bhk_max,
+            is_active=payload.is_active,
+            update_property_type="property_type" in fields_set,
+            update_bhk_min="bhk_min" in fields_set,
+            update_bhk_max="bhk_max" in fields_set,
+            update_is_active="is_active" in fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(preference)
+
+    return CustomerRequirementPropertyPreferenceResponse.model_validate(
+        preference
+    )

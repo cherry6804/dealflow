@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from app.db.models.customer_requirement_location import (
         CustomerRequirementLocation,
     )
+    from app.db.models.customer_requirement_property_preference import (
+        CustomerRequirementPropertyPreference,
+    )
     from app.db.models.organization import Organization
 
 
@@ -110,6 +113,14 @@ class CustomerRequirement(Base):
 
     locations: Mapped[list["CustomerRequirementLocation"]] = relationship(
         "CustomerRequirementLocation",
+        back_populates="customer_requirement",
+        cascade="all, delete-orphan",
+    )
+
+    property_preferences: Mapped[
+        list["CustomerRequirementPropertyPreference"]
+    ] = relationship(
+        "CustomerRequirementPropertyPreference",
         back_populates="customer_requirement",
         cascade="all, delete-orphan",
     )
