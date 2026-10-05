@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from app.db.models.customer_requirement_location import (
         CustomerRequirementLocation,
     )
+    from app.db.models.customer_requirement_possession_parking_preference import (
+        CustomerRequirementPossessionParkingPreference,
+    )
     from app.db.models.customer_requirement_property_preference import (
         CustomerRequirementPropertyPreference,
     )
@@ -123,4 +126,13 @@ class CustomerRequirement(Base):
         "CustomerRequirementPropertyPreference",
         back_populates="customer_requirement",
         cascade="all, delete-orphan",
+    )
+
+    possession_parking_preference: Mapped[
+        "CustomerRequirementPossessionParkingPreference | None"
+    ] = relationship(
+        "CustomerRequirementPossessionParkingPreference",
+        back_populates="customer_requirement",
+        cascade="all, delete-orphan",
+        uselist=False,
     )

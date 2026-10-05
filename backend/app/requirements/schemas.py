@@ -19,6 +19,22 @@ PropertyType = Literal[
     "OTHER",
 ]
 
+PossessionPreference = Literal[
+    "READY_TO_MOVE",
+    "WITHIN_3_MONTHS",
+    "WITHIN_6_MONTHS",
+    "WITHIN_12_MONTHS",
+    "AFTER_12_MONTHS",
+    "ANY",
+]
+
+ParkingPreference = Literal[
+    "REQUIRED",
+    "PREFERRED",
+    "NOT_REQUIRED",
+    "ANY",
+]
+
 
 class CustomerRequirementCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -299,6 +315,43 @@ class CustomerRequirementPropertyPreferenceResponse(BaseModel):
     property_type: PropertyType
     bhk_min: int | None
     bhk_max: int | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerRequirementPossessionParkingPreferenceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    possession_preference: PossessionPreference
+    parking_preference: ParkingPreference
+    parking_spaces_min: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
+
+class CustomerRequirementPossessionParkingPreferenceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    possession_preference: PossessionPreference | None = None
+    parking_preference: ParkingPreference | None = None
+    parking_spaces_min: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    is_active: bool | None = None
+
+
+class CustomerRequirementPossessionParkingPreferenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    customer_requirement_id: UUID
+    possession_preference: PossessionPreference
+    parking_preference: ParkingPreference
+    parking_spaces_min: int | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

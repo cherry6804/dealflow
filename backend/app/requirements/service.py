@@ -12,6 +12,9 @@ from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_location import (
     CustomerRequirementLocation,
 )
+from app.db.models.customer_requirement_possession_parking_preference import (
+    CustomerRequirementPossessionParkingPreference,
+)
 from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
@@ -389,6 +392,132 @@ def update_customer_requirement_property_preference(
 
     if update_bhk_max:
         preference.bhk_max = bhk_max
+
+    if update_is_active:
+        preference.is_active = is_active
+
+    db.add(preference)
+    db.flush()
+    db.refresh(preference)
+
+    return preference
+
+
+def create_customer_requirement_possession_parking_preference(
+    db: Session,
+    *,
+    organization_id: UUID,
+    customer_requirement_id: UUID,
+    possession_preference: str,
+    parking_preference: str,
+    parking_spaces_min: int | None = None,
+) -> CustomerRequirementPossessionParkingPreference:
+    """Create possession and parking preferences for a customer requirement."""
+
+    requirement_statement = select(CustomerRequirement).where(
+        CustomerRequirement.id == customer_requirement_id,
+        CustomerRequirement.organization_id == organization_id,
+    )
+
+    requirement = db.scalar(requirement_statement)
+
+    if requirement is None:
+        raise ValueError("Customer requirement not found.")
+
+    existing_statement = select(
+        CustomerRequirementPossessionParkingPreference
+    ).where(
+        CustomerRequirementPossessionParkingPreference.organization_id
+        == organization_id,
+        CustomerRequirementPossessionParkingPreference.customer_requirement_id
+        == customer_requirement_id,
+    )
+
+    existing_preference = db.scalar(existing_statement)
+
+    if existing_preference is not None:
+        raise ValueError(
+            "Possession and parking preference already exists."
+        )
+
+    if parking_spaces_min is not None and parking_spaces_min <= 0:
+        raise ValueError(
+            "Minimum parking spaces must be greater than zero."
+        )
+
+    preference = CustomerRequirementPossessionParkingPreference(
+        organization_id=organization_id,
+        customer_requirement_id=customer_requirement_id,
+        possession_preference=possession_preference,
+        parking_preference=parking_preference,
+        parking_spaces_min=parking_spaces_min,
+        is_active=True,
+    )
+
+    db.add(preference)
+    db.flush()
+    db.refresh(preference)
+
+    return preference
+
+
+def get_customer_requirement_possession_parking_preference(
+    db: Session,
+    *,
+    organization_id: UUID,
+    customer_requirement_id: UUID,
+) -> CustomerRequirementPossessionParkingPreference | None:
+    """Retrieve possession and parking preferences within the tenant."""
+
+    statement = select(
+        CustomerRequirementPossessionParkingPreference
+    ).where(
+        CustomerRequirementPossessionParkingPreference.organization_id
+        == organization_id,
+        CustomerRequirementPossessionParkingPreference.customer_requirement_id
+        == customer_requirement_id,
+    )
+
+    return db.scalar(statement)
+
+
+def update_customer_requirement_possession_parking_preference(
+    db: Session,
+    *,
+    preference: CustomerRequirementPossessionParkingPreference,
+    possession_preference: str | None = None,
+    parking_preference: str | None = None,
+    parking_spaces_min: int | None = None,
+    is_active: bool | None = None,
+    update_possession_preference: bool = False,
+    update_parking_preference: bool = False,
+    update_parking_spaces_min: bool = False,
+    update_is_active: bool = False,
+) -> CustomerRequirementPossessionParkingPreference:
+    """Update only the supplied possession and parking preference fields."""
+
+    if update_possession_preference:
+        if possession_preference is None:
+            raise ValueError("Possession preference cannot be cleared.")
+
+        preference.possession_preference = possession_preference
+
+    if update_parking_preference:
+        if parking_preference is None:
+            raise ValueError("Parking preference cannot be cleared.")
+
+        preference.parking_preference = parking_preference
+
+    if update_parking_spaces_min:
+        if (
+            parking_spaces_min is not None
+            and parking_spaces_min <= 0
+        ):
+            raise ValueError(
+                "Minimum parking spaces must be greater than zero."
+            )
+
+        preference.parking_spaces_min = parking_spaces_min
 
     if update_is_active:
         preference.is_active = is_active
