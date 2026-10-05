@@ -14,6 +14,7 @@ from app.db.models.permission import Permission
 from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
+from app.db.models.customer_requirement_property_preference import CustomerRequirementPropertyPreference
 
 __all__ = [
     "AuditEvent",
@@ -22,6 +23,7 @@ __all__ = [
     "CustomerProfile",
     "CustomerRequirement",
     "CustomerRequirementLocation",
+    "CustomerRequirementPropertyPreference",
     "Lead",
     "Membership",
     "MembershipRole",

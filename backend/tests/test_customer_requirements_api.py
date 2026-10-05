@@ -16,6 +16,9 @@ from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_location import (
     CustomerRequirementLocation,
 )
+from app.db.models.customer_requirement_property_preference import (
+    CustomerRequirementPropertyPreference,
+)
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -2089,3 +2092,1102 @@ def test_update_customer_requirement_location_can_deactivate_without_deleting() 
 
         assert persisted_location is not None
         assert persisted_location.is_active is False
+
+# ---------------------------------------------------------------------------
+# DF-53: Customer Requirement Property Type & BHK Preferences
+# ---------------------------------------------------------------------------
+
+
+def test_create_customer_requirement_property_preference_successfully() -> None:
+    """DF-53: Create a property type and BHK preference."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 3,
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert UUID(payload["id"])
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["property_type"] == "APARTMENT"
+        assert payload["bhk_min"] == 2
+        assert payload["bhk_max"] == 3
+        assert payload["is_active"] is True
+
+
+def test_create_customer_requirement_property_preference_persists() -> None:
+    """DF-53: Created property preferences are persisted."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "VILLA",
+                    "bhk_min": 4,
+                    "bhk_max": 5,
+                },
+            )
+
+        assert response.status_code == 201
+
+        preference_id = UUID(response.json()["id"])
+
+    with TestingSessionLocal() as verification_db:
+        persisted_preference = verification_db.scalar(
+            select(CustomerRequirementPropertyPreference).where(
+                CustomerRequirementPropertyPreference.id == preference_id,
+                CustomerRequirementPropertyPreference.organization_id
+                == organization.id,
+                CustomerRequirementPropertyPreference.customer_requirement_id
+                == requirement.id,
+            )
+        )
+
+    assert persisted_preference is not None
+    assert persisted_preference.property_type == "VILLA"
+    assert persisted_preference.bhk_min == 4
+    assert persisted_preference.bhk_max == 5
+    assert persisted_preference.is_active is True
+
+
+def test_create_customer_requirement_property_preference_supports_all_property_types() -> None:
+    """DF-53: All supported property types can be persisted."""
+
+    property_types = (
+        "APARTMENT",
+        "VILLA",
+        "INDEPENDENT_HOUSE",
+        "PLOT",
+        "COMMERCIAL",
+        "OTHER",
+    )
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            for property_type in property_types:
+                response = client.post(
+                    f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                    json={
+                        "property_type": property_type,
+                    },
+                )
+
+                assert response.status_code == 201
+                assert response.json()["property_type"] == property_type
+                assert response.json()["bhk_min"] is None
+                assert response.json()["bhk_max"] is None
+
+
+def test_create_customer_requirement_property_preference_supports_exact_bhk() -> None:
+    """DF-53: Exact BHK is represented by equal minimum and maximum values."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 2,
+                },
+            )
+
+        assert response.status_code == 201
+        assert response.json()["bhk_min"] == 2
+        assert response.json()["bhk_max"] == 2
+
+
+def test_create_customer_requirement_property_preference_supports_minimum_only_bhk() -> None:
+    """DF-53: A minimum-only BHK preference is supported."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "VILLA",
+                    "bhk_min": 3,
+                },
+            )
+
+        assert response.status_code == 201
+        assert response.json()["bhk_min"] == 3
+        assert response.json()["bhk_max"] is None
+
+
+def test_create_customer_requirement_property_preference_supports_no_bhk() -> None:
+    """DF-53: A property preference can omit BHK entirely."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "PLOT",
+                },
+            )
+
+        assert response.status_code == 201
+        assert response.json()["bhk_min"] is None
+        assert response.json()["bhk_max"] is None
+
+
+def test_create_customer_requirement_property_preference_rejects_invalid_property_type() -> None:
+    """DF-53: Property type must use the controlled vocabulary."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "FARMHOUSE",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_property_preference_rejects_non_positive_bhk() -> None:
+    """DF-53: BHK values must be positive whole numbers."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            zero_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 0,
+                },
+            )
+
+            negative_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_max": -1,
+                },
+            )
+
+        assert zero_response.status_code == 422
+        assert negative_response.status_code == 422
+
+
+def test_create_customer_requirement_property_preference_rejects_invalid_bhk_range() -> None:
+    """DF-53: BHK minimum cannot exceed BHK maximum."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 4,
+                    "bhk_max": 2,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_property_preference_rejects_unknown_fields() -> None:
+    """DF-53: Client-controlled fields outside the contract are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 3,
+                    "organization_id": str(organization.id),
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_property_preference_returns_404_for_missing_requirement() -> None:
+    """DF-53: A preference cannot be created for a missing requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{uuid4()}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 3,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_property_preference_prevents_cross_tenant_access() -> None:
+    """DF-53: A preference cannot be created for another tenant's requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement_b.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 3,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_property_preference_requires_update_permission() -> None:
+    """DF-53: Creating a preference requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+                json={
+                    "property_type": "APARTMENT",
+                    "bhk_min": 2,
+                    "bhk_max": 3,
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_list_customer_requirement_property_preferences_successfully() -> None:
+    """DF-53: List all preferences belonging to a requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        first_preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        second_preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="VILLA",
+            bhk_min=4,
+            bhk_max=None,
+            is_active=True,
+        )
+
+        db.add_all([first_preference, second_preference])
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert len(payload) == 2
+
+        preferences_by_type = {
+            item["property_type"]: item
+            for item in payload
+        }
+
+        assert preferences_by_type["APARTMENT"]["bhk_min"] == 2
+        assert preferences_by_type["APARTMENT"]["bhk_max"] == 3
+
+        assert preferences_by_type["VILLA"]["bhk_min"] == 4
+        assert preferences_by_type["VILLA"]["bhk_max"] is None
+
+
+def test_list_customer_requirement_property_preferences_returns_empty_list() -> None:
+    """DF-53: A requirement without preferences returns an empty list."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+            )
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+def test_list_customer_requirement_property_preferences_returns_404_for_missing_requirement() -> None:
+    """DF-53: Preferences cannot be listed for a missing requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{uuid4()}/property-preferences",
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_list_customer_requirement_property_preferences_prevents_cross_tenant_access() -> None:
+    """DF-53: Preferences cannot be listed from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        preference_b = CustomerRequirementPropertyPreference(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference_b)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement_b.id}/property-preferences",
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_list_customer_requirement_property_preferences_requires_read_permission() -> None:
+    """DF-53: Listing preferences requires requirements.read."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/property-preferences",
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_property_preference_successfully() -> None:
+    """DF-53: Update property type and BHK preference values."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "property_type": "VILLA",
+                    "bhk_min": 4,
+                    "bhk_max": 5,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["property_type"] == "VILLA"
+        assert payload["bhk_min"] == 4
+        assert payload["bhk_max"] == 5
+        assert payload["is_active"] is True
+
+
+def test_update_customer_requirement_property_preference_preserves_omitted_fields() -> None:
+    """DF-53: Omitted PATCH fields remain unchanged."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["property_type"] == "APARTMENT"
+        assert payload["bhk_min"] == 2
+        assert payload["bhk_max"] == 3
+        assert payload["is_active"] is False
+
+
+def test_update_customer_requirement_property_preference_explicit_null_clears_bhk() -> None:
+    """DF-53: Explicit null clears nullable BHK fields."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "bhk_min": None,
+                    "bhk_max": None,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["property_type"] == "APARTMENT"
+        assert payload["bhk_min"] is None
+        assert payload["bhk_max"] is None
+
+
+def test_update_customer_requirement_property_preference_rejects_invalid_final_bhk_range() -> None:
+    """DF-53: PATCH validates the resulting BHK range, not only supplied fields."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "bhk_min": 4,
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "BHK minimum cannot be greater than BHK maximum.",
+        }
+
+
+def test_update_customer_requirement_property_preference_rejects_null_property_type() -> None:
+    """DF-53: Persisted preferences cannot have a null property type."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "property_type": None,
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Property type cannot be cleared.",
+        }
+
+
+def test_update_customer_requirement_property_preference_rejects_unknown_fields() -> None:
+    """DF-53: Unknown PATCH fields are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "unknown_field": "not-allowed",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_property_preference_returns_404_for_missing_preference() -> None:
+    """DF-53: Updating a missing preference returns 404."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{uuid4()}"
+                ),
+                json={
+                    "bhk_min": 3,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement property preference not found.",
+        }
+
+
+def test_update_customer_requirement_property_preference_prevents_cross_tenant_access() -> None:
+    """DF-53: A preference cannot be updated from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        preference_b = CustomerRequirementPropertyPreference(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference_b)
+        db.commit()
+        db.refresh(preference_b)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement_b.id}"
+                    f"/property-preferences/{preference_b.id}"
+                ),
+                json={
+                    "property_type": "VILLA",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement property preference not found.",
+        }
+
+
+def test_update_customer_requirement_property_preference_requires_update_permission() -> None:
+    """DF-53: Updating a preference requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "property_type": "VILLA",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_property_preference_can_deactivate_without_deleting() -> None:
+    """DF-53: Deactivation retains the property preference record."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        preference_id = preference.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["is_active"] is False
+
+    with TestingSessionLocal() as verification_db:
+        persisted_preference = verification_db.scalar(
+            select(CustomerRequirementPropertyPreference).where(
+                CustomerRequirementPropertyPreference.id == preference_id,
+                CustomerRequirementPropertyPreference.organization_id
+                == organization.id,
+            )
+        )
+
+    assert persisted_preference is not None
+    assert persisted_preference.is_active is False
+    assert persisted_preference.property_type == "APARTMENT"
+    assert persisted_preference.bhk_min == 2
+    assert persisted_preference.bhk_max == 3
