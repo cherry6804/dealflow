@@ -14,6 +14,9 @@ from app.requirements.schemas import (
     CustomerRequirementLocationCreateRequest,
     CustomerRequirementLocationResponse,
     CustomerRequirementLocationUpdateRequest,
+    CustomerRequirementPossessionParkingPreferenceCreateRequest,
+    CustomerRequirementPossessionParkingPreferenceResponse,
+    CustomerRequirementPossessionParkingPreferenceUpdateRequest,
     CustomerRequirementPropertyPreferenceCreateRequest,
     CustomerRequirementPropertyPreferenceResponse,
     CustomerRequirementPropertyPreferenceUpdateRequest,
@@ -23,14 +26,17 @@ from app.requirements.schemas import (
 from app.requirements.service import (
     create_customer_requirement,
     create_customer_requirement_location,
+    create_customer_requirement_possession_parking_preference,
     create_customer_requirement_property_preference,
     get_customer_requirement,
     get_customer_requirement_location,
+    get_customer_requirement_possession_parking_preference,
     get_customer_requirement_property_preference,
     list_customer_requirement_locations,
     list_customer_requirement_property_preferences,
     update_customer_requirement_budget,
     update_customer_requirement_location,
+    update_customer_requirement_possession_parking_preference,
     update_customer_requirement_property_preference,
 )
 from app.tenant.dependencies import TenantContext
@@ -397,5 +403,129 @@ def update_requirement_property_preference(
     db.refresh(preference)
 
     return CustomerRequirementPropertyPreferenceResponse.model_validate(
+        preference
+    )
+
+@router.post(
+    "/{requirement_id}/possession-parking-preference",
+    response_model=CustomerRequirementPossessionParkingPreferenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_requirement_possession_parking_preference(
+    requirement_id: UUID,
+    payload: CustomerRequirementPossessionParkingPreferenceCreateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementPossessionParkingPreferenceResponse:
+    """Create possession and parking preferences for a requirement."""
+
+    try:
+        preference = create_customer_requirement_possession_parking_preference(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            customer_requirement_id=requirement_id,
+            possession_preference=payload.possession_preference,
+            parking_preference=payload.parking_preference,
+            parking_spaces_min=payload.parking_spaces_min,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(preference)
+
+    return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
+        preference
+    )
+
+
+@router.get(
+    "/{requirement_id}/possession-parking-preference",
+    response_model=CustomerRequirementPossessionParkingPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_possession_parking_preference(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementPossessionParkingPreferenceResponse:
+    """Retrieve possession and parking preferences for a requirement."""
+
+    preference = get_customer_requirement_possession_parking_preference(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        customer_requirement_id=requirement_id,
+    )
+
+    if preference is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement possession and parking preference not found.",
+        )
+
+    return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
+        preference
+    )
+
+
+@router.patch(
+    "/{requirement_id}/possession-parking-preference",
+    response_model=CustomerRequirementPossessionParkingPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_requirement_possession_parking_preference(
+    requirement_id: UUID,
+    payload: CustomerRequirementPossessionParkingPreferenceUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementPossessionParkingPreferenceResponse:
+    """Update possession and parking preferences for a requirement."""
+
+    preference = get_customer_requirement_possession_parking_preference(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        customer_requirement_id=requirement_id,
+    )
+
+    if preference is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement possession and parking preference not found.",
+        )
+
+    fields_set = payload.model_fields_set
+
+    try:
+        preference = update_customer_requirement_possession_parking_preference(
+            db=db,
+            preference=preference,
+            possession_preference=payload.possession_preference,
+            parking_preference=payload.parking_preference,
+            parking_spaces_min=payload.parking_spaces_min,
+            is_active=payload.is_active,
+            update_possession_preference="possession_preference" in fields_set,
+            update_parking_preference="parking_preference" in fields_set,
+            update_parking_spaces_min="parking_spaces_min" in fields_set,
+            update_is_active="is_active" in fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    db.refresh(preference)
+
+    return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
         preference
     )

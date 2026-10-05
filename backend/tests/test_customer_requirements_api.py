@@ -19,6 +19,9 @@ from app.db.models.customer_requirement_location import (
 from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
+from app.db.models.customer_requirement_possession_parking_preference import (
+    CustomerRequirementPossessionParkingPreference,
+)
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -3191,3 +3194,1315 @@ def test_update_customer_requirement_property_preference_can_deactivate_without_
     assert persisted_preference.property_type == "APARTMENT"
     assert persisted_preference.bhk_min == 2
     assert persisted_preference.bhk_max == 3
+
+# ---------------------------------------------------------------------------
+# DF-54: Customer Requirement Possession & Parking Preferences
+# ---------------------------------------------------------------------------
+
+
+def test_create_customer_requirement_possession_parking_preference_successfully() -> None:
+    """DF-54: Create possession and parking preferences."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "READY_TO_MOVE",
+                    "parking_preference": "REQUIRED",
+                    "parking_spaces_min": 2,
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert UUID(payload["id"])
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["possession_preference"] == "READY_TO_MOVE"
+        assert payload["parking_preference"] == "REQUIRED"
+        assert payload["parking_spaces_min"] == 2
+        assert payload["is_active"] is True
+        assert payload["created_at"]
+        assert payload["updated_at"]
+
+
+def test_create_customer_requirement_possession_parking_preference_persists() -> None:
+    """DF-54: Created possession and parking preferences are persisted."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "WITHIN_12_MONTHS",
+                    "parking_preference": "PREFERRED",
+                    "parking_spaces_min": 1,
+                },
+            )
+
+        assert response.status_code == 201
+
+        preference_id = UUID(response.json()["id"])
+
+    with TestingSessionLocal() as verification_db:
+        persisted_preference = verification_db.scalar(
+            select(CustomerRequirementPossessionParkingPreference).where(
+                CustomerRequirementPossessionParkingPreference.id
+                == preference_id,
+                CustomerRequirementPossessionParkingPreference.organization_id
+                == organization.id,
+                CustomerRequirementPossessionParkingPreference.customer_requirement_id
+                == requirement.id,
+            )
+        )
+
+    assert persisted_preference is not None
+    assert persisted_preference.possession_preference == "WITHIN_12_MONTHS"
+    assert persisted_preference.parking_preference == "PREFERRED"
+    assert persisted_preference.parking_spaces_min == 1
+    assert persisted_preference.is_active is True
+
+
+def test_create_customer_requirement_possession_parking_preference_supports_all_possession_values() -> None:
+    """DF-54: All supported possession values can be persisted."""
+
+    possession_values = (
+        "READY_TO_MOVE",
+        "WITHIN_3_MONTHS",
+        "WITHIN_6_MONTHS",
+        "WITHIN_12_MONTHS",
+        "AFTER_12_MONTHS",
+        "ANY",
+    )
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        for possession_preference in possession_values:
+            requirement = create_customer_requirement(
+                db,
+                organization=organization,
+            )
+
+            with make_test_client(user=user) as client:
+                add_tenant_header(client, organization)
+
+                response = client.post(
+                    (
+                        f"/api/v1/customer-requirements/{requirement.id}"
+                        "/possession-parking-preference"
+                    ),
+                    json={
+                        "possession_preference": possession_preference,
+                        "parking_preference": "ANY",
+                    },
+                )
+
+            assert response.status_code == 201
+            assert response.json()["possession_preference"] == possession_preference
+
+
+def test_create_customer_requirement_possession_parking_preference_supports_all_parking_values() -> None:
+    """DF-54: All supported parking values can be persisted."""
+
+    parking_values = (
+        "REQUIRED",
+        "PREFERRED",
+        "NOT_REQUIRED",
+        "ANY",
+    )
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        for parking_preference in parking_values:
+            requirement = create_customer_requirement(
+                db,
+                organization=organization,
+            )
+
+            with make_test_client(user=user) as client:
+                add_tenant_header(client, organization)
+
+                response = client.post(
+                    (
+                        f"/api/v1/customer-requirements/{requirement.id}"
+                        "/possession-parking-preference"
+                    ),
+                    json={
+                        "possession_preference": "ANY",
+                        "parking_preference": parking_preference,
+                    },
+                )
+
+            assert response.status_code == 201
+            assert response.json()["parking_preference"] == parking_preference
+
+
+def test_create_customer_requirement_possession_parking_preference_supports_optional_parking_spaces() -> None:
+    """DF-54: Minimum parking spaces are optional."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert response.status_code == 201
+
+        payload = response.json()
+
+        assert payload["parking_spaces_min"] is None
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_duplicate() -> None:
+    """DF-54: A requirement can have only one possession/parking record."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            first_response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "READY_TO_MOVE",
+                    "parking_preference": "REQUIRED",
+                },
+            )
+
+            second_response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert first_response.status_code == 201
+        assert second_response.status_code == 404
+        assert second_response.json() == {
+            "detail": "Possession and parking preference already exists.",
+        }
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_invalid_possession() -> None:
+    """DF-54: Invalid possession values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "INVALID",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_invalid_parking() -> None:
+    """DF-54: Invalid parking values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "INVALID",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_zero_parking_spaces() -> None:
+    """DF-54: Minimum parking spaces must be greater than zero."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "REQUIRED",
+                    "parking_spaces_min": 0,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_negative_parking_spaces() -> None:
+    """DF-54: Negative minimum parking spaces are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "REQUIRED",
+                    "parking_spaces_min": -1,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_possession_parking_preference_rejects_unknown_fields() -> None:
+    """DF-54: Unknown creation fields are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                    "organization_id": str(organization.id),
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_create_customer_requirement_possession_parking_preference_returns_404_for_missing_requirement() -> None:
+    """DF-54: Preference cannot be created for a missing requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{uuid4()}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_possession_parking_preference_prevents_cross_tenant_access() -> None:
+    """DF-54: Preference cannot be created for another tenant's requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement_b.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_create_customer_requirement_possession_parking_preference_requires_update_permission() -> None:
+    """DF-54: Creating preferences requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "ANY",
+                    "parking_preference": "ANY",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_get_customer_requirement_possession_parking_preference_successfully() -> None:
+    """DF-54: Retrieve possession and parking preferences."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="WITHIN_6_MONTHS",
+            parking_preference="REQUIRED",
+            parking_spaces_min=2,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(preference.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["possession_preference"] == "WITHIN_6_MONTHS"
+        assert payload["parking_preference"] == "REQUIRED"
+        assert payload["parking_spaces_min"] == 2
+        assert payload["is_active"] is True
+
+
+def test_get_customer_requirement_possession_parking_preference_returns_404_when_missing() -> None:
+    """DF-54: GET returns 404 when no preference exists."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": (
+                "Customer requirement possession and parking "
+                "preference not found."
+            ),
+        }
+
+
+def test_get_customer_requirement_possession_parking_preference_returns_404_for_missing_requirement() -> None:
+    """DF-54: GET returns 404 for a missing requirement."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                (
+                    f"/api/v1/customer-requirements/{uuid4()}"
+                    "/possession-parking-preference"
+                ),
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": (
+                "Customer requirement possession and parking "
+                "preference not found."
+            ),
+        }
+
+
+def test_get_customer_requirement_possession_parking_preference_prevents_cross_tenant_access() -> None:
+    """DF-54: Preference cannot be read from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        preference_b = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            possession_preference="ANY",
+            parking_preference="ANY",
+            is_active=True,
+        )
+
+        db.add(preference_b)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.get(
+                (
+                    f"/api/v1/customer-requirements/{requirement_b.id}"
+                    "/possession-parking-preference"
+                ),
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": (
+                "Customer requirement possession and parking "
+                "preference not found."
+            ),
+        }
+
+
+def test_get_customer_requirement_possession_parking_preference_requires_read_permission() -> None:
+    """DF-54: Reading preferences requires requirements.read."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_successfully() -> None:
+    """DF-54: Update possession, parking, and parking spaces."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=1,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "WITHIN_12_MONTHS",
+                    "parking_preference": "PREFERRED",
+                    "parking_spaces_min": 2,
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["possession_preference"] == "WITHIN_12_MONTHS"
+        assert payload["parking_preference"] == "PREFERRED"
+        assert payload["parking_spaces_min"] == 2
+        assert payload["is_active"] is False
+
+
+def test_update_customer_requirement_possession_parking_preference_preserves_omitted_fields() -> None:
+    """DF-54: Omitted PATCH fields remain unchanged."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=2,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["possession_preference"] == "READY_TO_MOVE"
+        assert payload["parking_preference"] == "REQUIRED"
+        assert payload["parking_spaces_min"] == 2
+        assert payload["is_active"] is False
+
+
+def test_update_customer_requirement_possession_parking_preference_can_clear_parking_spaces() -> None:
+    """DF-54: Explicit null clears the optional parking-space minimum."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=2,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_spaces_min": None,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["parking_spaces_min"] is None
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_null_possession() -> None:
+    """DF-54: Required possession preference cannot be cleared."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": None,
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Possession preference cannot be cleared.",
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_null_parking() -> None:
+    """DF-54: Required parking preference cannot be cleared."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_preference": None,
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Parking preference cannot be cleared.",
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_invalid_parking_spaces() -> None:
+    """DF-54: Invalid parking-space minimum is rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=2,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_spaces_min": 0,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_invalid_possession() -> None:
+    """DF-54: Invalid PATCH possession values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "INVALID",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_invalid_parking() -> None:
+    """DF-54: Invalid PATCH parking values are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_preference": "INVALID",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_possession_parking_preference_rejects_unknown_fields() -> None:
+    """DF-54: Unknown PATCH fields are rejected."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "unknown_field": "not-allowed",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_customer_requirement_possession_parking_preference_returns_404_for_missing_preference() -> None:
+    """DF-54: Updating a missing preference returns 404."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_spaces_min": 2,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": (
+                "Customer requirement possession and parking "
+                "preference not found."
+            ),
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_prevents_cross_tenant_access() -> None:
+    """DF-54: Preference cannot be updated from another tenant."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        preference_b = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization_b.id,
+            customer_requirement_id=requirement_b.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=1,
+            is_active=True,
+        )
+
+        db.add(preference_b)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement_b.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_spaces_min": 2,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": (
+                "Customer requirement possession and parking "
+                "preference not found."
+            ),
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_requires_update_permission() -> None:
+    """DF-54: Updating preferences requires requirements.update."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "parking_spaces_min": 2,
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_customer_requirement_possession_parking_preference_persists_changes() -> None:
+    """DF-54: PATCH changes are persisted to the database."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=1,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        preference_id = preference.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "AFTER_12_MONTHS",
+                    "parking_preference": "ANY",
+                    "parking_spaces_min": 3,
+                },
+            )
+
+        assert response.status_code == 200
+
+    with TestingSessionLocal() as verification_db:
+        persisted_preference = verification_db.scalar(
+            select(CustomerRequirementPossessionParkingPreference).where(
+                CustomerRequirementPossessionParkingPreference.id
+                == preference_id,
+                CustomerRequirementPossessionParkingPreference.organization_id
+                == organization.id,
+                CustomerRequirementPossessionParkingPreference.customer_requirement_id
+                == requirement.id,
+            )
+        )
+
+    assert persisted_preference is not None
+    assert persisted_preference.possession_preference == "AFTER_12_MONTHS"
+    assert persisted_preference.parking_preference == "ANY"
+    assert persisted_preference.parking_spaces_min == 3

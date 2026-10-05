@@ -22,6 +22,9 @@ from app.db.models.customer_requirement_location import CustomerRequirementLocat
 from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
+from app.db.models.customer_requirement_possession_parking_preference import (
+    CustomerRequirementPossessionParkingPreference,
+)
 
 config = context.config
 
