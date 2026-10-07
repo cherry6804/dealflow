@@ -5,6 +5,7 @@ from app.db.models.auth_session import AuthSession
 from app.db.models.contact import Contact
 from app.db.models.customer_profile import CustomerProfile
 from app.db.models.customer_requirement import CustomerRequirement
+from app.db.models.customer_requirement_history import CustomerRequirementHistory
 from app.db.models.customer_requirement_location import CustomerRequirementLocation
 from app.db.models.customer_requirement_possession_parking_preference import (
     CustomerRequirementPossessionParkingPreference,
@@ -27,6 +28,7 @@ __all__ = [
     "Contact",
     "CustomerProfile",
     "CustomerRequirement",
+    "CustomerRequirementHistory",
     "CustomerRequirementLocation",
     "CustomerRequirementPossessionParkingPreference",
     "CustomerRequirementPropertyPreference",
