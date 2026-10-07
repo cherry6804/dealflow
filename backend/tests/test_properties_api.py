@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from decimal import Decimal
 from uuid import UUID, uuid4
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -455,3 +455,402 @@ def test_create_property_is_tenant_scoped() -> None:
 
         assert property_record is not None
         assert property_record.organization_id == organization.id
+
+def test_update_property_commercial_successfully() -> None:
+    """Update all commercial fields for a Property."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "12500000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": "2500.00",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(property_id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["transaction_type"] == "SALE"
+        assert payload["price"] == "12500000.00"
+        assert payload["currency"] == "INR"
+        assert payload["rent"] is None
+        assert payload["security_deposit"] is None
+        assert payload["maintenance_charge"] == "2500.00"
+
+
+def test_update_property_commercial_persists_to_database() -> None:
+    """Persist updated commercial fields in the database."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "RENT",
+                    "price": None,
+                    "currency": "INR",
+                    "rent": "45000.00",
+                    "security_deposit": "90000.00",
+                    "maintenance_charge": "3500.00",
+                },
+            )
+
+        assert response.status_code == 200
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.organization_id == organization.id
+            assert updated_property.transaction_type == "RENT"
+            assert updated_property.price is None
+            assert updated_property.currency == "INR"
+            assert updated_property.rent == Decimal("45000.00")
+            assert updated_property.security_deposit == Decimal("90000.00")
+            assert updated_property.maintenance_charge == Decimal("3500.00")
+        finally:
+            verification_db.close()
+
+
+def test_update_property_commercial_requires_permission() -> None:
+    """Reject commercial updates without properties.update permission."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "1000000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_property_commercial_requires_tenant_context() -> None:
+    """Reject commercial updates without tenant context."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "1000000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_update_property_commercial_is_tenant_scoped() -> None:
+    """Do not update a Property belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=other_organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "1000000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.organization_id == other_organization.id
+            assert unchanged_property.transaction_type is None
+            assert unchanged_property.price is None
+            assert unchanged_property.currency is None
+            assert unchanged_property.rent is None
+            assert unchanged_property.security_deposit is None
+            assert unchanged_property.maintenance_charge is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_commercial_validates_transaction_type() -> None:
+    """Reject unsupported transaction types."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "INVALID",
+                    "price": "1000000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_commercial_validates_currency() -> None:
+    """Reject invalid currency codes."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "1000000.00",
+                    "currency": "IN",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_commercial_validates_non_negative_amounts() -> None:
+    """Reject negative commercial monetary values."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "-1.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_commercial_returns_not_found_for_unknown_property() -> None:
+    """Return 404 when the Property does not exist in the tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        unknown_property_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{unknown_property_id}/commercial",
+                json={
+                    "transaction_type": "SALE",
+                    "price": "1000000.00",
+                    "currency": "INR",
+                    "rent": None,
+                    "security_deposit": None,
+                    "maintenance_charge": None,
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
