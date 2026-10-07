@@ -372,3 +372,19 @@ class CustomerRequirementAssociationResponse(BaseModel):
     lead_id: UUID | None
     customer_profile_id: UUID | None
     updated_at: datetime
+
+class CustomerRequirementHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    customer_requirement_id: UUID
+    organization_id: UUID
+    version: int
+    actor_id: UUID
+    occurred_at: datetime
+    change_type: str
+    snapshot: dict
+
+
+class CustomerRequirementHistoryListResponse(BaseModel):
+    items: list[CustomerRequirementHistoryResponse]

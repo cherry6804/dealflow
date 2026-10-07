@@ -25,6 +25,12 @@ from app.db.models.customer_requirement_property_preference import (
 from app.db.models.customer_requirement_possession_parking_preference import (
     CustomerRequirementPossessionParkingPreference,
 )
+from app.db.models.customer_requirement_history import (
+    CustomerRequirementHistory,
+)
+from app.requirements.history_service import (
+    create_customer_requirement_history,
+)
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -1859,6 +1865,184 @@ def test_update_customer_requirement_location_successfully() -> None:
         assert payload["locality"] == "Tambaram East"
         assert payload["is_active"] is False
 
+def test_update_customer_requirement_location_creates_history() -> None:
+    """DF-56: Updating a requirement location creates an immutable history snapshot."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        location = CustomerRequirementLocation(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            city="Chennai",
+            locality="Tambaram",
+            is_active=True,
+        )
+
+        db.add(location)
+        db.commit()
+        db.refresh(location)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/locations/{location.id}"
+                ),
+                json={
+                    "city": "Chennai",
+                    "locality": "Tambaram East",
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        with TestingSessionLocal() as verification_db:
+            histories = list(
+                verification_db.scalars(
+                    select(CustomerRequirementHistory)
+                    .where(
+                        CustomerRequirementHistory.customer_requirement_id
+                        == requirement.id,
+                        CustomerRequirementHistory.organization_id
+                        == organization.id,
+                    )
+                    .order_by(CustomerRequirementHistory.version.asc())
+                )
+            )
+
+        assert len(histories) == 1
+
+        history = histories[0]
+
+        assert history.version == 1
+        assert history.actor_id == user.id
+        assert history.organization_id == organization.id
+        assert history.customer_requirement_id == requirement.id
+        assert history.change_type == "REQUIREMENT_UPDATED"
+
+        assert history.snapshot["requirement"]["id"] == str(requirement.id)
+        assert history.snapshot["requirement"]["organization_id"] == str(
+            organization.id
+        )
+
+        assert len(history.snapshot["locations"]) == 1
+
+        snapshot_location = history.snapshot["locations"][0]
+
+        assert snapshot_location["id"] == str(location.id)
+        assert snapshot_location["organization_id"] == str(organization.id)
+        assert snapshot_location["customer_requirement_id"] == str(
+            requirement.id
+        )
+        assert snapshot_location["city"] == "Chennai"
+        assert snapshot_location["locality"] == "Tambaram East"
+        assert snapshot_location["is_active"] is False
+
+def test_update_customer_requirement_possession_parking_preference_creates_history() -> None:
+    """DF-56: Updating possession and parking creates a complete history snapshot."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPossessionParkingPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            possession_preference="READY_TO_MOVE",
+            parking_preference="REQUIRED",
+            parking_spaces_min=1,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/possession-parking-preference"
+                ),
+                json={
+                    "possession_preference": "WITHIN_12_MONTHS",
+                    "parking_preference": "REQUIRED",
+                    "parking_spaces_min": 2,
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        with TestingSessionLocal() as verification_db:
+            histories = list(
+                verification_db.scalars(
+                    select(CustomerRequirementHistory)
+                    .where(
+                        CustomerRequirementHistory.customer_requirement_id
+                        == requirement.id,
+                        CustomerRequirementHistory.organization_id
+                        == organization.id,
+                    )
+                    .order_by(CustomerRequirementHistory.version.asc())
+                )
+            )
+
+        assert len(histories) == 1
+
+        history = histories[0]
+
+        assert history.version == 1
+        assert history.actor_id == user.id
+        assert history.organization_id == organization.id
+        assert history.customer_requirement_id == requirement.id
+        assert history.change_type == "REQUIREMENT_UPDATED"
+
+        snapshot = history.snapshot
+
+        assert snapshot["requirement"]["id"] == str(requirement.id)
+        assert snapshot["requirement"]["organization_id"] == str(
+            organization.id
+        )
+
+        snapshot_preference = snapshot["possession_parking_preference"]
+
+        assert snapshot_preference is not None
+        assert snapshot_preference["id"] == str(preference.id)
+        assert snapshot_preference["organization_id"] == str(
+            organization.id
+        )
+        assert snapshot_preference["customer_requirement_id"] == str(
+            requirement.id
+        )
+        assert (
+            snapshot_preference["possession_preference"]
+            == "WITHIN_12_MONTHS"
+        )
+        assert snapshot_preference["parking_preference"] == "REQUIRED"
+        assert snapshot_preference["parking_spaces_min"] == 2
+        assert snapshot_preference["is_active"] is False
 
 def test_update_customer_requirement_location_preserves_omitted_fields() -> None:
     """DF-52: PATCH preserves location fields that are omitted."""
@@ -2849,6 +3033,95 @@ def test_update_customer_requirement_property_preference_successfully() -> None:
         assert payload["bhk_max"] == 5
         assert payload["is_active"] is True
 
+def test_update_customer_requirement_property_preference_creates_history() -> None:
+    """DF-56: Updating a property preference creates a complete history snapshot."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=organization.id,
+            customer_requirement_id=requirement.id,
+            property_type="APARTMENT",
+            bhk_min=2,
+            bhk_max=3,
+            is_active=True,
+        )
+
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    f"/property-preferences/{preference.id}"
+                ),
+                json={
+                    "property_type": "VILLA",
+                    "bhk_min": 3,
+                    "bhk_max": 4,
+                    "is_active": False,
+                },
+            )
+
+        assert response.status_code == 200
+
+        with TestingSessionLocal() as verification_db:
+            histories = list(
+                verification_db.scalars(
+                    select(CustomerRequirementHistory)
+                    .where(
+                        CustomerRequirementHistory.customer_requirement_id
+                        == requirement.id,
+                        CustomerRequirementHistory.organization_id
+                        == organization.id,
+                    )
+                    .order_by(CustomerRequirementHistory.version.asc())
+                )
+            )
+
+        assert len(histories) == 1
+
+        history = histories[0]
+
+        assert history.version == 1
+        assert history.actor_id == user.id
+        assert history.organization_id == organization.id
+        assert history.customer_requirement_id == requirement.id
+        assert history.change_type == "REQUIREMENT_UPDATED"
+
+        snapshot = history.snapshot
+
+        assert snapshot["requirement"]["id"] == str(requirement.id)
+        assert snapshot["requirement"]["organization_id"] == str(
+            organization.id
+        )
+
+        assert len(snapshot["property_preferences"]) == 1
+
+        snapshot_preference = snapshot["property_preferences"][0]
+
+        assert snapshot_preference["id"] == str(preference.id)
+        assert snapshot_preference["organization_id"] == str(organization.id)
+        assert snapshot_preference["customer_requirement_id"] == str(
+            requirement.id
+        )
+        assert snapshot_preference["property_type"] == "VILLA"
+        assert snapshot_preference["bhk_min"] == 3
+        assert snapshot_preference["bhk_max"] == 4
+        assert snapshot_preference["is_active"] is False
 
 def test_update_customer_requirement_property_preference_preserves_omitted_fields() -> None:
     """DF-53: Omitted PATCH fields remain unchanged."""
@@ -5555,3 +5828,948 @@ def test_customer_requirement_association_persists_after_update() -> None:
 
         assert persisted_requirement.lead_id == lead.id
         assert persisted_requirement.customer_profile_id == customer_profile.id
+
+def test_update_customer_requirement_association_creates_history() -> None:
+    """DF-56: Updating Lead and Customer Profile associations creates history."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        contact = create_contact(
+            db,
+            organization=organization,
+            first_name="History",
+        )
+
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                (
+                    f"/api/v1/customer-requirements/{requirement.id}"
+                    "/association"
+                ),
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        db.expire_all()
+
+        history = db.scalars(
+            select(CustomerRequirementHistory).where(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+        ).all()
+
+        assert len(history) == 1
+
+        history_entry = history[0]
+
+        assert history_entry.version == 1
+        assert history_entry.actor_id == user.id
+        assert history_entry.change_type == "REQUIREMENT_UPDATED"
+
+        snapshot = history_entry.snapshot
+
+        assert snapshot["requirement"]["id"] == str(requirement.id)
+        assert snapshot["requirement"]["organization_id"] == str(
+            organization.id
+        )
+        assert snapshot["requirement"]["lead_id"] == str(lead.id)
+        assert snapshot["requirement"]["customer_profile_id"] == str(
+            customer_profile.id
+        )
+
+def test_list_customer_requirement_history_successfully() -> None:
+    """DF-56: List immutable requirement history in version order."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        history_v1 = create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        requirement.budget_min = Decimal("5000000.00")
+        requirement.budget_max = Decimal("10000000.00")
+        requirement.budget_currency = "INR"
+        db.flush()
+
+        history_v2 = create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{requirement.id}/history",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert "items" in payload
+        assert len(payload["items"]) == 2
+
+        first = payload["items"][0]
+        second = payload["items"][1]
+
+        assert first["id"] == str(history_v1.id)
+        assert first["customer_requirement_id"] == str(requirement.id)
+        assert first["organization_id"] == str(organization.id)
+        assert first["version"] == 1
+        assert first["actor_id"] == str(user.id)
+        assert first["change_type"] == "REQUIREMENT_UPDATED"
+
+        assert second["id"] == str(history_v2.id)
+        assert second["version"] == 2
+
+        assert first["version"] < second["version"]
+
+
+def test_get_customer_requirement_history_version_successfully() -> None:
+    """DF-56: Retrieve one immutable requirement history version."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        history = create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/1",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(history.id)
+        assert payload["customer_requirement_id"] == str(requirement.id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["version"] == 1
+        assert payload["actor_id"] == str(user.id)
+        assert payload["change_type"] == "REQUIREMENT_UPDATED"
+
+        assert payload["snapshot"]["requirement"]["id"] == str(
+            requirement.id
+        )
+        assert payload["snapshot"]["requirement"]["organization_id"] == str(
+            organization.id
+        )
+
+
+def test_list_customer_requirement_history_returns_404_for_missing_requirement() -> None:
+    """DF-56: History cannot be listed for a missing requirement."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/{uuid4()}/history",
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+
+def test_get_customer_requirement_history_version_returns_404_for_missing_version() -> None:
+    """DF-56: A missing history version returns 404."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/99",
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Customer requirement history version not found.",
+        }
+
+
+def test_get_customer_requirement_history_rejects_non_positive_version() -> None:
+    """DF-56: History versions must be positive integers."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response_zero = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/0",
+            )
+
+            response_negative = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/-1",
+            )
+
+        assert response_zero.status_code == 400
+        assert response_zero.json() == {
+            "detail": "History version must be greater than zero.",
+        }
+
+        assert response_negative.status_code == 400
+        assert response_negative.json() == {
+            "detail": "History version must be greater than zero.",
+        }
+
+
+def test_list_customer_requirement_history_requires_read_permission() -> None:
+    """DF-56: History retrieval requires requirements.read."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history",
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_list_customer_requirement_history_prevents_cross_tenant_access() -> None:
+    """DF-56: History cannot cross tenant boundaries."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        organization_b = create_organization(db)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        create_customer_requirement_history(
+            db,
+            requirement=requirement_b,
+            organization_id=organization_b.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            list_response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement_b.id}/history",
+            )
+
+            version_response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement_b.id}/history/1",
+            )
+
+        assert list_response.status_code == 404
+        assert list_response.json() == {
+            "detail": "Customer requirement not found.",
+        }
+
+        assert version_response.status_code == 404
+        assert version_response.json() == {
+            "detail": "Customer requirement history version not found.",
+        }
+
+
+def test_customer_requirement_history_preserves_previous_snapshot() -> None:
+    """DF-56: A later edit does not change an earlier snapshot."""
+
+    permission_key = "requirements.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        requirement.budget_min = Decimal("5000000.00")
+        requirement.budget_max = Decimal("7500000.00")
+        requirement.budget_currency = "INR"
+        db.flush()
+
+        history_v1 = create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        requirement.budget_min = Decimal("10000000.00")
+        requirement.budget_max = Decimal("15000000.00")
+        requirement.budget_currency = "INR"
+        db.flush()
+
+        history_v2 = create_customer_requirement_history(
+            db,
+            requirement=requirement,
+            organization_id=organization.id,
+            actor_id=user.id,
+            change_type="REQUIREMENT_UPDATED",
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            first_response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/{history_v1.version}",
+            )
+
+            second_response = client.get(
+                f"/api/v1/customer-requirements/"
+                f"{requirement.id}/history/{history_v2.version}",
+            )
+
+        assert first_response.status_code == 200
+        assert second_response.status_code == 200
+
+        first_snapshot = first_response.json()["snapshot"]["requirement"]
+        second_snapshot = second_response.json()["snapshot"]["requirement"]
+
+        assert first_snapshot["budget_min"] == "5000000.00"
+        assert first_snapshot["budget_max"] == "7500000.00"
+        assert first_snapshot["budget_currency"] == "INR"
+
+        assert second_snapshot["budget_min"] == "10000000.00"
+        assert second_snapshot["budget_max"] == "15000000.00"
+        assert second_snapshot["budget_currency"] == "INR"
+
+def test_customer_requirement_association_creates_history_snapshot() -> None:
+    """Association changes create a complete requirement history snapshot."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        lead_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead",
+        )
+        lead = create_lead(
+            db,
+            organization=organization,
+            contact=lead_contact,
+        )
+
+        customer_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Customer",
+        )
+        customer_profile = create_customer_profile(
+            db,
+            organization=organization,
+            contact=customer_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead.id),
+                    "customer_profile_id": str(customer_profile.id),
+                },
+            )
+
+        assert response.status_code == 201
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .order_by(CustomerRequirementHistory.version.asc())
+            .all()
+        )
+
+        assert len(history) == 1
+        assert history[0].version == 1
+        assert history[0].actor_id == user.id
+        assert history[0].change_type == "REQUIREMENT_UPDATED"
+
+        snapshot = history[0].snapshot
+
+        requirement_snapshot = snapshot["requirement"]
+
+        assert requirement_snapshot["id"] == str(requirement.id)
+        assert requirement_snapshot["organization_id"] == str(
+            organization.id
+        )
+        assert requirement_snapshot["lead_id"] == str(lead.id)
+        assert requirement_snapshot["customer_profile_id"] == str(
+            customer_profile.id
+        )
+
+        assert "status" in requirement_snapshot
+        assert "is_active" in requirement_snapshot
+        assert "budget_min" in requirement_snapshot
+        assert "budget_max" in requirement_snapshot
+        assert "budget_currency" in requirement_snapshot
+        assert "created_at" in requirement_snapshot
+        assert "updated_at" in requirement_snapshot
+
+        assert "locations" in snapshot
+        assert "property_preferences" in snapshot
+        assert "possession_parking_preference" in snapshot
+
+
+def test_customer_requirement_association_history_versions_increment() -> None:
+    """Subsequent association changes append versions without replacing history."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        lead_one_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead One",
+        )
+        lead_one = create_lead(
+            db,
+            organization=organization,
+            contact=lead_one_contact,
+        )
+
+        lead_two_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Lead Two",
+        )
+        lead_two = create_lead(
+            db,
+            organization=organization,
+            contact=lead_two_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            create_response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead_one.id),
+                },
+            )
+
+            assert create_response.status_code == 201
+
+            first_history = (
+                db.query(CustomerRequirementHistory)
+                .filter(
+                    CustomerRequirementHistory.customer_requirement_id
+                    == requirement.id,
+                    CustomerRequirementHistory.organization_id
+                    == organization.id,
+                )
+                .order_by(CustomerRequirementHistory.version.asc())
+                .all()
+            )
+
+            assert len(first_history) == 1
+            assert first_history[0].version == 1
+            assert (
+                first_history[0].snapshot["requirement"]["lead_id"]
+                == str(lead_one.id)
+            )
+            assert (
+                first_history[0]
+                .snapshot["requirement"]["customer_profile_id"]
+                is None
+            )
+
+            update_response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(lead_two.id),
+                },
+            )
+
+            assert update_response.status_code == 200
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .order_by(CustomerRequirementHistory.version.asc())
+            .all()
+        )
+
+        assert len(history) == 2
+
+        assert history[0].version == 1
+        assert history[1].version == 2
+
+        assert (
+            history[0].snapshot["requirement"]["lead_id"]
+            == str(lead_one.id)
+        )
+        assert (
+            history[1].snapshot["requirement"]["lead_id"]
+            == str(lead_two.id)
+        )
+
+        # The previous snapshot must remain unchanged.
+        assert (
+            history[0].snapshot["requirement"]["lead_id"]
+            != history[1].snapshot["requirement"]["lead_id"]
+        )
+
+        assert history[0].actor_id == user.id
+        assert history[1].actor_id == user.id
+
+
+def test_customer_requirement_association_invalid_tenant_does_not_create_history() -> None:
+    """A rejected cross-tenant association must not append history."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        other_organization = create_organization(db)
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        foreign_contact = create_contact(
+            db,
+            organization=other_organization,
+            first_name="Foreign Lead",
+        )
+        foreign_lead = create_lead(
+            db,
+            organization=other_organization,
+            contact=foreign_contact,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                f"/api/v1/customer-requirements/{requirement.id}/association",
+                json={
+                    "lead_id": str(foreign_lead.id),
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Lead not found."
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .all()
+        )
+
+        assert history == []
+
+        db.refresh(requirement)
+
+        assert requirement.lead_id is None
+        assert requirement.customer_profile_id is None
+
+def test_customer_requirement_invalid_budget_update_creates_no_history() -> None:
+    """A rejected budget update must not create a history version."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}",
+                json={
+                    "budget_min": "10000000.00",
+                    "budget_max": "5000000.00",
+                    "budget_currency": "INR",
+                },
+            )
+
+        assert response.status_code == 422
+
+        db.refresh(requirement)
+
+        assert requirement.budget_min is None
+        assert requirement.budget_max is None
+        assert requirement.budget_currency is None
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .all()
+        )
+
+        assert history == []
+
+
+def test_customer_requirement_successful_budget_update_persists_history_atomically() -> None:
+    """A successful requirement update persists state and history together."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}",
+                json={
+                    "budget_min": "5000000.00",
+                    "budget_max": "10000000.00",
+                    "budget_currency": "INR",
+                },
+            )
+
+        assert response.status_code == 200
+
+        db.refresh(requirement)
+
+        assert requirement.budget_min == Decimal("5000000.00")
+        assert requirement.budget_max == Decimal("10000000.00")
+        assert requirement.budget_currency == "INR"
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .order_by(CustomerRequirementHistory.version.asc())
+            .all()
+        )
+
+        assert len(history) == 1
+        assert history[0].version == 1
+        assert history[0].actor_id == user.id
+
+        snapshot = history[0].snapshot["requirement"]
+
+        assert snapshot["id"] == str(requirement.id)
+        assert snapshot["organization_id"] == str(organization.id)
+        assert snapshot["budget_min"] == "5000000.00"
+        assert snapshot["budget_max"] == "10000000.00"
+        assert snapshot["budget_currency"] == "INR"
+
+
+def test_customer_requirement_cross_tenant_update_creates_no_history() -> None:
+    """A rejected cross-tenant update must not create history."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        other_organization = create_organization(db)
+
+        requirement = create_customer_requirement(
+            db,
+            organization=other_organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}",
+                json={
+                    "budget_min": "5000000.00",
+                    "budget_max": "10000000.00",
+                    "budget_currency": "INR",
+                },
+            )
+
+        assert response.status_code == 404
+
+        db.refresh(requirement)
+
+        assert requirement.budget_min is None
+        assert requirement.budget_max is None
+        assert requirement.budget_currency is None
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == other_organization.id,
+            )
+            .all()
+        )
+
+        assert history == []
+
+def test_customer_requirement_history_failure_rolls_back_requirement_update(
+    monkeypatch,
+) -> None:
+    """A history persistence failure must roll back the requirement update."""
+
+    from app.requirements import service
+    from fastapi.testclient import TestClient
+
+    def fail_history_creation(*args, **kwargs):
+        raise RuntimeError("Simulated history persistence failure.")
+
+    monkeypatch.setattr(
+        service,
+        "create_customer_requirement_history",
+        fail_history_creation,
+    )
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+
+        app = create_test_app(user=user)
+
+        with TestClient(
+            app,
+            raise_server_exceptions=False,
+        ) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/customer-requirements/{requirement.id}",
+                json={
+                    "budget_min": "5000000.00",
+                    "budget_max": "10000000.00",
+                    "budget_currency": "INR",
+                },
+            )
+
+        assert response.status_code == 500
+
+        db.refresh(requirement)
+
+        assert requirement.budget_min is None
+        assert requirement.budget_max is None
+        assert requirement.budget_currency is None
+
+        history = (
+            db.query(CustomerRequirementHistory)
+            .filter(
+                CustomerRequirementHistory.customer_requirement_id
+                == requirement.id,
+                CustomerRequirementHistory.organization_id
+                == organization.id,
+            )
+            .all()
+        )
+
+        assert history == []

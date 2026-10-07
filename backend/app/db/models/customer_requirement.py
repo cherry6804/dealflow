@@ -22,6 +22,9 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.customer_profile import CustomerProfile
+    from app.db.models.customer_requirement_history import (
+        CustomerRequirementHistory,
+    )
     from app.db.models.customer_requirement_location import (
         CustomerRequirementLocation,
     )
@@ -185,4 +188,11 @@ class CustomerRequirement(Base):
         back_populates="customer_requirement",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+
+    history: Mapped[list["CustomerRequirementHistory"]] = relationship(
+        "CustomerRequirementHistory",
+        back_populates="customer_requirement",
+        cascade="all, delete-orphan",
+        order_by="CustomerRequirementHistory.version",
     )

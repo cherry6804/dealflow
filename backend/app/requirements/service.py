@@ -21,11 +21,16 @@ from app.db.models.customer_requirement_property_preference import (
 from app.db.models.organization import Organization
 from app.db.models.customer_profile import CustomerProfile
 from app.db.models.lead import Lead
+from app.requirements.history_service import (
+    create_customer_requirement_history,
+)
+
 
 def create_customer_requirement(
     db: Session,
     *,
     organization_id: UUID,
+    actor_id: UUID,
 ) -> CustomerRequirement:
     """Create a new active customer requirement."""
 
@@ -48,6 +53,14 @@ def create_customer_requirement(
     db.add(requirement)
     db.flush()
     db.refresh(requirement)
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_CREATED",
+    )
 
     return requirement
 
@@ -72,6 +85,8 @@ def update_customer_requirement_budget(
     db: Session,
     *,
     requirement: CustomerRequirement,
+    organization_id: UUID,
+    actor_id: UUID,
     budget_min: Decimal | None = None,
     budget_max: Decimal | None = None,
     budget_currency: str | None = None,
@@ -79,7 +94,10 @@ def update_customer_requirement_budget(
     update_budget_max: bool = False,
     update_budget_currency: bool = False,
 ) -> CustomerRequirement:
-    """Update only the supplied budget fields."""
+    """Update only the supplied budget fields and record its history."""
+
+    if requirement.organization_id != organization_id:
+        raise ValueError("Customer requirement not found.")
 
     new_budget_min = (
         budget_min if update_budget_min else requirement.budget_min
@@ -130,6 +148,14 @@ def update_customer_requirement_budget(
     db.add(requirement)
     db.flush()
     db.refresh(requirement)
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_UPDATED",
+    )
 
     return requirement
 
@@ -226,6 +252,8 @@ def update_customer_requirement_location(
     db: Session,
     *,
     location: CustomerRequirementLocation,
+    organization_id: UUID,
+    actor_id: UUID,
     city: str | None = None,
     locality: str | None = None,
     is_active: bool | None = None,
@@ -233,7 +261,10 @@ def update_customer_requirement_location(
     update_locality: bool = False,
     update_is_active: bool = False,
 ) -> CustomerRequirementLocation:
-    """Update only the supplied location fields."""
+    """Update a requirement location and record the complete requirement history."""
+
+    if location.organization_id != organization_id:
+        raise ValueError("Customer requirement location not found.")
 
     if update_city:
         location.city = city
@@ -247,6 +278,24 @@ def update_customer_requirement_location(
     db.add(location)
     db.flush()
     db.refresh(location)
+
+    requirement = db.scalar(
+        select(CustomerRequirement).where(
+            CustomerRequirement.id == location.customer_requirement_id,
+            CustomerRequirement.organization_id == organization_id,
+        )
+    )
+
+    if requirement is None:
+        raise ValueError("Customer requirement not found.")
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_UPDATED",
+    )
 
     return location
 
@@ -353,6 +402,8 @@ def update_customer_requirement_property_preference(
     db: Session,
     *,
     preference: CustomerRequirementPropertyPreference,
+    organization_id: UUID,
+    actor_id: UUID,
     property_type: str | None = None,
     bhk_min: int | None = None,
     bhk_max: int | None = None,
@@ -362,7 +413,10 @@ def update_customer_requirement_property_preference(
     update_bhk_max: bool = False,
     update_is_active: bool = False,
 ) -> CustomerRequirementPropertyPreference:
-    """Update only the supplied property preference fields."""
+    """Update a property preference and record the complete requirement history."""
+
+    if preference.organization_id != organization_id:
+        raise ValueError("Customer requirement property preference not found.")
 
     if update_property_type:
         if property_type is None:
@@ -400,6 +454,24 @@ def update_customer_requirement_property_preference(
     db.add(preference)
     db.flush()
     db.refresh(preference)
+
+    requirement = db.scalar(
+        select(CustomerRequirement).where(
+            CustomerRequirement.id == preference.customer_requirement_id,
+            CustomerRequirement.organization_id == organization_id,
+        )
+    )
+
+    if requirement is None:
+        raise ValueError("Customer requirement not found.")
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_UPDATED",
+    )
 
     return preference
 
@@ -486,6 +558,8 @@ def update_customer_requirement_possession_parking_preference(
     db: Session,
     *,
     preference: CustomerRequirementPossessionParkingPreference,
+    organization_id: UUID,
+    actor_id: UUID,
     possession_preference: str | None = None,
     parking_preference: str | None = None,
     parking_spaces_min: int | None = None,
@@ -495,7 +569,12 @@ def update_customer_requirement_possession_parking_preference(
     update_parking_spaces_min: bool = False,
     update_is_active: bool = False,
 ) -> CustomerRequirementPossessionParkingPreference:
-    """Update only the supplied possession and parking preference fields."""
+    """Update possession and parking preferences and record requirement history."""
+
+    if preference.organization_id != organization_id:
+        raise ValueError(
+            "Customer requirement possession and parking preference not found."
+        )
 
     if update_possession_preference:
         if possession_preference is None:
@@ -527,7 +606,26 @@ def update_customer_requirement_possession_parking_preference(
     db.flush()
     db.refresh(preference)
 
+    requirement = db.scalar(
+        select(CustomerRequirement).where(
+            CustomerRequirement.id == preference.customer_requirement_id,
+            CustomerRequirement.organization_id == organization_id,
+        )
+    )
+
+    if requirement is None:
+        raise ValueError("Customer requirement not found.")
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_UPDATED",
+    )
+
     return preference
+
 
 def get_customer_requirement_association(
     db: Session,
@@ -550,12 +648,13 @@ def update_customer_requirement_association(
     *,
     requirement: CustomerRequirement,
     organization_id: UUID,
+    actor_id: UUID,
     lead_id: UUID | None = None,
     customer_profile_id: UUID | None = None,
     update_lead_id: bool = False,
     update_customer_profile_id: bool = False,
 ) -> CustomerRequirement:
-    """Update the tenant-scoped Lead and Customer Profile associations."""
+    """Update tenant-scoped associations and append requirement history."""
 
     if requirement.organization_id != organization_id:
         raise ValueError("Customer requirement not found.")
@@ -591,5 +690,17 @@ def update_customer_requirement_association(
     db.add(requirement)
     db.flush()
     db.refresh(requirement)
+
+    from app.requirements.history_service import (
+        create_customer_requirement_history,
+    )
+
+    create_customer_requirement_history(
+        db,
+        requirement=requirement,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        change_type="REQUIREMENT_UPDATED",
+    )
 
     return requirement

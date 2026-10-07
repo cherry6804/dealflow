@@ -12,6 +12,8 @@ from app.db.session import get_db_session
 from app.requirements.schemas import (
     CustomerRequirementAssociationRequest,
     CustomerRequirementAssociationResponse,
+    CustomerRequirementHistoryListResponse,
+    CustomerRequirementHistoryResponse,
     CustomerRequirementCreateRequest,
     CustomerRequirementLocationCreateRequest,
     CustomerRequirementLocationResponse,
@@ -24,6 +26,10 @@ from app.requirements.schemas import (
     CustomerRequirementPropertyPreferenceUpdateRequest,
     CustomerRequirementResponse,
     CustomerRequirementUpdateRequest,
+)
+from app.requirements.history_service import (
+    get_customer_requirement_history_version,
+    list_customer_requirement_history,
 )
 from app.requirements.service import (
     create_customer_requirement,
@@ -72,6 +78,7 @@ def create_requirement(
         requirement = create_customer_requirement(
             db=db,
             organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -147,6 +154,8 @@ def update_requirement(
         requirement = update_customer_requirement_budget(
             db=db,
             requirement=requirement,
+            organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             budget_min=payload.budget_min,
             budget_max=payload.budget_max,
             budget_currency=payload.budget_currency,
@@ -267,6 +276,8 @@ def update_requirement_location(
     location = update_customer_requirement_location(
         db=db,
         location=location,
+        organization_id=tenant_context.organization_id,
+        actor_id=tenant_context.membership.user_id,
         city=payload.city,
         locality=payload.locality,
         is_active=payload.is_active,
@@ -388,6 +399,8 @@ def update_requirement_property_preference(
         preference = update_customer_requirement_property_preference(
             db=db,
             preference=preference,
+            organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             property_type=payload.property_type,
             bhk_min=payload.bhk_min,
             bhk_max=payload.bhk_max,
@@ -409,6 +422,7 @@ def update_requirement_property_preference(
     return CustomerRequirementPropertyPreferenceResponse.model_validate(
         preference
     )
+
 
 @router.post(
     "/{requirement_id}/possession-parking-preference",
@@ -471,7 +485,10 @@ def get_requirement_possession_parking_preference(
     if preference is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Customer requirement possession and parking preference not found.",
+            detail=(
+                "Customer requirement possession and parking preference "
+                "not found."
+            ),
         )
 
     return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
@@ -503,7 +520,10 @@ def update_requirement_possession_parking_preference(
     if preference is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Customer requirement possession and parking preference not found.",
+            detail=(
+                "Customer requirement possession and parking preference "
+                "not found."
+            ),
         )
 
     fields_set = payload.model_fields_set
@@ -512,13 +532,21 @@ def update_requirement_possession_parking_preference(
         preference = update_customer_requirement_possession_parking_preference(
             db=db,
             preference=preference,
+            organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             possession_preference=payload.possession_preference,
             parking_preference=payload.parking_preference,
             parking_spaces_min=payload.parking_spaces_min,
             is_active=payload.is_active,
-            update_possession_preference="possession_preference" in fields_set,
-            update_parking_preference="parking_preference" in fields_set,
-            update_parking_spaces_min="parking_spaces_min" in fields_set,
+            update_possession_preference=(
+                "possession_preference" in fields_set
+            ),
+            update_parking_preference=(
+                "parking_preference" in fields_set
+            ),
+            update_parking_spaces_min=(
+                "parking_spaces_min" in fields_set
+            ),
             update_is_active="is_active" in fields_set,
         )
     except ValueError as exc:
@@ -533,6 +561,7 @@ def update_requirement_possession_parking_preference(
     return CustomerRequirementPossessionParkingPreferenceResponse.model_validate(
         preference
     )
+
 
 @router.post(
     "/{requirement_id}/association",
@@ -574,6 +603,7 @@ def create_requirement_association(
             db=db,
             requirement=requirement,
             organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             lead_id=payload.lead_id,
             customer_profile_id=payload.customer_profile_id,
             update_lead_id="lead_id" in fields_set,
@@ -672,6 +702,7 @@ def update_requirement_association(
             db=db,
             requirement=requirement,
             organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             lead_id=payload.lead_id,
             customer_profile_id=payload.customer_profile_id,
             update_lead_id="lead_id" in fields_set,
@@ -693,3 +724,79 @@ def update_requirement_association(
         customer_profile_id=requirement.customer_profile_id,
         updated_at=requirement.updated_at,
     )
+
+@router.get(
+    "/{requirement_id}/history",
+    response_model=CustomerRequirementHistoryListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_requirement_history(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementHistoryListResponse:
+    """List immutable history for a tenant-owned customer requirement."""
+
+    try:
+        history = list_customer_requirement_history(
+            db=db,
+            requirement_id=requirement_id,
+            organization_id=tenant_context.organization_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return CustomerRequirementHistoryListResponse(
+        items=[
+            CustomerRequirementHistoryResponse.model_validate(item)
+            for item in history
+        ]
+    )
+
+
+@router.get(
+    "/{requirement_id}/history/{version}",
+    response_model=CustomerRequirementHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_history_version(
+    requirement_id: UUID,
+    version: int,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementHistoryResponse:
+    """Retrieve one immutable history version for a tenant-owned requirement."""
+
+    if version <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="History version must be greater than zero.",
+        )
+
+    try:
+        history = get_customer_requirement_history_version(
+            db=db,
+            requirement_id=requirement_id,
+            organization_id=tenant_context.organization_id,
+            version=version,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    if history is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer requirement history version not found.",
+        )
+
+    return CustomerRequirementHistoryResponse.model_validate(history)
