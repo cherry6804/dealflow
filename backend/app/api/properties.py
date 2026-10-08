@@ -13,11 +13,14 @@ from app.properties.schemas import (
     PropertyCommercialResponse,
     PropertyCommercialUpdateRequest,
     PropertyCreateRequest,
+    PropertyLocationAttributesResponse,
+    PropertyLocationAttributesUpdateRequest,
     PropertyResponse,
 )
 from app.properties.service import (
     create_property,
     update_property_commercial,
+    update_property_location_attributes,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -90,3 +93,55 @@ def update_property_commercial_endpoint(
     db.refresh(property_record)
 
     return PropertyCommercialResponse.model_validate(property_record)
+
+
+@router.patch(
+    "/{property_id}/location-attributes",
+    response_model=PropertyLocationAttributesResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_property_location_attributes_endpoint(
+    property_id: UUID,
+    payload: PropertyLocationAttributesUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("properties.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> PropertyLocationAttributesResponse:
+    """Update location and core attributes for a Property within the verified tenant."""
+
+    try:
+        property_record = update_property_location_attributes(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            property_id=property_id,
+            fields_to_update=payload.model_fields_set,
+            address_line_1=payload.address_line_1,
+            address_line_2=payload.address_line_2,
+            locality=payload.locality,
+            city=payload.city,
+            state=payload.state,
+            postal_code=payload.postal_code,
+            property_type=payload.property_type,
+            bhk=payload.bhk,
+            built_up_area=payload.built_up_area,
+            carpet_area=payload.carpet_area,
+            floor_number=payload.floor_number,
+            total_floors=payload.total_floors,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if property_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Property not found.",
+        )
+
+    db.commit()
+    db.refresh(property_record)
+
+    return PropertyLocationAttributesResponse.model_validate(property_record)

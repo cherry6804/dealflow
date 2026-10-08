@@ -854,3 +854,645 @@ def test_update_property_commercial_returns_not_found_for_unknown_property() -> 
         assert response.json() == {
             "detail": "Property not found.",
         }
+
+def test_update_property_location_attributes_successfully() -> None:
+    """Update Property location and core attributes successfully."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "address_line_1": "123 Main Street",
+                    "address_line_2": "Apartment 402",
+                    "locality": "Anna Nagar",
+                    "city": "Chennai",
+                    "state": "Tamil Nadu",
+                    "postal_code": "600040",
+                    "property_type": "APARTMENT",
+                    "bhk": 3,
+                    "built_up_area": "1850.50",
+                    "carpet_area": "1500.25",
+                    "floor_number": 4,
+                    "total_floors": 10,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(property_id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["address_line_1"] == "123 Main Street"
+        assert payload["address_line_2"] == "Apartment 402"
+        assert payload["locality"] == "Anna Nagar"
+        assert payload["city"] == "Chennai"
+        assert payload["state"] == "Tamil Nadu"
+        assert payload["postal_code"] == "600040"
+        assert payload["property_type"] == "APARTMENT"
+        assert payload["bhk"] == 3
+        assert payload["built_up_area"] == "1850.50"
+        assert payload["carpet_area"] == "1500.25"
+        assert payload["floor_number"] == 4
+        assert payload["total_floors"] == 10
+
+
+def test_update_property_location_attributes_persists_to_database() -> None:
+    """Persist updated Property location and attributes in the database."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Chennai",
+                    "state": "Tamil Nadu",
+                    "property_type": "VILLA",
+                    "bhk": 4,
+                    "built_up_area": "2400.00",
+                    "carpet_area": "2000.00",
+                    "floor_number": 1,
+                    "total_floors": 2,
+                },
+            )
+
+        assert response.status_code == 200
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.organization_id == organization.id
+            assert updated_property.city == "Chennai"
+            assert updated_property.state == "Tamil Nadu"
+            assert updated_property.property_type == "VILLA"
+            assert updated_property.bhk == 4
+            assert updated_property.built_up_area == Decimal("2400.00")
+            assert updated_property.carpet_area == Decimal("2000.00")
+            assert updated_property.floor_number == 1
+            assert updated_property.total_floors == 2
+        finally:
+            verification_db.close()
+
+
+def test_update_property_location_attributes_supports_partial_updates() -> None:
+    """Update only supplied location and attribute fields."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+            city="Chennai",
+            state="Tamil Nadu",
+            property_type="APARTMENT",
+            bhk=2,
+            built_up_area=Decimal("1200.00"),
+            carpet_area=Decimal("1000.00"),
+            floor_number=2,
+            total_floors=5,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Coimbatore",
+                    "bhk": 3,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["city"] == "Coimbatore"
+        assert payload["state"] == "Tamil Nadu"
+        assert payload["property_type"] == "APARTMENT"
+        assert payload["bhk"] == 3
+        assert payload["built_up_area"] == "1200.00"
+        assert payload["carpet_area"] == "1000.00"
+        assert payload["floor_number"] == 2
+        assert payload["total_floors"] == 5
+
+
+def test_update_property_location_attributes_allows_explicit_null_to_clear_fields() -> None:
+    """Allow explicit null values to clear nullable location and attribute fields."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+            address_line_1="123 Main Street",
+            city="Chennai",
+            state="Tamil Nadu",
+            postal_code="600040",
+            property_type="APARTMENT",
+            bhk=3,
+            built_up_area=Decimal("1800.00"),
+            carpet_area=Decimal("1500.00"),
+            floor_number=3,
+            total_floors=8,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "address_line_1": None,
+                    "postal_code": None,
+                    "property_type": None,
+                    "bhk": None,
+                    "built_up_area": None,
+                    "carpet_area": None,
+                    "floor_number": None,
+                    "total_floors": None,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["address_line_1"] is None
+        assert payload["postal_code"] is None
+        assert payload["property_type"] is None
+        assert payload["bhk"] is None
+        assert payload["built_up_area"] is None
+        assert payload["carpet_area"] is None
+        assert payload["floor_number"] is None
+        assert payload["total_floors"] is None
+
+        assert payload["city"] == "Chennai"
+        assert payload["state"] == "Tamil Nadu"
+
+
+def test_update_property_location_attributes_requires_permission() -> None:
+    """Reject location and attribute updates without properties.update permission."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Chennai",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_property_location_attributes_requires_tenant_context() -> None:
+    """Reject location and attribute updates without tenant context."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Chennai",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_update_property_location_attributes_is_tenant_scoped() -> None:
+    """Do not update a Property belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=other_organization.id,
+            city="Chennai",
+            property_type="APARTMENT",
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Bengaluru",
+                    "property_type": "VILLA",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.organization_id == other_organization.id
+            assert unchanged_property.city == "Chennai"
+            assert unchanged_property.property_type == "APARTMENT"
+        finally:
+            verification_db.close()
+
+
+def test_update_property_location_attributes_returns_not_found_for_unknown_property() -> None:
+    """Return 404 when the Property does not exist in the tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        unknown_property_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{unknown_property_id}/location-attributes",
+                json={
+                    "city": "Chennai",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
+
+
+def test_update_property_location_attributes_validates_property_type() -> None:
+    """Reject unsupported Property types."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "property_type": "INVALID",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_location_attributes_validates_bhk() -> None:
+    """Reject non-positive BHK values."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "bhk": 0,
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_location_attributes_validates_non_negative_areas() -> None:
+    """Reject negative property area values."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "built_up_area": "-1.00",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_location_attributes_validates_floor_values() -> None:
+    """Reject invalid floor values."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            negative_floor_response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "floor_number": -1,
+                },
+            )
+
+            total_floor_response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "total_floors": 0,
+                },
+            )
+
+        assert negative_floor_response.status_code == 422
+        assert total_floor_response.status_code == 422
+
+
+def test_update_property_location_attributes_rejects_floor_above_total_floors() -> None:
+    """Reject a floor number greater than the total number of floors."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "floor_number": 6,
+                    "total_floors": 5,
+                },
+            )
+
+        assert response.status_code == 422
+
+        error_payload = response.json()
+
+        assert error_payload["detail"]
+        assert any(
+            error["msg"] == "Value error, Floor number cannot be greater than total floors."
+            for error in error_payload["detail"]
+        )
+
+
+def test_update_property_location_attributes_does_not_change_commercial_fields() -> None:
+    """Keep existing DF-152 commercial fields unchanged during DF-153 updates."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12500000.00"),
+            currency="INR",
+            rent=None,
+            security_deposit=None,
+            maintenance_charge=Decimal("2500.00"),
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/location-attributes",
+                json={
+                    "city": "Chennai",
+                    "property_type": "APARTMENT",
+                    "bhk": 3,
+                },
+            )
+
+        assert response.status_code == 200
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.transaction_type == "SALE"
+            assert updated_property.price == Decimal("12500000.00")
+            assert updated_property.currency == "INR"
+            assert updated_property.rent is None
+            assert updated_property.security_deposit is None
+            assert updated_property.maintenance_charge == Decimal("2500.00")
+            assert updated_property.city == "Chennai"
+            assert updated_property.property_type == "APARTMENT"
+            assert updated_property.bhk == 3
+        finally:
+            verification_db.close()

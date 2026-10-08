@@ -7,7 +7,13 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class PropertyCreateRequest(BaseModel):
@@ -41,6 +47,92 @@ class PropertyCommercialUpdateRequest(BaseModel):
         return normalized
 
 
+class PropertyLocationAttributesUpdateRequest(BaseModel):
+    """Request payload for updating Property location and attributes.
+
+    The endpoint is a PATCH operation. Fields omitted from the request are
+    left unchanged. Explicit null values clear the corresponding nullable
+    property field.
+    """
+
+    address_line_1: str | None = None
+    address_line_2: str | None = None
+    locality: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+
+    property_type: Literal[
+        "APARTMENT",
+        "VILLA",
+        "INDEPENDENT_HOUSE",
+        "PLOT",
+        "COMMERCIAL",
+        "OTHER",
+    ] | None = None
+
+    bhk: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    built_up_area: Decimal | None = Field(
+        default=None,
+        ge=0,
+    )
+
+    carpet_area: Decimal | None = Field(
+        default=None,
+        ge=0,
+    )
+
+    floor_number: int | None = Field(
+        default=None,
+        ge=0,
+    )
+
+    total_floors: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
+    @field_validator(
+        "address_line_1",
+        "address_line_2",
+        "locality",
+        "city",
+        "state",
+        "postal_code",
+    )
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        """Trim optional location text values."""
+
+        if value is None:
+            return None
+
+        normalized = value.strip()
+
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_floor_relationship(
+        self,
+    ) -> "PropertyLocationAttributesUpdateRequest":
+        """Validate floor relationship when both values are supplied."""
+
+        if (
+            self.floor_number is not None
+            and self.total_floors is not None
+            and self.floor_number > self.total_floors
+        ):
+            raise ValueError(
+                "Floor number cannot be greater than total floors."
+            )
+
+        return self
+
+
 class PropertyResponse(BaseModel):
     """API response representation of a Property."""
 
@@ -61,3 +153,21 @@ class PropertyCommercialResponse(PropertyResponse):
     rent: Decimal | None
     security_deposit: Decimal | None
     maintenance_charge: Decimal | None
+
+
+class PropertyLocationAttributesResponse(PropertyResponse):
+    """API response representation including location and attributes."""
+
+    address_line_1: str | None
+    address_line_2: str | None
+    locality: str | None
+    city: str | None
+    state: str | None
+    postal_code: str | None
+
+    property_type: str | None
+    bhk: int | None
+    built_up_area: Decimal | None
+    carpet_area: Decimal | None
+    floor_number: int | None
+    total_floors: int | None
