@@ -150,3 +150,36 @@ def update_property_location_attributes(
     db.refresh(property_record)
 
     return property_record
+
+
+def update_property_status(
+    db: Session,
+    *,
+    organization_id: UUID,
+    property_id: UUID,
+    status: Literal[
+        "AVAILABLE",
+        "RESERVED",
+        "SOLD",
+        "RENTED",
+        "LEASED",
+        "UNAVAILABLE",
+    ],
+) -> Property | None:
+    """Update availability status for a Property within the verified tenant."""
+
+    property_record = get_property(
+        db=db,
+        organization_id=organization_id,
+        property_id=property_id,
+    )
+
+    if property_record is None:
+        return None
+
+    property_record.status = status
+
+    db.flush()
+    db.refresh(property_record)
+
+    return property_record

@@ -133,6 +133,24 @@ class PropertyLocationAttributesUpdateRequest(BaseModel):
         return self
 
 
+# ------------------------------------------------------------------
+# DF-154: Availability and status
+# ------------------------------------------------------------------
+
+
+class PropertyStatusUpdateRequest(BaseModel):
+    """Request payload for updating Property availability status."""
+
+    status: Literal[
+        "AVAILABLE",
+        "RESERVED",
+        "SOLD",
+        "RENTED",
+        "LEASED",
+        "UNAVAILABLE",
+    ]
+
+
 class PropertyResponse(BaseModel):
     """API response representation of a Property."""
 
@@ -171,3 +189,9 @@ class PropertyLocationAttributesResponse(PropertyResponse):
     carpet_area: Decimal | None
     floor_number: int | None
     total_floors: int | None
+
+
+class PropertyStatusResponse(PropertyResponse):
+    """API response representation including availability status."""
+
+    status: str | None

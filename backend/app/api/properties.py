@@ -16,11 +16,14 @@ from app.properties.schemas import (
     PropertyLocationAttributesResponse,
     PropertyLocationAttributesUpdateRequest,
     PropertyResponse,
+    PropertyStatusResponse,
+    PropertyStatusUpdateRequest,
 )
 from app.properties.service import (
     create_property,
     update_property_commercial,
     update_property_location_attributes,
+    update_property_status,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -145,3 +148,37 @@ def update_property_location_attributes_endpoint(
     db.refresh(property_record)
 
     return PropertyLocationAttributesResponse.model_validate(property_record)
+
+
+@router.patch(
+    "/{property_id}/status",
+    response_model=PropertyStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_property_status_endpoint(
+    property_id: UUID,
+    payload: PropertyStatusUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("properties.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> PropertyStatusResponse:
+    """Update availability status for a Property within the verified tenant."""
+
+    property_record = update_property_status(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        property_id=property_id,
+        status=payload.status,
+    )
+
+    if property_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Property not found.",
+        )
+
+    db.commit()
+    db.refresh(property_record)
+
+    return PropertyStatusResponse.model_validate(property_record)

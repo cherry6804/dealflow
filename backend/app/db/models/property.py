@@ -45,6 +45,26 @@ class Property(Base):
         PROPERTY_TYPE_OTHER,
     )
 
+    # ------------------------------------------------------------------
+    # DF-154: Availability and status
+    # ------------------------------------------------------------------
+
+    STATUS_AVAILABLE = "AVAILABLE"
+    STATUS_RESERVED = "RESERVED"
+    STATUS_SOLD = "SOLD"
+    STATUS_RENTED = "RENTED"
+    STATUS_LEASED = "LEASED"
+    STATUS_UNAVAILABLE = "UNAVAILABLE"
+
+    STATUS_VALUES = (
+        STATUS_AVAILABLE,
+        STATUS_RESERVED,
+        STATUS_SOLD,
+        STATUS_RENTED,
+        STATUS_LEASED,
+        STATUS_UNAVAILABLE,
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         primary_key=True,
@@ -56,6 +76,15 @@ class Property(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    # ------------------------------------------------------------------
+    # DF-154: Availability and status
+    # ------------------------------------------------------------------
+
+    status: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
     )
 
     # ------------------------------------------------------------------
