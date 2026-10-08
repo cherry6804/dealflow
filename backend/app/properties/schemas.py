@@ -102,6 +102,13 @@ class PropertyResponse(BaseModel):
     updated_at: object
 
 
+class PropertyAssociationUpdateRequest(BaseModel):
+    """Partially update Property source and owner associations."""
+
+    source_contact_id: UUID | None = None
+    owner_contact_id: UUID | None = None
+
+
 class PropertyCommercialResponse(PropertyResponse):
     transaction_type: str | None
     price: Decimal | None
@@ -128,6 +135,13 @@ class PropertyLocationAttributesResponse(PropertyResponse):
 
 class PropertyStatusResponse(PropertyResponse):
     status: str | None
+
+
+class PropertyAssociationResponse(PropertyResponse):
+    """Return Property source and owner association identifiers."""
+
+    source_contact_id: UUID | None
+    owner_contact_id: UUID | None
 
 
 class PropertySearchQuery(BaseModel):

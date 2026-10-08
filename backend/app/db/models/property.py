@@ -3,14 +3,22 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Uuid, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    Numeric,
+    String,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
+if False:
     from app.db.models.organization import Organization
 
 
@@ -65,6 +73,25 @@ class Property(Base):
         STATUS_UNAVAILABLE,
     )
 
+    __table_args__ = (
+        # ------------------------------------------------------------------
+        # DF-156: Tenant-safe source association
+        # ------------------------------------------------------------------
+        ForeignKeyConstraint(
+            ["source_contact_id", "organization_id"],
+            ["contacts.id", "contacts.organization_id"],
+            name="fk_properties_source_contact_tenant",
+        ),
+        # ------------------------------------------------------------------
+        # DF-156: Tenant-safe owner association
+        # ------------------------------------------------------------------
+        ForeignKeyConstraint(
+            ["owner_contact_id", "organization_id"],
+            ["contacts.id", "contacts.organization_id"],
+            name="fk_properties_owner_contact_tenant",
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         primary_key=True,
@@ -76,6 +103,20 @@ class Property(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    # ------------------------------------------------------------------
+    # DF-156: Source and owner association
+    # ------------------------------------------------------------------
+
+    source_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+    )
+
+    owner_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
     )
 
     # ------------------------------------------------------------------

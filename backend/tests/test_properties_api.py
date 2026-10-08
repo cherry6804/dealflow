@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.db.models.contact import Contact
 from app.api.properties import router as properties_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.db.models.membership import Membership
@@ -2537,3 +2537,812 @@ def test_search_properties_validates_pagination() -> None:
 
         assert invalid_page_response.status_code == 422
         assert invalid_page_size_response.status_code == 422
+
+def test_update_property_association_source_contact_successfully() -> None:
+    """Associate a Property with a source Contact."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        source_contact = Contact(
+            organization_id=organization.id,
+            first_name="Source",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, source_contact])
+        db.commit()
+        db.refresh(property_record)
+        db.refresh(source_contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(source_contact.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(property_id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["source_contact_id"] == str(source_contact.id)
+        assert payload["owner_contact_id"] is None
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.source_contact_id == source_contact.id
+            assert updated_property.owner_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_owner_contact_successfully() -> None:
+    """Associate a Property with an owner Contact."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        owner_contact = Contact(
+            organization_id=organization.id,
+            first_name="Owner",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, owner_contact])
+        db.commit()
+        db.refresh(property_record)
+        db.refresh(owner_contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "owner_contact_id": str(owner_contact.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["source_contact_id"] is None
+        assert payload["owner_contact_id"] == str(owner_contact.id)
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.source_contact_id is None
+            assert updated_property.owner_contact_id == owner_contact.id
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_source_and_owner_successfully() -> None:
+    """Associate a Property with both source and owner Contacts."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        source_contact = Contact(
+            organization_id=organization.id,
+            first_name="Source",
+            last_name="Contact",
+        )
+
+        owner_contact = Contact(
+            organization_id=organization.id,
+            first_name="Owner",
+            last_name="Contact",
+        )
+
+        db.add_all(
+            [
+                property_record,
+                source_contact,
+                owner_contact,
+            ]
+        )
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(source_contact)
+        db.refresh(owner_contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(source_contact.id),
+                    "owner_contact_id": str(owner_contact.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["source_contact_id"] == str(source_contact.id)
+        assert payload["owner_contact_id"] == str(owner_contact.id)
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.source_contact_id == source_contact.id
+            assert updated_property.owner_contact_id == owner_contact.id
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_allows_same_contact_for_source_and_owner() -> None:
+    """Allow the same Contact to be both source and owner."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        contact = Contact(
+            organization_id=organization.id,
+            first_name="Same",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(contact.id),
+                    "owner_contact_id": str(contact.id),
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["source_contact_id"] == str(contact.id)
+        assert payload["owner_contact_id"] == str(contact.id)
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.source_contact_id == contact.id
+            assert updated_property.owner_contact_id == contact.id
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_explicit_null_clears_and_omitted_field_remains_unchanged() -> None:
+    """Clear an explicit association while keeping omitted fields unchanged."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        source_contact = Contact(
+            organization_id=organization.id,
+            first_name="Source",
+            last_name="Contact",
+        )
+
+        owner_contact = Contact(
+            organization_id=organization.id,
+            first_name="Owner",
+            last_name="Contact",
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        db.add_all(
+            [
+                source_contact,
+                owner_contact,
+                property_record,
+            ]
+        )
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(source_contact)
+        db.refresh(owner_contact)
+
+        property_record.source_contact_id = source_contact.id
+        property_record.owner_contact_id = owner_contact.id
+
+        db.commit()
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": None,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["source_contact_id"] is None
+        assert payload["owner_contact_id"] == str(owner_contact.id)
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.source_contact_id is None
+            assert updated_property.owner_contact_id == owner_contact.id
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_rejects_unknown_source_contact() -> None:
+    """Reject an unknown source Contact."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+        unknown_contact_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(unknown_contact_id),
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Source contact was not found in the current organization."
+        )
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.source_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_rejects_unknown_owner_contact() -> None:
+    """Reject an unknown owner Contact."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+        unknown_contact_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "owner_contact_id": str(unknown_contact_id),
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Owner contact was not found in the current organization."
+        )
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.owner_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_rejects_cross_tenant_source_contact() -> None:
+    """Reject a source Contact belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        other_contact = Contact(
+            organization_id=other_organization.id,
+            first_name="Other",
+            last_name="Tenant",
+        )
+
+        db.add_all([property_record, other_contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(other_contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(other_contact.id),
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Source contact was not found in the current organization."
+        )
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.source_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_rejects_cross_tenant_owner_contact() -> None:
+    """Reject an owner Contact belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        other_contact = Contact(
+            organization_id=other_organization.id,
+            first_name="Other",
+            last_name="Tenant",
+        )
+
+        db.add_all([property_record, other_contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(other_contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "owner_contact_id": str(other_contact.id),
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Owner contact was not found in the current organization."
+        )
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.owner_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_is_tenant_scoped() -> None:
+    """Do not update a Property belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=other_organization.id,
+        )
+
+        contact = Contact(
+            organization_id=organization.id,
+            first_name="Valid",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(contact.id),
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Property not found."
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.organization_id == other_organization.id
+            assert unchanged_property.source_contact_id is None
+            assert unchanged_property.owner_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_requires_permission() -> None:
+    """Reject Property association updates without properties.update permission."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        contact = Contact(
+            organization_id=organization.id,
+            first_name="Test",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(contact.id),
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Permission denied."
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.source_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_requires_tenant_context() -> None:
+    """Reject Property association updates without tenant context."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+
+        contact = Contact(
+            organization_id=organization.id,
+            first_name="Test",
+            last_name="Contact",
+        )
+
+        db.add_all([property_record, contact])
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(contact)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": str(contact.id),
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Organization context is required."
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.source_contact_id is None
+        finally:
+            verification_db.close()
+
+
+def test_update_property_association_validates_all_contacts_before_updating() -> None:
+    """Do not partially update associations when one Contact is invalid."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        existing_source = Contact(
+            organization_id=organization.id,
+            first_name="Existing",
+            last_name="Source",
+        )
+
+        db.add(existing_source)
+        db.flush()
+
+        property_record = Property(
+            organization_id=organization.id,
+            source_contact_id=existing_source.id,
+        )
+
+        db.add(property_record)
+        db.commit()
+
+        db.refresh(property_record)
+        db.refresh(existing_source)
+
+        property_id = property_record.id
+        unknown_owner_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/association",
+                json={
+                    "source_contact_id": None,
+                    "owner_contact_id": str(unknown_owner_id),
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Owner contact was not found in the current organization."
+        )
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.source_contact_id == existing_source.id
+            assert unchanged_property.owner_contact_id is None
+        finally:
+            verification_db.close()

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
 from app.properties.schemas import (
+    PropertyAssociationResponse,
+    PropertyAssociationUpdateRequest,
     PropertyCommercialResponse,
     PropertyCommercialUpdateRequest,
     PropertyCreateRequest,
@@ -25,6 +27,7 @@ from app.properties.schemas import (
 from app.properties.service import (
     create_property,
     search_properties,
+    update_property_association,
     update_property_commercial,
     update_property_location_attributes,
     update_property_status,
@@ -186,6 +189,48 @@ def update_property_status_endpoint(
     db.refresh(property_record)
 
     return PropertyStatusResponse.model_validate(property_record)
+
+
+@router.patch(
+    "/{property_id}/association",
+    response_model=PropertyAssociationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_property_association_endpoint(
+    property_id: UUID,
+    payload: PropertyAssociationUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("properties.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> PropertyAssociationResponse:
+    """Update source and owner Contact associations for a Property."""
+
+    try:
+        property_record = update_property_association(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            property_id=property_id,
+            source_contact_id=payload.source_contact_id,
+            owner_contact_id=payload.owner_contact_id,
+            fields_to_update=payload.model_fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if property_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Property not found.",
+        )
+
+    db.commit()
+    db.refresh(property_record)
+
+    return PropertyAssociationResponse.model_validate(property_record)
 
 
 @router.get(
