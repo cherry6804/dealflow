@@ -1893,3 +1893,647 @@ def test_update_property_status_does_not_change_other_property_fields() -> None:
             assert updated_property.total_floors == 10
         finally:
             verification_db.close()
+
+# ------------------------------------------------------------------
+# DF-155: Property search and filtering
+# ------------------------------------------------------------------
+
+
+def test_search_properties_returns_matching_properties() -> None:
+    """Return tenant-scoped Properties through the search endpoint."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12500000.00"),
+            currency="INR",
+            status="AVAILABLE",
+            city="Chennai",
+            state="Tamil Nadu",
+            locality="Anna Nagar",
+            property_type="APARTMENT",
+            bhk=3,
+            built_up_area=Decimal("1850.00"),
+            carpet_area=Decimal("1500.00"),
+            floor_number=4,
+            total_floors=10,
+        )
+
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get("/api/v1/properties/search")
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 1
+        assert payload["total_pages"] == 1
+        assert len(payload["items"]) == 1
+
+        result = payload["items"][0]
+
+        assert result["id"] == str(property_record.id)
+        assert result["organization_id"] == str(organization.id)
+        assert result["transaction_type"] == "SALE"
+        assert result["price"] == "12500000.00"
+        assert result["currency"] == "INR"
+        assert result["status"] == "AVAILABLE"
+        assert result["city"] == "Chennai"
+        assert result["state"] == "Tamil Nadu"
+        assert result["locality"] == "Anna Nagar"
+        assert result["property_type"] == "APARTMENT"
+        assert result["bhk"] == 3
+
+
+def test_search_properties_supports_text_search() -> None:
+    """Search address and location fields using q."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_property = Property(
+            organization_id=organization.id,
+            address_line_1="123 Green Avenue",
+            locality="Anna Nagar",
+            city="Chennai",
+            state="Tamil Nadu",
+            postal_code="600040",
+        )
+
+        non_matching_property = Property(
+            organization_id=organization.id,
+            address_line_1="456 Beach Road",
+            locality="Adyar",
+            city="Chennai",
+            state="Tamil Nadu",
+            postal_code="600020",
+        )
+
+        db.add_all([matching_property, non_matching_property])
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={"q": "Green"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["id"] == str(matching_property.id)
+
+
+def test_search_properties_supports_structured_filters() -> None:
+    """Apply the supported structured filters."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_property = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("10000000.00"),
+            rent=None,
+            status="AVAILABLE",
+            city="Chennai",
+            state="Tamil Nadu",
+            locality="Anna Nagar",
+            postal_code="600040",
+            property_type="APARTMENT",
+            bhk=3,
+            built_up_area=Decimal("1800.00"),
+            carpet_area=Decimal("1500.00"),
+            floor_number=4,
+            total_floors=10,
+        )
+
+        non_matching_property = Property(
+            organization_id=organization.id,
+            transaction_type="RENT",
+            price=None,
+            rent=Decimal("50000.00"),
+            status="RENTED",
+            city="Bengaluru",
+            state="Karnataka",
+            locality="Indiranagar",
+            postal_code="560038",
+            property_type="VILLA",
+            bhk=4,
+            built_up_area=Decimal("2500.00"),
+            carpet_area=Decimal("2100.00"),
+            floor_number=2,
+            total_floors=3,
+        )
+
+        db.add_all([matching_property, non_matching_property])
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={
+                    "transaction_type": "SALE",
+                    "status": "AVAILABLE",
+                    "property_type": "APARTMENT",
+                    "bhk": 3,
+                    "city": "chennai",
+                    "state": "tamil nadu",
+                    "locality": "Anna",
+                    "postal_code": "600040",
+                    "min_price": "9000000",
+                    "max_price": "11000000",
+                    "min_built_up_area": "1700",
+                    "max_built_up_area": "1900",
+                    "min_carpet_area": "1400",
+                    "max_carpet_area": "1600",
+                    "floor_number": 4,
+                    "total_floors": 10,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_property.id)
+
+
+def test_search_properties_supports_rent_range_filters() -> None:
+    """Filter Properties using minimum and maximum rent."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        lower_rent = Property(
+            organization_id=organization.id,
+            transaction_type="RENT",
+            currency="INR",
+            rent=Decimal("25000.00"),
+            city="Chennai",
+        )
+
+        matching_rent = Property(
+            organization_id=organization.id,
+            transaction_type="RENT",
+            currency="INR",
+            rent=Decimal("45000.00"),
+            city="Chennai",
+        )
+
+        higher_rent = Property(
+            organization_id=organization.id,
+            transaction_type="RENT",
+            currency="INR",
+            rent=Decimal("75000.00"),
+            city="Chennai",
+        )
+
+        db.add_all([lower_rent, matching_rent, higher_rent])
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={
+                    "min_rent": "40000",
+                    "max_rent": "50000",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_rent.id)
+
+
+def test_search_properties_applies_multiple_filters_with_and_semantics() -> None:
+    """Require every supplied filter to match the same Property."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        matching_property = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12000000.00"),
+            currency="INR",
+            status="AVAILABLE",
+            city="Chennai",
+            property_type="APARTMENT",
+            bhk=3,
+        )
+
+        wrong_status = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12000000.00"),
+            currency="INR",
+            status="SOLD",
+            city="Chennai",
+            property_type="APARTMENT",
+            bhk=3,
+        )
+
+        wrong_bhk = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12000000.00"),
+            currency="INR",
+            status="AVAILABLE",
+            city="Chennai",
+            property_type="APARTMENT",
+            bhk=2,
+        )
+
+        db.add_all(
+            [
+                matching_property,
+                wrong_status,
+                wrong_bhk,
+            ]
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={
+                    "transaction_type": "SALE",
+                    "status": "AVAILABLE",
+                    "city": "Chennai",
+                    "property_type": "APARTMENT",
+                    "bhk": 3,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(matching_property.id)
+
+
+def test_search_properties_supports_pagination() -> None:
+    """Return paginated search results."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        properties = [
+            Property(
+                organization_id=organization.id,
+                city="Chennai",
+            )
+            for _ in range(5)
+        ]
+
+        db.add_all(properties)
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={
+                    "page": 2,
+                    "page_size": 2,
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["page"] == 2
+        assert payload["page_size"] == 2
+        assert payload["total"] == 5
+        assert payload["total_pages"] == 3
+        assert len(payload["items"]) == 2
+
+
+def test_search_properties_uses_deterministic_ordering() -> None:
+    """Order search results by created_at descending and id descending."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        first_property = Property(
+            organization_id=organization.id,
+            city="Chennai",
+        )
+
+        second_property = Property(
+            organization_id=organization.id,
+            city="Chennai",
+        )
+
+        third_property = Property(
+            organization_id=organization.id,
+            city="Chennai",
+        )
+
+        db.add_all(
+            [
+                first_property,
+                second_property,
+                third_property,
+            ]
+        )
+        db.commit()
+
+        db.refresh(first_property)
+        db.refresh(second_property)
+        db.refresh(third_property)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        result_ids = [
+            item["id"]
+            for item in payload["items"]
+        ]
+
+        expected_ids = [
+            str(property_record.id)
+            for property_record in sorted(
+                [first_property, second_property, third_property],
+                key=lambda property_record: (
+                    property_record.created_at,
+                    property_record.id,
+                ),
+                reverse=True,
+            )
+        ]
+
+        assert result_ids == expected_ids
+
+
+def test_search_properties_returns_empty_result_when_nothing_matches() -> None:
+    """Return an empty paginated response when no Property matches."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        db.add(
+            Property(
+                organization_id=organization.id,
+                city="Chennai",
+            )
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={"city": "Bengaluru"},
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["items"] == []
+        assert payload["page"] == 1
+        assert payload["page_size"] == 20
+        assert payload["total"] == 0
+        assert payload["total_pages"] == 0
+
+
+def test_search_properties_is_tenant_scoped() -> None:
+    """Never return Properties belonging to another tenant."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        tenant_property = Property(
+            organization_id=organization.id,
+            city="Chennai",
+        )
+
+        other_tenant_property = Property(
+            organization_id=other_organization.id,
+            city="Chennai",
+        )
+
+        db.add_all(
+            [
+                tenant_property,
+                other_tenant_property,
+            ]
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == str(tenant_property.id)
+        assert payload["items"][0]["organization_id"] == str(
+            organization.id
+        )
+
+
+def test_search_properties_requires_permission() -> None:
+    """Reject Property search without properties.read permission."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_search_properties_requires_tenant_context() -> None:
+    """Reject Property search without tenant context."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, _ = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            response = client.get(
+                "/api/v1/properties/search",
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_search_properties_validates_minimum_greater_than_maximum() -> None:
+    """Reject invalid minimum and maximum filter combinations."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.get(
+                "/api/v1/properties/search",
+                params={
+                    "min_price": "15000000",
+                    "max_price": "10000000",
+                },
+            )
+
+        assert response.status_code == 422
+
+        error_payload = response.json()
+
+        assert error_payload["detail"]
+
+        assert any(
+            error["msg"]
+            == "Value error, min_price must be less than or equal to max_price."
+            for error in error_payload["detail"]
+        )
+
+
+def test_search_properties_validates_pagination() -> None:
+    """Reject invalid pagination values."""
+
+    permission_key = "properties.read"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            invalid_page_response = client.get(
+                "/api/v1/properties/search",
+                params={"page": 0},
+            )
+
+            invalid_page_size_response = client.get(
+                "/api/v1/properties/search",
+                params={"page_size": 101},
+            )
+
+        assert invalid_page_response.status_code == 422
+        assert invalid_page_size_response.status_code == 422

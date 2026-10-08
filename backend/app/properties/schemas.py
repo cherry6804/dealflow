@@ -1,35 +1,37 @@
-"""Pydantic schemas for DealFlow Property APIs."""
-
-from __future__ import annotations
-
-from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+PROPERTY_TRANSACTION_TYPES = ("SALE", "RENT", "LEASE")
+PROPERTY_TYPES = (
+    "APARTMENT",
+    "VILLA",
+    "INDEPENDENT_HOUSE",
+    "PLOT",
+    "COMMERCIAL",
+    "OTHER",
+)
+PROPERTY_STATUSES = (
+    "AVAILABLE",
+    "RESERVED",
+    "SOLD",
+    "RENTED",
+    "LEASED",
+    "UNAVAILABLE",
 )
 
 
 class PropertyCreateRequest(BaseModel):
-    """Request payload for creating a Property.
-
-    Organization ownership is intentionally excluded. The tenant context
-    determines the organization that owns the Property.
-    """
+    pass
 
 
 class PropertyCommercialUpdateRequest(BaseModel):
-    """Request payload for updating Property commercial fields."""
-
     transaction_type: Literal["SALE", "RENT", "LEASE"]
     price: Decimal | None = Field(default=None, ge=0)
-    currency: str = Field(min_length=3, max_length=3)
+    currency: str
     rent: Decimal | None = Field(default=None, ge=0)
     security_deposit: Decimal | None = Field(default=None, ge=0)
     maintenance_charge: Decimal | None = Field(default=None, ge=0)
@@ -37,31 +39,21 @@ class PropertyCommercialUpdateRequest(BaseModel):
     @field_validator("currency")
     @classmethod
     def validate_currency(cls, value: str) -> str:
-        """Normalize and validate the three-character currency code."""
-
         normalized = value.strip().upper()
 
         if len(normalized) != 3 or not normalized.isalpha():
-            raise ValueError("Currency must be a three-letter alphabetic code.")
+            raise ValueError("currency must be a valid 3-letter currency code.")
 
         return normalized
 
 
 class PropertyLocationAttributesUpdateRequest(BaseModel):
-    """Request payload for updating Property location and attributes.
-
-    The endpoint is a PATCH operation. Fields omitted from the request are
-    left unchanged. Explicit null values clear the corresponding nullable
-    property field.
-    """
-
     address_line_1: str | None = None
     address_line_2: str | None = None
     locality: str | None = None
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
-
     property_type: Literal[
         "APARTMENT",
         "VILLA",
@@ -70,57 +62,14 @@ class PropertyLocationAttributesUpdateRequest(BaseModel):
         "COMMERCIAL",
         "OTHER",
     ] | None = None
-
-    bhk: int | None = Field(
-        default=None,
-        ge=1,
-    )
-
-    built_up_area: Decimal | None = Field(
-        default=None,
-        ge=0,
-    )
-
-    carpet_area: Decimal | None = Field(
-        default=None,
-        ge=0,
-    )
-
-    floor_number: int | None = Field(
-        default=None,
-        ge=0,
-    )
-
-    total_floors: int | None = Field(
-        default=None,
-        gt=0,
-    )
-
-    @field_validator(
-        "address_line_1",
-        "address_line_2",
-        "locality",
-        "city",
-        "state",
-        "postal_code",
-    )
-    @classmethod
-    def normalize_text(cls, value: str | None) -> str | None:
-        """Trim optional location text values."""
-
-        if value is None:
-            return None
-
-        normalized = value.strip()
-
-        return normalized or None
+    bhk: int | None = Field(default=None, gt=0)
+    built_up_area: Decimal | None = Field(default=None, ge=0)
+    carpet_area: Decimal | None = Field(default=None, ge=0)
+    floor_number: int | None = Field(default=None, ge=0)
+    total_floors: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
-    def validate_floor_relationship(
-        self,
-    ) -> "PropertyLocationAttributesUpdateRequest":
-        """Validate floor relationship when both values are supplied."""
-
+    def validate_floor_relationship(self):
         if (
             self.floor_number is not None
             and self.total_floors is not None
@@ -133,14 +82,7 @@ class PropertyLocationAttributesUpdateRequest(BaseModel):
         return self
 
 
-# ------------------------------------------------------------------
-# DF-154: Availability and status
-# ------------------------------------------------------------------
-
-
 class PropertyStatusUpdateRequest(BaseModel):
-    """Request payload for updating Property availability status."""
-
     status: Literal[
         "AVAILABLE",
         "RESERVED",
@@ -152,19 +94,15 @@ class PropertyStatusUpdateRequest(BaseModel):
 
 
 class PropertyResponse(BaseModel):
-    """API response representation of a Property."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     organization_id: UUID
-    created_at: datetime
-    updated_at: datetime
+    created_at: object
+    updated_at: object
 
 
 class PropertyCommercialResponse(PropertyResponse):
-    """API response representation including commercial fields."""
-
     transaction_type: str | None
     price: Decimal | None
     currency: str | None
@@ -174,7 +112,97 @@ class PropertyCommercialResponse(PropertyResponse):
 
 
 class PropertyLocationAttributesResponse(PropertyResponse):
-    """API response representation including location and attributes."""
+    address_line_1: str | None
+    address_line_2: str | None
+    locality: str | None
+    city: str | None
+    state: str | None
+    postal_code: str | None
+    property_type: str | None
+    bhk: int | None
+    built_up_area: Decimal | None
+    carpet_area: Decimal | None
+    floor_number: int | None
+    total_floors: int | None
+
+
+class PropertyStatusResponse(PropertyResponse):
+    status: str | None
+
+
+class PropertySearchQuery(BaseModel):
+    q: str | None = None
+
+    transaction_type: Literal["SALE", "RENT", "LEASE"] | None = None
+    status: Literal[
+        "AVAILABLE",
+        "RESERVED",
+        "SOLD",
+        "RENTED",
+        "LEASED",
+        "UNAVAILABLE",
+    ] | None = None
+    property_type: Literal[
+        "APARTMENT",
+        "VILLA",
+        "INDEPENDENT_HOUSE",
+        "PLOT",
+        "COMMERCIAL",
+        "OTHER",
+    ] | None = None
+
+    bhk: int | None = Field(default=None, gt=0)
+
+    city: str | None = None
+    state: str | None = None
+    locality: str | None = None
+    postal_code: str | None = None
+
+    min_price: Decimal | None = Field(default=None, ge=0)
+    max_price: Decimal | None = Field(default=None, ge=0)
+
+    min_rent: Decimal | None = Field(default=None, ge=0)
+    max_rent: Decimal | None = Field(default=None, ge=0)
+
+    min_built_up_area: Decimal | None = Field(default=None, ge=0)
+    max_built_up_area: Decimal | None = Field(default=None, ge=0)
+
+    min_carpet_area: Decimal | None = Field(default=None, ge=0)
+    max_carpet_area: Decimal | None = Field(default=None, ge=0)
+
+    floor_number: int | None = Field(default=None, ge=0)
+    total_floors: int | None = Field(default=None, gt=0)
+
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
+
+    @field_validator(
+        "q",
+        "city",
+        "state",
+        "locality",
+        "postal_code",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_filters(cls, value):
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+
+        return normalized or None
+
+
+class PropertySearchResult(PropertyResponse):
+    status: str | None
+
+    transaction_type: str | None
+    price: Decimal | None
+    currency: str | None
+    rent: Decimal | None
+    security_deposit: Decimal | None
+    maintenance_charge: Decimal | None
 
     address_line_1: str | None
     address_line_2: str | None
@@ -191,7 +219,9 @@ class PropertyLocationAttributesResponse(PropertyResponse):
     total_floors: int | None
 
 
-class PropertyStatusResponse(PropertyResponse):
-    """API response representation including availability status."""
-
-    status: str | None
+class PropertySearchResponse(BaseModel):
+    items: list[PropertySearchResult]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int

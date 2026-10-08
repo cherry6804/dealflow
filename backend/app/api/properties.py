@@ -16,11 +16,15 @@ from app.properties.schemas import (
     PropertyLocationAttributesResponse,
     PropertyLocationAttributesUpdateRequest,
     PropertyResponse,
+    PropertySearchQuery,
+    PropertySearchResponse,
+    PropertySearchResult,
     PropertyStatusResponse,
     PropertyStatusUpdateRequest,
 )
 from app.properties.service import (
     create_property,
+    search_properties,
     update_property_commercial,
     update_property_location_attributes,
     update_property_status,
@@ -182,3 +186,48 @@ def update_property_status_endpoint(
     db.refresh(property_record)
 
     return PropertyStatusResponse.model_validate(property_record)
+
+
+@router.get(
+    "/search",
+    response_model=PropertySearchResponse,
+    status_code=status.HTTP_200_OK,
+)
+def search_properties_endpoint(
+    filters: PropertySearchQuery = Depends(),
+    tenant_context: TenantContext = Depends(
+        require_permission("properties.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> PropertySearchResponse:
+    """Search and filter Properties within the verified tenant."""
+
+    try:
+        properties, total, total_pages = search_properties(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            filters=filters,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=[
+                {
+                    "type": "value_error",
+                    "loc": ["query"],
+                    "msg": f"Value error, {exc}",
+                    "input": None,
+                }
+            ],
+        ) from exc
+
+    return PropertySearchResponse(
+        items=[
+            PropertySearchResult.model_validate(property_record)
+            for property_record in properties
+        ],
+        page=filters.page,
+        page_size=filters.page_size,
+        total=total,
+        total_pages=total_pages,
+    )
