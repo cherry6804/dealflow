@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.contacts.service import get_contact
 from app.db.models.property import Property
 from app.properties.schemas import PropertySearchQuery
 
@@ -180,6 +181,72 @@ def update_property_status(
         return None
 
     property_record.status = status
+
+    db.flush()
+    db.refresh(property_record)
+
+    return property_record
+
+
+def update_property_association(
+    db: Session,
+    *,
+    organization_id: UUID,
+    property_id: UUID,
+    source_contact_id: UUID | None,
+    owner_contact_id: UUID | None,
+    fields_to_update: set[str],
+) -> Property | None:
+    """Update Property source and owner associations.
+
+    Only fields explicitly supplied by the PATCH request are changed.
+
+    Explicit null values clear the corresponding association.
+
+    All supplied Contact identifiers are validated against the verified
+    Property tenant before any association is changed.
+    """
+
+    property_record = get_property(
+        db=db,
+        organization_id=organization_id,
+        property_id=property_id,
+    )
+
+    if property_record is None:
+        return None
+
+    if "source_contact_id" in fields_to_update:
+        if source_contact_id is not None:
+            source_contact = get_contact(
+                db=db,
+                organization_id=organization_id,
+                contact_id=source_contact_id,
+            )
+
+            if source_contact is None:
+                raise ValueError(
+                    "Source contact was not found in the current organization."
+                )
+
+    if "owner_contact_id" in fields_to_update:
+        if owner_contact_id is not None:
+            owner_contact = get_contact(
+                db=db,
+                organization_id=organization_id,
+                contact_id=owner_contact_id,
+            )
+
+            if owner_contact is None:
+                raise ValueError(
+                    "Owner contact was not found in the current organization."
+                )
+
+    if "source_contact_id" in fields_to_update:
+        property_record.source_contact_id = source_contact_id
+
+    if "owner_contact_id" in fields_to_update:
+        property_record.owner_contact_id = owner_contact_id
 
     db.flush()
     db.refresh(property_record)
