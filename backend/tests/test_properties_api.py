@@ -1496,3 +1496,400 @@ def test_update_property_location_attributes_does_not_change_commercial_fields()
             assert updated_property.bhk == 3
         finally:
             verification_db.close()
+
+# ------------------------------------------------------------------
+# DF-154: Availability and status
+# ------------------------------------------------------------------
+
+
+def test_update_property_status_successfully() -> None:
+    """Update Property availability status successfully."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "AVAILABLE",
+                },
+            )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["id"] == str(property_id)
+        assert payload["organization_id"] == str(organization.id)
+        assert payload["status"] == "AVAILABLE"
+
+
+def test_update_property_status_persists_to_database() -> None:
+    """Persist the updated Property availability status."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "RESERVED",
+                },
+            )
+
+        assert response.status_code == 200
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+            assert updated_property.organization_id == organization.id
+            assert updated_property.status == "RESERVED"
+        finally:
+            verification_db.close()
+
+
+def test_update_property_status_supports_all_allowed_statuses() -> None:
+    """Support every DF-154 controlled availability status."""
+
+    permission_key = "properties.update"
+
+    allowed_statuses = (
+        "AVAILABLE",
+        "RESERVED",
+        "SOLD",
+        "RENTED",
+        "LEASED",
+        "UNAVAILABLE",
+    )
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            for property_status in allowed_statuses:
+                response = client.patch(
+                    f"/api/v1/properties/{property_id}/status",
+                    json={
+                        "status": property_status,
+                    },
+                )
+
+                assert response.status_code == 200
+                assert response.json()["status"] == property_status
+
+
+def test_update_property_status_validates_status() -> None:
+    """Reject unsupported Property availability statuses."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "INVALID",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_update_property_status_requires_permission() -> None:
+    """Reject status updates without properties.update permission."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "AVAILABLE",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": "Permission denied.",
+        }
+
+
+def test_update_property_status_requires_tenant_context() -> None:
+    """Reject status updates without tenant context."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "AVAILABLE",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "detail": "Organization context is required.",
+        }
+
+
+def test_update_property_status_is_tenant_scoped() -> None:
+    """Do not update a Property belonging to another tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        other_organization = create_organization(db)
+
+        property_record = Property(
+            organization_id=other_organization.id,
+            status="AVAILABLE",
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "SOLD",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            unchanged_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert unchanged_property is not None
+            assert unchanged_property.organization_id == other_organization.id
+            assert unchanged_property.status == "AVAILABLE"
+        finally:
+            verification_db.close()
+
+
+def test_update_property_status_returns_not_found_for_unknown_property() -> None:
+    """Return 404 when the Property does not exist in the tenant."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        unknown_property_id = uuid4()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{unknown_property_id}/status",
+                json={
+                    "status": "AVAILABLE",
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "detail": "Property not found.",
+        }
+
+
+def test_update_property_status_does_not_change_other_property_fields() -> None:
+    """Keep existing Property fields unchanged during DF-154 status updates."""
+
+    permission_key = "properties.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        property_record = Property(
+            organization_id=organization.id,
+            transaction_type="SALE",
+            price=Decimal("12500000.00"),
+            currency="INR",
+            maintenance_charge=Decimal("2500.00"),
+            city="Chennai",
+            state="Tamil Nadu",
+            property_type="APARTMENT",
+            bhk=3,
+            built_up_area=Decimal("1850.00"),
+            carpet_area=Decimal("1500.00"),
+            floor_number=4,
+            total_floors=10,
+        )
+        db.add(property_record)
+        db.commit()
+        db.refresh(property_record)
+
+        property_id = property_record.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/properties/{property_id}/status",
+                json={
+                    "status": "RENTED",
+                },
+            )
+
+        assert response.status_code == 200
+
+        verification_db = TestingSessionLocal()
+
+        try:
+            updated_property = verification_db.scalar(
+                select(Property).where(
+                    Property.id == property_id,
+                )
+            )
+
+            assert updated_property is not None
+
+            assert updated_property.status == "RENTED"
+
+            assert updated_property.transaction_type == "SALE"
+            assert updated_property.price == Decimal("12500000.00")
+            assert updated_property.currency == "INR"
+            assert updated_property.maintenance_charge == Decimal("2500.00")
+
+            assert updated_property.city == "Chennai"
+            assert updated_property.state == "Tamil Nadu"
+            assert updated_property.property_type == "APARTMENT"
+            assert updated_property.bhk == 3
+            assert updated_property.built_up_area == Decimal("1850.00")
+            assert updated_property.carpet_area == Decimal("1500.00")
+            assert updated_property.floor_number == 4
+            assert updated_property.total_floors == 10
+        finally:
+            verification_db.close()
