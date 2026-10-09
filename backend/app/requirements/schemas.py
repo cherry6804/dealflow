@@ -388,3 +388,10 @@ class CustomerRequirementHistoryResponse(BaseModel):
 
 class CustomerRequirementHistoryListResponse(BaseModel):
     items: list[CustomerRequirementHistoryResponse]
+
+class CustomerRequirementListResponse(BaseModel):
+    items: list[CustomerRequirementResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int

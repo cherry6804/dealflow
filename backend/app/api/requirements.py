@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-
+from sqlalchemy import func, select
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
 from app.requirements.schemas import (
@@ -26,6 +26,7 @@ from app.requirements.schemas import (
     CustomerRequirementPropertyPreferenceUpdateRequest,
     CustomerRequirementResponse,
     CustomerRequirementUpdateRequest,
+    CustomerRequirementListResponse
 )
 from app.requirements.history_service import (
     get_customer_requirement_history_version,
@@ -48,6 +49,7 @@ from app.requirements.service import (
     update_customer_requirement_location,
     update_customer_requirement_possession_parking_preference,
     update_customer_requirement_property_preference,
+    list_customer_requirements
 )
 from app.tenant.dependencies import TenantContext
 
@@ -800,3 +802,42 @@ def get_requirement_history_version(
         )
 
     return CustomerRequirementHistoryResponse.model_validate(history)
+
+@router.get(
+    "",
+    response_model=CustomerRequirementListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_requirements(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+        pattern="^(ACTIVE|INACTIVE)$",
+    ),
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> CustomerRequirementListResponse:
+    """List requirements belonging to the verified tenant."""
+
+    items, total, total_pages = list_customer_requirements(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        page=page,
+        page_size=page_size,
+        status=status_filter,
+    )
+
+    return CustomerRequirementListResponse(
+        items=[
+            CustomerRequirementResponse.model_validate(item)
+            for item in items
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=total_pages,
+    )
