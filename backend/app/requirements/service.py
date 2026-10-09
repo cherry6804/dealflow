@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.customer_requirement import CustomerRequirement
@@ -704,3 +704,45 @@ def update_customer_requirement_association(
     )
 
     return requirement
+
+def list_customer_requirements(
+    db: Session,
+    *,
+    organization_id: UUID,
+    page: int = 1,
+    page_size: int = 10,
+    search: str | None = None,
+    status: str | None = None,
+) -> tuple[list[CustomerRequirement], int, int]:
+    """List requirements belonging to the selected organization."""
+
+    from math import ceil
+
+    filters = [
+        CustomerRequirement.organization_id == organization_id,
+    ]
+
+    if status == "ACTIVE":
+        filters.append(CustomerRequirement.is_active.is_(True))
+    elif status == "INACTIVE":
+        filters.append(CustomerRequirement.is_active.is_(False))
+
+    count_statement = (
+        select(func.count())
+        .select_from(CustomerRequirement)
+        .where(*filters)
+    )
+    total = db.scalar(count_statement) or 0
+
+    statement = (
+        select(CustomerRequirement)
+        .where(*filters)
+        .order_by(CustomerRequirement.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    items = list(db.scalars(statement).all())
+    total_pages = ceil(total / page_size) if total else 0
+
+    return items, total, total_pages
