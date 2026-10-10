@@ -1,4 +1,3 @@
-
 """Safe, read-only column detection and preview for import batches."""
 
 from __future__ import annotations

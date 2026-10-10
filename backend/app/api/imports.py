@@ -1,4 +1,5 @@
 
+
 """Data import API routes for DealFlow."""
 
 from uuid import UUID
@@ -14,11 +15,21 @@ from app.imports.preview import (
     ImportPreviewNotFoundError,
     get_import_preview,
 )
-from app.imports.schemas import ImportBatchResponse, ImportPreviewResponse
+from app.imports.schemas import (
+    ImportBatchResponse,
+    ImportPreviewResponse,
+    ImportValidationResponse,
+)
 from app.imports.service import (
     UploadTooLargeError,
     UploadValidationError,
     upload_import_source,
+)
+from app.imports.validation_service import (
+    ImportValidationFileError,
+    ImportValidationMappingError,
+    ImportValidationNotFoundError,
+    validate_import_source,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -99,3 +110,39 @@ def preview_import_source_endpoint(
         ) from exc
 
     return ImportPreviewResponse.model_validate(preview)
+
+
+@router.get(
+    "/{import_batch_id}/validation",
+    response_model=ImportValidationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def validate_import_source_endpoint(
+    import_batch_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("imports.upload"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ImportValidationResponse:
+    """Validate imported rows without creating contacts or changing batch state."""
+    try:
+        result = validate_import_source(
+            db,
+            organization_id=tenant_context.organization_id,
+            import_batch_id=import_batch_id,
+        )
+    except ImportValidationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import batch not found.",
+        ) from exc
+    except (
+        ImportValidationFileError,
+        ImportValidationMappingError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    return ImportValidationResponse.model_validate(result)
