@@ -1,4 +1,3 @@
-
 import uuid
 from datetime import datetime
 
@@ -9,6 +8,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -51,6 +51,10 @@ class ImportBatch(Base):
         CheckConstraint(
             "skipped_rows >= 0",
             name="ck_import_batches_skipped_rows_nonnegative",
+        ),
+        UniqueConstraint(
+            "storage_key",
+            name="uq_import_batches_storage_key",
         ),
     )
 
@@ -156,4 +160,14 @@ class ImportBatch(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    storage_backend: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+
+    storage_key: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
     )

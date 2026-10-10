@@ -13,6 +13,7 @@ from app.db.models.customer_requirement_possession_parking_preference import (
 from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
+from app.db.models.import_batch import ImportBatch
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
@@ -22,7 +23,6 @@ from app.db.models.property import Property
 from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
-from app.db.models.import_batch import ImportBatch
 
 __all__ = [
     "AuditEvent",
@@ -34,6 +34,7 @@ __all__ = [
     "CustomerRequirementLocation",
     "CustomerRequirementPossessionParkingPreference",
     "CustomerRequirementPropertyPreference",
+    "ImportBatch",
     "Lead",
     "Membership",
     "MembershipRole",
@@ -43,5 +44,4 @@ __all__ = [
     "Role",
     "RolePermission",
     "User",
-    "ImportBatch",
 ]

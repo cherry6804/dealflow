@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,14 @@ class Settings(BaseSettings):
     auth_cookie_httponly: bool = True
     auth_cookie_samesite: str = "lax"
     auth_cookie_path: str = "/"
+
+    # Private local storage for uploaded import source files.
+    # Keep this outside directories served as static/public assets.
+    upload_storage_dir: Path = BASE_DIR / "var" / "private_uploads"
+    upload_max_file_size_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        gt=0,
+    )
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

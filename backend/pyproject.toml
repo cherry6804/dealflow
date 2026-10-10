@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4.0",
     "pwdlib[argon2]>=0.3.1",
     "pydantic-settings>=2.0,<3.0",
+    "python-multipart>=0.0.20,<1.0",
     "sqlalchemy>=2.0,<3.0",
     "uvicorn[standard]>=0.35,<1.0",
 ]
@@ -32,3 +33,6 @@ include = ["app*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+
+[tool.ruff.lint]
+ignore = ["B008"]

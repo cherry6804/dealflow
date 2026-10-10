@@ -1,4 +1,3 @@
-
 import uuid
 
 from app.db.models.import_batch import ImportBatch
@@ -27,6 +26,8 @@ def test_import_batch_has_expected_columns() -> None:
         "completed_at",
         "created_at",
         "updated_at",
+        "storage_backend",
+        "storage_key",
     }
 
 
@@ -58,6 +59,23 @@ def test_import_batch_required_and_optional_metadata() -> None:
     assert columns.error_summary.nullable is True
     assert columns.started_at.nullable is True
     assert columns.completed_at.nullable is True
+    assert columns.storage_backend.nullable is True
+    assert columns.storage_key.nullable is True
+
+
+def test_import_batch_storage_key_has_named_unique_constraint() -> None:
+    constraints = ImportBatch.__table__.constraints
+
+    storage_key_constraint = next(
+        constraint
+        for constraint in constraints
+        if constraint.name == "uq_import_batches_storage_key"
+    )
+
+    assert storage_key_constraint.__class__.__name__ == "UniqueConstraint"
+    assert [column.name for column in storage_key_constraint.columns] == [
+        "storage_key"
+    ]
 
 
 def test_import_batch_status_default() -> None:
