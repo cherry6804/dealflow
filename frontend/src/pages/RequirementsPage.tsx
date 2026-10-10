@@ -23,7 +23,10 @@ import {
   type ParkingPreference,
 } from "../services/requirementApi";
 import "./RequirementsPage.css";
-
+import {
+  customerProfilesApi,
+  type CustomerProfile,
+} from "../services/customerProfileApi";
 const PAGE_SIZE = 10;
 
 const PROPERTY_TYPES: PropertyType[] = [
@@ -110,6 +113,19 @@ function contactName(contact: Contact | undefined): string {
   );
 }
 
+function customerProfileName(profile: CustomerProfile): string {
+  const contact = profile.contact;
+
+  return (
+    [contact.first_name, contact.last_name]
+      .filter(Boolean)
+      .join(" ") ||
+    contact.email ||
+    contact.phone ||
+    "Unnamed customer"
+  );
+}
+
 interface LeadOption {
   lead: Lead;
   contact?: Contact;
@@ -147,6 +163,9 @@ export default function RequirementsPage() {
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [customerProfiles, setCustomerProfiles] = useState<
+    CustomerProfile[]
+  >([]);
 
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -154,7 +173,6 @@ export default function RequirementsPage() {
 
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
-  const [active, setActive] = useState(true);
 
   const [city, setCity] = useState("");
   const [locality, setLocality] = useState("");
@@ -229,27 +247,34 @@ export default function RequirementsPage() {
 
     async function loadOptions() {
       try {
-        const [leadResult, contactResult] = await Promise.all([
-          leadsApi.list({
-            page: 1,
-            page_size: 100,
-            is_active: true,
-          }),
-          contactsApi.list({
-            page: 1,
-            page_size: 100,
-            is_active: true,
-          }),
-        ]);
+        const [leadResult, contactResult, customerProfileResult] =
+          await Promise.all([
+            leadsApi.list({
+              page: 1,
+              page_size: 100,
+              is_active: true,
+            }),
+            contactsApi.list({
+              page: 1,
+              page_size: 100,
+              is_active: true,
+            }),
+            customerProfilesApi.list({
+              page: 1,
+              page_size: 100,
+              is_active: true,
+            }),
+          ]);
 
         if (!cancelled) {
           setLeads(leadResult.items);
           setContacts(contactResult.items);
+          setCustomerProfiles(customerProfileResult.items);
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(
-            `Unable to load lead options: ${getErrorMessage(loadError)}`,
+            `Unable to load assignment options: ${getErrorMessage(loadError)}`,
           );
         }
       }
@@ -300,7 +325,6 @@ export default function RequirementsPage() {
         setBudgetMax(
           record.budget_max == null ? "" : String(record.budget_max),
         );
-        setActive(record.is_active);
 
         const [
           locationResult,
@@ -1082,15 +1106,27 @@ export default function RequirementsPage() {
 
                       <label className="requirements-form-field requirements-field-full">
                         <span>Customer profile</span>
-                        <input
+                        <select
                           value={customerProfileId}
-                          disabled
-                          placeholder="Customer profile selector not available"
-                        />
+                          disabled={saving || busy}
+                          onChange={(event) => setCustomerProfileId(event.target.value)}
+                        >
+                          <option value="">No customer selected</option>
+
+                          {customerProfiles.map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {customerProfileName(profile)}
+                              {profile.contact.email ? ` · ${profile.contact.email}` : ""}
+                            </option>
+                          ))}
+                        </select>
+
                         <small>
-                          A customer-profile listing endpoint is needed
-                          to populate this field. Contact records are not
-                          substituted for customer profiles.
+                          {customerProfiles.length === 0
+                            ? "No active registered customers are available."
+                            : `${customerProfiles.length} active registered customer${
+                                customerProfiles.length === 1 ? "" : "s"
+                              } available.`}
                         </small>
                       </label>
                     </div>
