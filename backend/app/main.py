@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app.api.auth import router as auth_router
 from app.api.organizations import router as organizations_router
 from app.api.contacts import router as contacts_router
+from app.api.customer_profiles import router as customer_profiles_router
 from app.api.leads import router as leads_router
 from app.api.properties import router as properties_router
 from app.api.requirements import router as requirements_router
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(organizations_router)
     app.include_router(contacts_router)
+    app.include_router(customer_profiles_router)
     app.include_router(leads_router)
     app.include_router(requirements_router)
     app.include_router(properties_router)

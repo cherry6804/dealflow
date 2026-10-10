@@ -5,6 +5,7 @@ import { AppProvider } from "./contexts/AppContext";
 import { useAppContext } from "./contexts/useAppContext";
 import AppLayout from "./layouts/AppLayout";
 import ContactsPage from "./pages/ContactsPage";
+import CustomersPage from "./pages/CustomersPage";
 import LeadsPage from "./pages/LeadsPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
@@ -72,6 +73,7 @@ function ApplicationRoutes() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<TodayPage />} />
         <Route path="/contacts" element={<ContactsPage />} />
+        <Route path="/customers" element={<CustomersPage />} />
         <Route path="/leads" element={<LeadsPage />} />
         <Route path="/properties" element={<PropertiesPage />} />
         <Route path="/login" element={<Navigate to="/" replace />} />

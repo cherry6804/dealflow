@@ -3,6 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 const navigation = [
   { label: "Today", path: "/", end: true },
   { label: "Contacts", path: "/contacts", end: false },
+  { label: "Customers", path: "/customers", end: false },
   { label: "Leads", path: "/leads", end: false },
   { label: "Properties", path: "/properties", end: false },
   { label: "Requirements", path: "/requirements", end: false },
