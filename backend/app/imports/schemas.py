@@ -1,4 +1,3 @@
-
 """Pydantic schemas for data import APIs."""
 
 from datetime import datetime
@@ -57,4 +56,29 @@ class ImportPreviewResponse(BaseModel):
     preview_rows: list[dict[str, Any]]
     preview_row_limit: int
     has_more_rows: bool
+    contacts_created: int
+
+
+class ImportValidationErrorDetail(BaseModel):
+    """A single source-row validation error."""
+
+    row_number: int
+    field: str
+    code: str
+    message: str
+
+
+class ImportValidationResponse(BaseModel):
+    """Read-only validation results for an uploaded import source."""
+
+    import_batch_id: UUID
+    source_filename: str
+    source_format: str
+    worksheet_name: str | None
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    errors: list[ImportValidationErrorDetail]
+    error_limit: int
+    errors_truncated: bool
     contacts_created: int
