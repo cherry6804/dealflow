@@ -25,6 +25,7 @@ from app.db.models.customer_requirement_property_preference import (
 from app.db.models.customer_requirement_possession_parking_preference import (
     CustomerRequirementPossessionParkingPreference,
 )
+from app.db.models.import_batch import ImportBatch
 
 config = context.config
 
