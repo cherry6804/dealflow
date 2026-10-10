@@ -1,5 +1,3 @@
-
-
 """Data import API routes for DealFlow."""
 
 from uuid import UUID
@@ -15,9 +13,17 @@ from app.imports.preview import (
     ImportPreviewNotFoundError,
     get_import_preview,
 )
+from app.imports.processing_service import (
+    ImportProcessingConflictError,
+    ImportProcessingFileError,
+    ImportProcessingMappingError,
+    ImportProcessingNotFoundError,
+    process_import_batch,
+)
 from app.imports.schemas import (
     ImportBatchResponse,
     ImportPreviewResponse,
+    ImportProcessingResponse,
     ImportValidationResponse,
 )
 from app.imports.service import (
@@ -146,3 +152,48 @@ def validate_import_source_endpoint(
         ) from exc
 
     return ImportValidationResponse.model_validate(result)
+
+@router.post(
+    "/{import_batch_id}/process",
+    response_model=ImportProcessingResponse,
+    status_code=status.HTTP_200_OK,
+)
+def process_import_source_endpoint(
+    import_batch_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("imports.upload"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ImportProcessingResponse:
+    """Create contacts from valid rows without activating lead workflows."""
+    try:
+        result = process_import_batch(
+            db,
+            organization_id=tenant_context.organization_id,
+            import_batch_id=import_batch_id,
+        )
+    except ImportProcessingNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import batch not found.",
+        ) from exc
+    except ImportProcessingConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except (
+        ImportProcessingFileError,
+        ImportProcessingMappingError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The import batch could not be processed.",
+        ) from None
+
+    return ImportProcessingResponse.model_validate(result)
