@@ -1,13 +1,20 @@
 
 """Data import API routes for DealFlow."""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
-from app.imports.schemas import ImportBatchResponse
+from app.imports.preview import (
+    ImportPreviewFileError,
+    ImportPreviewNotFoundError,
+    get_import_preview,
+)
+from app.imports.schemas import ImportBatchResponse, ImportPreviewResponse
 from app.imports.service import (
     UploadTooLargeError,
     UploadValidationError,
@@ -59,3 +66,36 @@ async def upload_import_source_endpoint(
         await file.close()
 
     return ImportBatchResponse.model_validate(import_batch)
+
+
+@router.get(
+    "/{import_batch_id}/preview",
+    response_model=ImportPreviewResponse,
+    status_code=status.HTTP_200_OK,
+)
+def preview_import_source_endpoint(
+    import_batch_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("imports.upload"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ImportPreviewResponse:
+    """Detect columns and preview source rows for the verified tenant."""
+    try:
+        preview = get_import_preview(
+            db,
+            organization_id=tenant_context.organization_id,
+            import_batch_id=import_batch_id,
+        )
+    except ImportPreviewNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import batch not found.",
+        ) from exc
+    except ImportPreviewFileError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    return ImportPreviewResponse.model_validate(preview)

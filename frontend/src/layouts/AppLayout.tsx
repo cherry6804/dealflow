@@ -7,6 +7,7 @@ const navigation = [
   { label: "Leads", path: "/leads", end: false },
   { label: "Properties", path: "/properties", end: false },
   { label: "Requirements", path: "/requirements", end: false },
+  { label: "Imports", path: "/imports", end: false },
 ];
 
 export default function AppLayout() {

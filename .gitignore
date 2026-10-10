@@ -86,3 +86,6 @@ coverage/
 # OS-specific local files
 .DS_Store
 Thumbs.db
+
+# Private runtime upload storage
+/var/private_uploads/
