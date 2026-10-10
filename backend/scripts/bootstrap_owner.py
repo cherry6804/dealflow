@@ -6,8 +6,6 @@ It does not overwrite existing users, roles, or permissions.
 
 from getpass import getpass
 
-from sqlalchemy import select
-
 from app.auth.password import hash_password
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
@@ -17,7 +15,7 @@ from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.session import SessionLocal
-
+from sqlalchemy import select
 
 OWNER_ROLE_NAME = "DealFlow Owner"
 
@@ -34,6 +32,7 @@ REQUIRED_PERMISSIONS = (
     "requirements.create",
     "requirements.read",
     "requirements.update",
+    "imports.upload",
 )
 
 
@@ -69,99 +68,98 @@ def main() -> None:
     del password
     del confirmation
 
-    with SessionLocal() as session:
-        with session.begin():
-            existing_user = session.scalar(
-                select(User.id).where(User.email == email)
+    with SessionLocal() as session, session.begin():
+        existing_user = session.scalar(
+            select(User.id).where(User.email == email)
+        )
+        if existing_user is not None:
+            raise SystemExit(
+                "That email already exists. No changes were made."
             )
-            if existing_user is not None:
-                raise SystemExit(
-                    "That email already exists. No changes were made."
-                )
 
-            existing_role = session.scalar(
-                select(Role.id).where(Role.name == OWNER_ROLE_NAME)
+        existing_role = session.scalar(
+            select(Role.id).where(Role.name == OWNER_ROLE_NAME)
+        )
+        if existing_role is not None:
+            raise SystemExit(
+                f"Role '{OWNER_ROLE_NAME}' already exists. "
+                "Review the existing setup before proceeding."
             )
-            if existing_role is not None:
-                raise SystemExit(
-                    f"Role '{OWNER_ROLE_NAME}' already exists. "
-                    "Review the existing setup before proceeding."
-                )
 
-            permissions = list(
-                session.scalars(
-                    select(Permission).where(
-                        Permission.key.in_(REQUIRED_PERMISSIONS),
-                        Permission.is_active.is_(True),
-                    )
+        permissions = list(
+            session.scalars(
+                select(Permission).where(
+                    Permission.key.in_(REQUIRED_PERMISSIONS),
+                    Permission.is_active.is_(True),
                 )
             )
-            permissions_by_key = {
-                permission.key: permission for permission in permissions
-            }
+        )
+        permissions_by_key = {
+            permission.key: permission for permission in permissions
+        }
 
-            missing_permissions = sorted(
-                set(REQUIRED_PERMISSIONS) - set(permissions_by_key)
-            )
-            if missing_permissions:
-                raise SystemExit(
-                    "Required active permissions are missing: "
-                    + ", ".join(missing_permissions)
-                    + ". No changes were made."
-                )
-
-            user = User(
-                email=email,
-                display_name=display_name,
-                password_hash=password_hash,
-                is_active=True,
+        missing_permissions = sorted(
+            set(REQUIRED_PERMISSIONS) - set(permissions_by_key)
+        )
+        if missing_permissions:
+            raise SystemExit(
+                "Required active permissions are missing: "
+                + ", ".join(missing_permissions)
+                + ". No changes were made."
             )
 
-            organization = Organization(
-                name=organization_name,
-                is_active=True,
-            )
+        user = User(
+            email=email,
+            display_name=display_name,
+            password_hash=password_hash,
+            is_active=True,
+        )
 
-            role = Role(
-                name=OWNER_ROLE_NAME,
-                description=(
-                    "Initial DealFlow owner role for the current "
-                    "Contacts, Leads, Properties, and Requirements APIs."
-                ),
-                is_active=True,
-            )
+        organization = Organization(
+            name=organization_name,
+            is_active=True,
+        )
 
-            session.add_all([user, organization, role])
-            session.flush()
+        role = Role(
+            name=OWNER_ROLE_NAME,
+            description=(
+                "Initial DealFlow owner role for the current "
+                "Contacts, Leads, Properties, and Requirements APIs."
+            ),
+            is_active=True,
+        )
 
-            membership = Membership(
-                user_id=user.id,
-                organization_id=organization.id,
-                is_active=True,
-            )
-            session.add(membership)
-            session.flush()
+        session.add_all([user, organization, role])
+        session.flush()
 
-            for permission_key in REQUIRED_PERMISSIONS:
-                session.add(
-                    RolePermission(
-                        role_id=role.id,
-                        permission_id=permissions_by_key[permission_key].id,
-                    )
-                )
+        membership = Membership(
+            user_id=user.id,
+            organization_id=organization.id,
+            is_active=True,
+        )
+        session.add(membership)
+        session.flush()
 
+        for permission_key in REQUIRED_PERMISSIONS:
             session.add(
-                MembershipRole(
-                    membership_id=membership.id,
+                RolePermission(
                     role_id=role.id,
+                    permission_id=permissions_by_key[permission_key].id,
                 )
             )
 
-            session.flush()
+        session.add(
+            MembershipRole(
+                membership_id=membership.id,
+                role_id=role.id,
+            )
+        )
 
-            user_id = str(user.id)
-            organization_id = str(organization.id)
-            role_id = str(role.id)
+        session.flush()
+
+        user_id = str(user.id)
+        organization_id = str(organization.id)
+        role_id = str(role.id)
 
         # The transaction has committed successfully here.
 

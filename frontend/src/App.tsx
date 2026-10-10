@@ -6,12 +6,13 @@ import { useAppContext } from "./contexts/useAppContext";
 import AppLayout from "./layouts/AppLayout";
 import ContactsPage from "./pages/ContactsPage";
 import CustomersPage from "./pages/CustomersPage";
+import ImportsPage from "./pages/ImportsPage";
 import LeadsPage from "./pages/LeadsPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PropertiesPage from "./pages/PropertiesPage";
-import TodayPage from "./pages/TodayPage";
 import RequirementsPage from "./pages/RequirementsPage";
+import TodayPage from "./pages/TodayPage";
 
 function ApplicationRoutes() {
   const {
@@ -76,8 +77,9 @@ function ApplicationRoutes() {
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/leads" element={<LeadsPage />} />
         <Route path="/properties" element={<PropertiesPage />} />
-        <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="/requirements" element={<RequirementsPage />} />
+        <Route path="/imports" element={<ImportsPage />} />
+        <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

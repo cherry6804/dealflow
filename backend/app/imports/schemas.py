@@ -1,6 +1,8 @@
+
 """Pydantic schemas for data import APIs."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -25,3 +27,34 @@ class ImportBatchResponse(BaseModel):
     skipped_rows: int
     created_at: datetime
     updated_at: datetime
+
+
+class ImportPreviewColumn(BaseModel):
+    """A detected source column and its optional mapping suggestion."""
+
+    index: int
+    source_name: str
+    display_name: str
+    suggested_field: str | None
+
+
+class ImportPreviewTargetField(BaseModel):
+    """A supported destination field for mapping."""
+
+    value: str
+    label: str
+
+
+class ImportPreviewResponse(BaseModel):
+    """Read-only preview of an uploaded import source."""
+
+    import_batch_id: UUID
+    source_filename: str
+    source_format: str
+    worksheet_name: str | None
+    columns: list[ImportPreviewColumn]
+    suggested_target_fields: list[ImportPreviewTargetField]
+    preview_rows: list[dict[str, Any]]
+    preview_row_limit: int
+    has_more_rows: bool
+    contacts_created: int
