@@ -67,7 +67,6 @@ class ImportValidationErrorDetail(BaseModel):
     code: str
     message: str
 
-
 class ImportValidationResponse(BaseModel):
     """Response containing the outcome of validating an import source."""
 
@@ -80,10 +79,10 @@ class ImportValidationResponse(BaseModel):
     valid_rows: int
     invalid_rows: int
     skipped_rows: int
+    errors: list[ImportValidationErrorDetail]
     error_limit: int
     errors_truncated: bool
     contacts_created: int
-
 
 class ImportProcessingResponse(BaseModel):
     """Response containing the outcome of processing an import batch."""

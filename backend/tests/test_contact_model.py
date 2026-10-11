@@ -1,3 +1,4 @@
+
 import uuid
 
 from app.db.models.contact import Contact
@@ -13,6 +14,9 @@ def test_contact_model_has_expected_columns() -> None:
     assert set(columns.keys()) == {
         "id",
         "organization_id",
+        "import_batch_id",
+        "source_row_number",
+        "imported_at",
         "first_name",
         "last_name",
         "email",
@@ -35,11 +39,55 @@ def test_contact_model_is_tenant_scoped() -> None:
 
     assert column.nullable is False
     assert column.index is True
-    assert len(column.foreign_keys) == 1
 
-    foreign_key = next(iter(column.foreign_keys))
+    organization_foreign_keys = [
+        foreign_key
+        for foreign_key in column.foreign_keys
+        if foreign_key.target_fullname == "organizations.id"
+    ]
 
-    assert foreign_key.target_fullname == "organizations.id"
+    assert len(organization_foreign_keys) == 1
+
+
+def test_contact_model_import_provenance_fields() -> None:
+    columns = Contact.__table__.columns
+
+    assert columns.import_batch_id.nullable is True
+    assert columns.import_batch_id.index is True
+    assert columns.import_batch_id.type.python_type is uuid.UUID
+
+    assert columns.source_row_number.nullable is True
+    assert columns.source_row_number.type.python_type is int
+
+    assert columns.imported_at.nullable is True
+
+
+def test_contact_model_has_tenant_safe_import_batch_constraint() -> None:
+    constraints = Contact.__table__.foreign_key_constraints
+
+    import_batch_constraints = [
+        constraint
+        for constraint in constraints
+        if constraint.name == "fk_contacts_import_batch_tenant"
+    ]
+
+    assert len(import_batch_constraints) == 1
+
+    constraint = import_batch_constraints[0]
+
+    assert [column.name for column in constraint.columns] == [
+        "import_batch_id",
+        "organization_id",
+    ]
+
+    assert [
+        element.target_fullname for element in constraint.elements
+    ] == [
+        "import_batches.id",
+        "import_batches.organization_id",
+    ]
+
+    assert constraint.ondelete == "RESTRICT"
 
 
 def test_contact_model_identity_and_communication_fields() -> None:
@@ -92,3 +140,7 @@ def test_contact_model_can_be_constructed() -> None:
     assert contact.email == "test@example.com"
     assert contact.phone == "+911234567890"
     assert contact.is_active is True
+
+    assert contact.import_batch_id is None
+    assert contact.source_row_number is None
+    assert contact.imported_at is None

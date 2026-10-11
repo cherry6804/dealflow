@@ -336,7 +336,9 @@ def validate_import_source(
         "worksheet_name": (
             worksheet_name if canonical_format == "xlsx" else None
         ),
+        "status": batch.status,
         **result,
+        "skipped_rows": result["invalid_rows"],
         "contacts_created": 0,
     }
 

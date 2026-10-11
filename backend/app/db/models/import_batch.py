@@ -53,6 +53,11 @@ class ImportBatch(Base):
             name="ck_import_batches_skipped_rows_nonnegative",
         ),
         UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_import_batches_id_organization_id",
+        ),
+        UniqueConstraint(
             "storage_key",
             name="uq_import_batches_storage_key",
         ),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -20,8 +21,11 @@ def create_contact(
     *,
     organization_id: UUID,
     payload: ContactCreateRequest,
+    import_batch_id: UUID | None = None,
+    source_row_number: int | None = None,
+    imported_at: datetime | None = None,
 ) -> Contact:
-    """Create a Contact owned by the supplied verified organization."""
+    """Create a tenant-owned Contact with optional import provenance."""
     contact = Contact(
         organization_id=organization_id,
         first_name=payload.first_name,
@@ -29,6 +33,9 @@ def create_contact(
         email=payload.email,
         phone=payload.phone,
         is_active=True,
+        import_batch_id=import_batch_id,
+        source_row_number=source_row_number,
+        imported_at=imported_at,
     )
     db.add(contact)
     db.flush()

@@ -8,6 +8,8 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
     String,
     UniqueConstraint,
     Uuid,
@@ -19,6 +21,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.customer_profile import CustomerProfile
+    from app.db.models.import_batch import ImportBatch
     from app.db.models.lead import Lead
     from app.db.models.organization import Organization
 
@@ -34,6 +37,12 @@ class Contact(Base):
             "organization_id",
             name="uq_contacts_id_organization_id",
         ),
+        ForeignKeyConstraint(
+            ["import_batch_id", "organization_id"],
+            ["import_batches.id", "import_batches.organization_id"],
+            name="fk_contacts_import_batch_tenant",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -47,6 +56,22 @@ class Contact(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    import_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        index=True,
+    )
+
+    source_row_number: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    imported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     first_name: Mapped[str] = mapped_column(
@@ -93,6 +118,11 @@ class Contact(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization",
         back_populates="contacts",
+    )
+
+    import_batch: Mapped["ImportBatch | None"] = relationship(
+        "ImportBatch",
+        overlaps="organization,contacts",
     )
 
     customer_profile: Mapped["CustomerProfile | None"] = relationship(
