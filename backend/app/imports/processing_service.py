@@ -113,6 +113,7 @@ def _process_rows(
     db: Session,
     *,
     organization_id: UUID,
+    import_batch_id: UUID,
     rows,
     mapping: dict[str, int],
 ) -> dict[str, Any]:
@@ -165,6 +166,9 @@ def _process_rows(
             db,
             organization_id=organization_id,
             payload=payload,
+            import_batch_id=import_batch_id,
+            source_row_number=row_number,
+            imported_at=datetime.now(UTC),
         )
         successful_rows += 1
 
@@ -180,10 +184,12 @@ def _process_rows(
         "errors_truncated": error_state["truncated"],
     }
 
+
 def _read_and_process_source(
     db: Session,
     *,
     organization_id: UUID,
+    import_batch_id: UUID,
     path: Path,
     source_format: str,
 ) -> tuple[dict[str, Any], str | None]:
@@ -199,6 +205,7 @@ def _read_and_process_source(
                 _process_rows(
                     db,
                     organization_id=organization_id,
+                    import_batch_id=import_batch_id,
                     rows=rows,
                     mapping=mapping,
                 ),
@@ -213,6 +220,7 @@ def _read_and_process_source(
                 result = _process_rows(
                     db,
                     organization_id=organization_id,
+                    import_batch_id=import_batch_id,
                     rows=rows,
                     mapping=mapping,
                 )
@@ -277,6 +285,7 @@ def process_import_batch(
         result, worksheet_name = _read_and_process_source(
             db,
             organization_id=organization_id,
+            import_batch_id=batch.id,
             path=path,
             source_format=source_format,
         )

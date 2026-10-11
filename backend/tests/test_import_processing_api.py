@@ -148,6 +148,22 @@ def test_processing_creates_contacts_without_creating_leads(
                 "Priya",
             }
             assert all(contact.is_active for contact in contacts)
+
+            contacts_by_name = {
+                contact.first_name: contact for contact in contacts
+            }
+
+            rahul = contacts_by_name["Rahul"]
+            assert rahul.import_batch_id == batch_id
+            assert rahul.source_row_number == 2
+            assert rahul.imported_at is not None
+            assert rahul.imported_at.tzinfo is not None
+
+            priya = contacts_by_name["Priya"]
+            assert priya.import_batch_id == batch_id
+            assert priya.source_row_number == 3
+            assert priya.imported_at is not None
+            assert priya.imported_at.tzinfo is not None
             assert (
                 verify_db.scalar(
                     select(func.count())
