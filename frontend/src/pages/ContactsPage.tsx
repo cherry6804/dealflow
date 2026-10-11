@@ -26,12 +26,59 @@ const EMPTY_FORM: ContactCreateInput = {
   phone: "",
 };
 
+type ContactFieldErrors = {
+  email?: string;
+  phone?: string;
+};
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     return error.message;
   }
 
   return "Something went wrong. Please try again.";
+}
+
+function getDuplicateFieldErrors(error: unknown): ContactFieldErrors {
+  if (!(error instanceof ApiError)) {
+    return {};
+  }
+
+  const details = error.details;
+  if (typeof details !== "object" || details === null || !("detail" in details)) {
+    return {};
+  }
+
+  const detail = (details as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null || !("code" in detail)) {
+    return {};
+  }
+
+  const duplicateDetail = detail as {
+    code?: unknown;
+    fields?: unknown;
+  };
+
+  if (
+    duplicateDetail.code !== "duplicate_contact" ||
+    !Array.isArray(duplicateDetail.fields)
+  ) {
+    return {};
+  }
+
+  const fields: ContactFieldErrors = {};
+
+  if (duplicateDetail.fields.includes("email")) {
+    fields.email =
+      "A contact with this email address already exists in your organization. Please use a different email address.";
+  }
+
+  if (duplicateDetail.fields.includes("phone")) {
+    fields.phone =
+      "A contact with this phone number already exists in your organization. Please use a different phone number.";
+  }
+
+  return fields;
 }
 
 function formatDate(value: string): string {
@@ -118,6 +165,7 @@ export default function ContactsPage() {
   const [isFormClosing, setIsFormClosing] = useState(false);
   const [form, setForm] = useState<ContactCreateInput>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<ContactFieldErrors>({});
 
   const modalRef = useRef<HTMLElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -250,6 +298,7 @@ export default function ContactsPage() {
 
     setForm(EMPTY_FORM);
     setFormError("");
+    setFieldErrors({});
     setSuccess("");
     setIsFormClosing(false);
     setIsFormOpen(true);
@@ -259,6 +308,7 @@ export default function ContactsPage() {
     if (saving || isFormClosing || !isFormOpen) return;
 
     setFormError("");
+    setFieldErrors({});
     setIsFormClosing(true);
 
     closeTimerRef.current = window.setTimeout(() => {
@@ -273,6 +323,7 @@ export default function ContactsPage() {
   ) {
     event.preventDefault();
     setFormError("");
+    setFieldErrors({});
     setSuccess("");
 
     const firstName = form.first_name.trim();
@@ -327,7 +378,14 @@ export default function ContactsPage() {
       setTotalPages(result.total_pages);
       setError("");
     } catch (createError) {
-      setFormError(getErrorMessage(createError));
+      const duplicateFieldErrors = getDuplicateFieldErrors(createError);
+
+      if (Object.keys(duplicateFieldErrors).length > 0) {
+        setFieldErrors(duplicateFieldErrors);
+        setFormError("");
+      } else {
+        setFormError(getErrorMessage(createError));
+      }
     } finally {
       setSaving(false);
       setLoading(false);
@@ -719,15 +777,31 @@ export default function ContactsPage() {
                   type="email"
                   maxLength={320}
                   value={form.email ?? ""}
-                  onChange={(event) =>
+                  aria-invalid={Boolean(fieldErrors.email)}
+                  aria-describedby={fieldErrors.email ? "contact-email-error" : undefined}
+                  onChange={(event) => {
                     setForm((current) => ({
                       ...current,
                       email: event.target.value,
-                    }))
-                  }
+                    }));
+                    setFieldErrors((current) => ({
+                      ...current,
+                      email: undefined,
+                    }));
+                    setFormError("");
+                  }}
                   placeholder="name@example.com"
                   disabled={saving}
                 />
+                {fieldErrors.email && (
+                  <span
+                    id="contact-email-error"
+                    className="contacts-field-error"
+                    role="alert"
+                  >
+                    {fieldErrors.email}
+                  </span>
+                )}
               </label>
 
               <label className="contacts-form-field contacts-form-field-full">
@@ -737,15 +811,31 @@ export default function ContactsPage() {
                   type="tel"
                   maxLength={50}
                   value={form.phone ?? ""}
-                  onChange={(event) =>
+                  aria-invalid={Boolean(fieldErrors.phone)}
+                  aria-describedby={fieldErrors.phone ? "contact-phone-error" : undefined}
+                  onChange={(event) => {
                     setForm((current) => ({
                       ...current,
                       phone: event.target.value,
-                    }))
-                  }
+                    }));
+                    setFieldErrors((current) => ({
+                      ...current,
+                      phone: undefined,
+                    }));
+                    setFormError("");
+                  }}
                   placeholder="Enter phone number"
                   disabled={saving}
                 />
+                {fieldErrors.phone && (
+                  <span
+                    id="contact-phone-error"
+                    className="contacts-field-error"
+                    role="alert"
+                  >
+                    {fieldErrors.phone}
+                  </span>
+                )}
               </label>
             </div>
 

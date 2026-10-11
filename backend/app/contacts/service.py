@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -14,6 +15,66 @@ from app.contacts.schemas import (
     ContactUpdateRequest,
 )
 from app.db.models.contact import Contact
+from app.imports.duplicate_detection import (
+    normalize_email,
+    normalize_phone,
+)
+
+
+class ContactDuplicateError(ValueError):
+    """Raised when a contact identifier is already used in an organization."""
+
+    def __init__(self, fields: list[Literal["email", "phone"]]) -> None:
+        self.fields = fields
+        super().__init__(
+            "A contact with this email or phone number already exists "
+            "in this organization."
+        )
+
+
+def _find_duplicate_identifiers(
+    db: Session,
+    *,
+    organization_id: UUID,
+    email: object,
+    phone: object,
+    exclude_contact_id: UUID | None = None,
+) -> list[Literal["email", "phone"]]:
+    """Find conflicting identifiers within the same organization."""
+    email_key = normalize_email(email)
+    phone_key = normalize_phone(phone)
+
+    if not email_key and not phone_key:
+        return []
+
+    statement = select(Contact.email, Contact.phone).where(
+        Contact.organization_id == organization_id
+    )
+
+    if exclude_contact_id is not None:
+        statement = statement.where(Contact.id != exclude_contact_id)
+
+    duplicate_fields: list[Literal["email", "phone"]] = []
+
+    for existing_email, existing_phone in db.execute(statement).all():
+        if (
+            email_key
+            and normalize_email(existing_email) == email_key
+            and "email" not in duplicate_fields
+        ):
+            duplicate_fields.append("email")
+
+        if (
+            phone_key
+            and normalize_phone(existing_phone) == phone_key
+            and "phone" not in duplicate_fields
+        ):
+            duplicate_fields.append("phone")
+
+        if len(duplicate_fields) == 2:
+            break
+
+    return duplicate_fields
 
 
 def create_contact(
@@ -26,6 +87,16 @@ def create_contact(
     imported_at: datetime | None = None,
 ) -> Contact:
     """Create a tenant-owned Contact with optional import provenance."""
+    duplicate_fields = _find_duplicate_identifiers(
+        db,
+        organization_id=organization_id,
+        email=payload.email,
+        phone=payload.phone,
+    )
+
+    if duplicate_fields:
+        raise ContactDuplicateError(duplicate_fields)
+
     contact = Contact(
         organization_id=organization_id,
         first_name=payload.first_name,
@@ -75,6 +146,17 @@ def update_contact(
         return None
 
     update_data = payload.model_dump(exclude_unset=True)
+
+    duplicate_fields = _find_duplicate_identifiers(
+        db,
+        organization_id=organization_id,
+        email=update_data.get("email", contact.email),
+        phone=update_data.get("phone", contact.phone),
+        exclude_contact_id=contact.id,
+    )
+
+    if duplicate_fields:
+        raise ContactDuplicateError(duplicate_fields)
 
     for field_name, value in update_data.items():
         setattr(contact, field_name, value)

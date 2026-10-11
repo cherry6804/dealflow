@@ -276,3 +276,88 @@ def test_validation_missing_source_file_returns_controlled_error(
 
         assert response.status_code == 422
         assert "no longer available" in response.json()["detail"]
+
+def test_validation_rejects_duplicate_emails_without_creating_contacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Reject existing and within-file duplicate emails without writes."""
+    from types import SimpleNamespace
+
+    from app.imports import preview, storage
+
+    settings = SimpleNamespace(
+        upload_storage_dir=tmp_path,
+        upload_max_file_size_bytes=1024 * 1024,
+    )
+    monkeypatch.setattr(preview, "get_settings", lambda: settings)
+    monkeypatch.setattr(storage, "get_settings", lambda: settings)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        organization_id = organization.id
+
+        setup_db.add(
+            Contact(
+                organization_id=organization_id,
+                first_name="Existing",
+                email="existing@example.com",
+            )
+        )
+        setup_db.flush()
+
+        storage_key = f"{organization_id}/duplicate-validation.csv"
+        source_path = tmp_path / storage_key
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            "First Name,Email\n"
+            "Existing Duplicate, EXISTING@example.com \n"
+            "First Valid,first@example.com\n"
+            "File Duplicate,FIRST@example.com\n"
+            "Second Valid,second@example.com\n",
+            encoding="utf-8",
+        )
+
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=organization_id,
+            storage_key=storage_key,
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            response = client.get(
+                f"/api/v1/imports/{batch_id}/validation"
+            )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["total_rows"] == 4
+        assert payload["valid_rows"] == 2
+        assert payload["invalid_rows"] == 2
+        assert payload["contacts_created"] == 0
+
+        duplicate_errors = {
+            (error["row_number"], error["field"], error["code"])
+            for error in payload["errors"]
+            if error["code"] == "duplicate"
+        }
+        assert duplicate_errors == {
+            (2, "email", "duplicate"),
+            (4, "email", "duplicate"),
+        }
+
+        with SessionLocal() as verify_db:
+            contacts = (
+                verify_db.query(Contact)
+                .filter(Contact.organization_id == organization_id)
+                .all()
+            )
+            assert len(contacts) == 1
+            assert contacts[0].email == "existing@example.com"

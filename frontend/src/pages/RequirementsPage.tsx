@@ -1,4 +1,3 @@
-
 import {
   useCallback,
   useEffect,
@@ -104,9 +103,7 @@ function contactName(contact: Contact | undefined): string {
   if (!contact) return "Contact unavailable";
 
   return (
-    [contact.first_name, contact.last_name]
-      .filter(Boolean)
-      .join(" ") ||
+    [contact.first_name, contact.last_name].filter(Boolean).join(" ") ||
     contact.email ||
     contact.phone ||
     "Unnamed contact"
@@ -117,9 +114,7 @@ function customerProfileName(profile: CustomerProfile): string {
   const contact = profile.contact;
 
   return (
-    [contact.first_name, contact.last_name]
-      .filter(Boolean)
-      .join(" ") ||
+    [contact.first_name, contact.last_name].filter(Boolean).join(" ") ||
     contact.email ||
     contact.phone ||
     "Unnamed customer"
@@ -137,9 +132,7 @@ export default function RequirementsPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
-  const [statusFilter, setStatusFilter] = useState<
-    "" | RequirementStatus
-  >("");
+  const [statusFilter, setStatusFilter] = useState<"" | RequirementStatus>("");
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -149,23 +142,25 @@ export default function RequirementsPage() {
   const [notice, setNotice] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [requirement, setRequirement] =
-    useState<CustomerRequirement | null>(null);
+  const [requirement, setRequirement] = useState<CustomerRequirement | null>(
+    null,
+  );
 
-  const [locations, setLocations] =
-    useState<RequirementLocation[]>([]);
-  const [preferences, setPreferences] =
-    useState<RequirementPropertyPreference[]>([]);
+  const [locations, setLocations] = useState<RequirementLocation[]>([]);
+  const [preferences, setPreferences] = useState<
+    RequirementPropertyPreference[]
+  >([]);
   const [possession, setPossession] =
     useState<RequirementPossessionParkingPreference | null>(null);
-  const [association, setAssociation] =
-    useState<RequirementAssociation | null>(null);
+  const [association, setAssociation] = useState<RequirementAssociation | null>(
+    null,
+  );
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [customerProfiles, setCustomerProfiles] = useState<
-    CustomerProfile[]
-  >([]);
+  const [customerProfiles, setCustomerProfiles] = useState<CustomerProfile[]>(
+    [],
+  );
 
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -176,15 +171,13 @@ export default function RequirementsPage() {
 
   const [city, setCity] = useState("");
   const [locality, setLocality] = useState("");
-  const [propertyType, setPropertyType] =
-    useState<PropertyType>("APARTMENT");
+  const [propertyType, setPropertyType] = useState<PropertyType>("APARTMENT");
   const [bhkMin, setBhkMin] = useState("");
   const [bhkMax, setBhkMax] = useState("");
 
   const [possessionValue, setPossessionValue] =
     useState<PossessionPreference>("ANY");
-  const [parkingValue, setParkingValue] =
-    useState<ParkingPreference>("ANY");
+  const [parkingValue, setParkingValue] = useState<ParkingPreference>("ANY");
   const [parkingSpaces, setParkingSpaces] = useState("");
 
   const contactsById = useMemo(
@@ -218,9 +211,6 @@ export default function RequirementsPage() {
   }, [leads, contactsById, leadSearch]);
 
   const loadRequirements = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
     try {
       const result = await requirementsApi.list({
         page,
@@ -239,8 +229,39 @@ export default function RequirementsPage() {
   }, [page, statusFilter]);
 
   useEffect(() => {
-    void loadRequirements();
-  }, [loadRequirements]);
+    let cancelled = false;
+
+    async function fetchRequirements() {
+      try {
+        const result = await requirementsApi.list({
+          page,
+          page_size: PAGE_SIZE,
+          ...(statusFilter ? { status: statusFilter } : {}),
+        });
+
+        if (!cancelled) {
+          setItems(result.items);
+          setTotal(result.total);
+          setTotalPages(result.total_pages);
+          setError("");
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(getErrorMessage(loadError));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void fetchRequirements();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, statusFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,92 +330,73 @@ export default function RequirementsPage() {
     };
   }, [modalOpen, saving, busy]);
 
-  const loadRequirement = useCallback(
-    async (id: string): Promise<boolean> => {
-      setBusy(true);
-      setError("");
-      setNotice("");
+  const loadRequirement = useCallback(async (id: string): Promise<boolean> => {
+    setBusy(true);
+    setError("");
+    setNotice("");
 
-      try {
-        const record = await requirementsApi.get(id);
+    try {
+      const record = await requirementsApi.get(id);
 
-        setRequirement(record);
-        setBudgetMin(
-          record.budget_min == null ? "" : String(record.budget_min),
-        );
-        setBudgetMax(
-          record.budget_max == null ? "" : String(record.budget_max),
-        );
+      setRequirement(record);
+      setBudgetMin(record.budget_min == null ? "" : String(record.budget_min));
+      setBudgetMax(record.budget_max == null ? "" : String(record.budget_max));
 
-        const [
-          locationResult,
-          preferenceResult,
-          possessionResult,
-          associationResult,
-        ] = await Promise.allSettled([
-          requirementsApi.listLocations(id),
-          requirementsApi.listPropertyPreferences(id),
-          requirementsApi.getPossessionParking(id),
-          requirementsApi.getAssociation(id),
-        ]);
+      const [
+        locationResult,
+        preferenceResult,
+        possessionResult,
+        associationResult,
+      ] = await Promise.allSettled([
+        requirementsApi.listLocations(id),
+        requirementsApi.listPropertyPreferences(id),
+        requirementsApi.getPossessionParking(id),
+        requirementsApi.getAssociation(id),
+      ]);
 
-        setLocations(
-          locationResult.status === "fulfilled"
-            ? locationResult.value
-            : [],
-        );
-        setPreferences(
-          preferenceResult.status === "fulfilled"
-            ? preferenceResult.value
-            : [],
-        );
+      setLocations(
+        locationResult.status === "fulfilled" ? locationResult.value : [],
+      );
+      setPreferences(
+        preferenceResult.status === "fulfilled" ? preferenceResult.value : [],
+      );
 
-        const possessionRecord =
-          possessionResult.status === "fulfilled"
-            ? possessionResult.value
-            : null;
+      const possessionRecord =
+        possessionResult.status === "fulfilled" ? possessionResult.value : null;
 
-        setPossession(possessionRecord);
-        setPossessionValue(
-          possessionRecord?.possession_preference ?? "ANY",
-        );
-        setParkingValue(
-          possessionRecord?.parking_preference ?? "ANY",
-        );
-        setParkingSpaces(
-          possessionRecord?.parking_spaces_min == null
-            ? ""
-            : String(possessionRecord.parking_spaces_min),
-        );
+      setPossession(possessionRecord);
+      setPossessionValue(possessionRecord?.possession_preference ?? "ANY");
+      setParkingValue(possessionRecord?.parking_preference ?? "ANY");
+      setParkingSpaces(
+        possessionRecord?.parking_spaces_min == null
+          ? ""
+          : String(possessionRecord.parking_spaces_min),
+      );
 
-        const associationRecord =
-          associationResult.status === "fulfilled"
-            ? associationResult.value
-            : null;
+      const associationRecord =
+        associationResult.status === "fulfilled"
+          ? associationResult.value
+          : null;
 
-        setAssociation(associationRecord);
-        setSelectedLeadId(associationRecord?.lead_id ?? "");
-        setCustomerProfileId(
-          associationRecord?.customer_profile_id ?? "",
-        );
+      setAssociation(associationRecord);
+      setSelectedLeadId(associationRecord?.lead_id ?? "");
+      setCustomerProfileId(associationRecord?.customer_profile_id ?? "");
 
-        setLeadSearch("");
-        setCity("");
-        setLocality("");
-        setPropertyType("APARTMENT");
-        setBhkMin("");
-        setBhkMax("");
+      setLeadSearch("");
+      setCity("");
+      setLocality("");
+      setPropertyType("APARTMENT");
+      setBhkMin("");
+      setBhkMax("");
 
-        return true;
-      } catch (loadError) {
-        setError(getErrorMessage(loadError));
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [],
-  );
+      return true;
+    } catch (loadError) {
+      setError(getErrorMessage(loadError));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   async function openCreateModal() {
     setBusy(true);
@@ -458,11 +460,7 @@ export default function RequirementsPage() {
       return;
     }
 
-    if (
-      minimum !== null &&
-      maximum !== null &&
-      minimum > maximum
-    ) {
+    if (minimum !== null && maximum !== null && minimum > maximum) {
       setError("Minimum budget cannot exceed maximum budget.");
       return;
     }
@@ -488,9 +486,7 @@ export default function RequirementsPage() {
     }
   }
 
-  async function handleSaveAssociation(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleSaveAssociation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!requirement) return;
 
@@ -504,14 +500,8 @@ export default function RequirementsPage() {
       };
 
       const updated = association
-        ? await requirementsApi.updateAssociation(
-            requirement.id,
-            input,
-          )
-        : await requirementsApi.createAssociation(
-            requirement.id,
-            input,
-          );
+        ? await requirementsApi.updateAssociation(requirement.id, input)
+        : await requirementsApi.createAssociation(requirement.id, input);
 
       setAssociation(updated);
       setNotice("Customer assignment saved.");
@@ -522,9 +512,7 @@ export default function RequirementsPage() {
     }
   }
 
-  async function handleAddLocation(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleAddLocation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!requirement) return;
 
@@ -560,11 +548,9 @@ export default function RequirementsPage() {
     setError("");
 
     try {
-      await requirementsApi.updateLocation(
-        requirement.id,
-        location.id,
-        { is_active: !location.is_active },
-      );
+      await requirementsApi.updateLocation(requirement.id, location.id, {
+        is_active: !location.is_active,
+      });
 
       setLocations(await requirementsApi.listLocations(requirement.id));
       setNotice("Location updated.");
@@ -575,9 +561,7 @@ export default function RequirementsPage() {
     }
   }
 
-  async function handleAddPreference(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleAddPreference(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!requirement) return;
 
@@ -585,20 +569,14 @@ export default function RequirementsPage() {
     const maximum = optionalNumber(bhkMax);
 
     if (
-      (bhkMin.trim() &&
-        (!Number.isInteger(minimum) || (minimum ?? 0) < 1)) ||
-      (bhkMax.trim() &&
-        (!Number.isInteger(maximum) || (maximum ?? 0) < 1))
+      (bhkMin.trim() && (!Number.isInteger(minimum) || (minimum ?? 0) < 1)) ||
+      (bhkMax.trim() && (!Number.isInteger(maximum) || (maximum ?? 0) < 1))
     ) {
       setError("BHK values must be positive whole numbers.");
       return;
     }
 
-    if (
-      minimum !== null &&
-      maximum !== null &&
-      minimum > maximum
-    ) {
+    if (minimum !== null && maximum !== null && minimum > maximum) {
       setError("Minimum BHK cannot exceed maximum BHK.");
       return;
     }
@@ -607,14 +585,11 @@ export default function RequirementsPage() {
     setError("");
 
     try {
-      await requirementsApi.createPropertyPreference(
-        requirement.id,
-        {
-          property_type: propertyType,
-          bhk_min: minimum,
-          bhk_max: maximum,
-        },
-      );
+      await requirementsApi.createPropertyPreference(requirement.id, {
+        property_type: propertyType,
+        bhk_min: minimum,
+        bhk_max: maximum,
+      });
 
       setBhkMin("");
       setBhkMax("");
@@ -629,9 +604,7 @@ export default function RequirementsPage() {
     }
   }
 
-  async function togglePreference(
-    preference: RequirementPropertyPreference,
-  ) {
+  async function togglePreference(preference: RequirementPropertyPreference) {
     if (!requirement) return;
 
     setSaving(true);
@@ -655,9 +628,7 @@ export default function RequirementsPage() {
     }
   }
 
-  async function handleSavePossession(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleSavePossession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!requirement) return;
 
@@ -667,9 +638,7 @@ export default function RequirementsPage() {
       parkingSpaces.trim() &&
       (!Number.isInteger(spaces) || (spaces ?? 0) < 1)
     ) {
-      setError(
-        "Minimum parking spaces must be a positive whole number.",
-      );
+      setError("Minimum parking spaces must be a positive whole number.");
       return;
     }
 
@@ -684,14 +653,8 @@ export default function RequirementsPage() {
       };
 
       const updated = possession
-        ? await requirementsApi.updatePossessionParking(
-            requirement.id,
-            input,
-          )
-        : await requirementsApi.createPossessionParking(
-            requirement.id,
-            input,
-          );
+        ? await requirementsApi.updatePossessionParking(requirement.id, input)
+        : await requirementsApi.createPossessionParking(requirement.id, input);
 
       setPossession(updated);
       setNotice("Possession and parking preferences saved.");
@@ -709,13 +672,10 @@ export default function RequirementsPage() {
     <section className="requirements-page">
       <header className="requirements-header">
         <div>
-          <span className="requirements-eyebrow">
-            CUSTOMER WORKSPACE
-          </span>
+          <span className="requirements-eyebrow">CUSTOMER WORKSPACE</span>
           <h1>Customer requirements</h1>
           <p className="requirements-subtitle">
-            Manage customer property needs, budgets, locations, and
-            preferences.
+            Manage customer property needs, budgets, locations, and preferences.
           </p>
         </div>
 
@@ -749,13 +709,9 @@ export default function RequirementsPage() {
           </svg>
         </div>
         <div>
-          <p className="requirements-summary-label">
-            Matching requirements
-          </p>
+          <p className="requirements-summary-label">Matching requirements</p>
           <p className="requirements-summary-value">
-            {loading && total === 0
-              ? "—"
-              : total.toLocaleString("en-IN")}
+            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
           </p>
         </div>
       </section>
@@ -822,9 +778,7 @@ export default function RequirementsPage() {
               value={statusFilter}
               onChange={(event) => {
                 setPage(1);
-                setStatusFilter(
-                  event.target.value as "" | RequirementStatus,
-                );
+                setStatusFilter(event.target.value as "" | RequirementStatus);
               }}
             >
               <option value="">All statuses</option>
@@ -842,9 +796,7 @@ export default function RequirementsPage() {
                 <th>Budget range</th>
                 <th>Status</th>
                 <th>Last updated</th>
-                <th className="requirements-actions-heading">
-                  Actions
-                </th>
+                <th className="requirements-actions-heading">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -873,8 +825,8 @@ export default function RequirementsPage() {
                     <div className="requirements-empty-icon">⌕</div>
                     <strong>No requirements yet</strong>
                     <p>
-                      Create a requirement to capture a customer's
-                      property needs.
+                      Create a requirement to capture a customer's property
+                      needs.
                     </p>
                     <button
                       className="requirements-secondary-button"
@@ -897,29 +849,21 @@ export default function RequirementsPage() {
                           ⌂
                         </span>
                         <div>
-                          <strong>
-                            Requirement #{item.id.slice(0, 8)}
-                          </strong>
+                          <strong>Requirement #{item.id.slice(0, 8)}</strong>
                           <span title={item.id}>{item.id}</span>
                         </div>
                       </div>
                     </td>
                     <td>
                       <div className="requirements-budget">
-                        <strong>
-                          {formatCurrency(item.budget_min)}
-                        </strong>
-                        <span>
-                          to {formatCurrency(item.budget_max)}
-                        </span>
+                        <strong>{formatCurrency(item.budget_min)}</strong>
+                        <span>to {formatCurrency(item.budget_max)}</span>
                       </div>
                     </td>
                     <td>
                       <span
                         className={`requirements-status ${
-                          item.is_active
-                            ? "is-active"
-                            : "is-inactive"
+                          item.is_active ? "is-active" : "is-inactive"
                         }`}
                       >
                         <span className="requirements-status-dot" />
@@ -946,8 +890,11 @@ export default function RequirementsPage() {
 
         <footer className="requirements-pagination">
           <p>
-            Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
-            <strong>{total}</strong> requirements
+            Showing{" "}
+            <strong>
+              {firstResult}–{lastResult}
+            </strong>{" "}
+            of <strong>{total}</strong> requirements
           </p>
           <div className="requirements-pagination-controls">
             <button
@@ -965,9 +912,7 @@ export default function RequirementsPage() {
             <button
               className="requirements-page-button"
               type="button"
-              disabled={
-                page >= totalPages || totalPages === 0 || loading
-              }
+              disabled={page >= totalPages || totalPages === 0 || loading}
               onClick={() => setPage((current) => current + 1)}
             >
               Next
@@ -982,11 +927,7 @@ export default function RequirementsPage() {
           <div
             className="requirements-modal-backdrop"
             onMouseDown={(event) => {
-              if (
-                event.target === event.currentTarget &&
-                !saving &&
-                !busy
-              ) {
+              if (event.target === event.currentTarget && !saving && !busy) {
                 closeModal();
               }
             }}
@@ -1002,9 +943,7 @@ export default function RequirementsPage() {
                   <span className="requirements-eyebrow">
                     REQUIREMENT DETAILS
                   </span>
-                  <h2 id="requirements-modal-title">
-                    Customer requirement
-                  </h2>
+                  <h2 id="requirements-modal-title">Customer requirement</h2>
                   <p>
                     Manage customer assignment, budget, locations, property
                     preferences, and move-in needs.
@@ -1063,9 +1002,7 @@ export default function RequirementsPage() {
 
                   <form
                     className="requirements-card"
-                    onSubmit={(event) =>
-                      void handleSaveAssociation(event)
-                    }
+                    onSubmit={(event) => void handleSaveAssociation(event)}
                   >
                     <div className="requirements-form-grid">
                       <label className="requirements-form-field">
@@ -1109,14 +1046,18 @@ export default function RequirementsPage() {
                         <select
                           value={customerProfileId}
                           disabled={saving || busy}
-                          onChange={(event) => setCustomerProfileId(event.target.value)}
+                          onChange={(event) =>
+                            setCustomerProfileId(event.target.value)
+                          }
                         >
                           <option value="">No customer selected</option>
 
                           {customerProfiles.map((profile) => (
                             <option key={profile.id} value={profile.id}>
                               {customerProfileName(profile)}
-                              {profile.contact.email ? ` · ${profile.contact.email}` : ""}
+                              {profile.contact.email
+                                ? ` · ${profile.contact.email}`
+                                : ""}
                             </option>
                           ))}
                         </select>
@@ -1159,9 +1100,7 @@ export default function RequirementsPage() {
                           step="any"
                           value={budgetMin}
                           disabled={saving}
-                          onChange={(event) =>
-                            setBudgetMin(event.target.value)
-                          }
+                          onChange={(event) => setBudgetMin(event.target.value)}
                           placeholder="e.g. 2500000"
                         />
                         <small>
@@ -1177,9 +1116,7 @@ export default function RequirementsPage() {
                           step="any"
                           value={budgetMax}
                           disabled={saving}
-                          onChange={(event) =>
-                            setBudgetMax(event.target.value)
-                          }
+                          onChange={(event) => setBudgetMax(event.target.value)}
                           placeholder="e.g. 5000000"
                         />
                         <small>
@@ -1216,9 +1153,7 @@ export default function RequirementsPage() {
                             required
                             value={city}
                             disabled={saving}
-                            onChange={(event) =>
-                              setCity(event.target.value)
-                            }
+                            onChange={(event) => setCity(event.target.value)}
                             placeholder="e.g. Chennai"
                           />
                         </label>
@@ -1263,22 +1198,16 @@ export default function RequirementsPage() {
                               <strong>{location.locality}</strong>
                               <span>
                                 {location.city}
-                                {!location.is_active
-                                  ? " · Inactive"
-                                  : ""}
+                                {!location.is_active ? " · Inactive" : ""}
                               </span>
                             </div>
                             <button
                               className="requirements-text-button"
                               type="button"
                               disabled={saving}
-                              onClick={() =>
-                                void toggleLocation(location)
-                              }
+                              onClick={() => void toggleLocation(location)}
                             >
-                              {location.is_active
-                                ? "Deactivate"
-                                : "Reactivate"}
+                              {location.is_active ? "Deactivate" : "Reactivate"}
                             </button>
                           </div>
                         ))
@@ -1291,11 +1220,7 @@ export default function RequirementsPage() {
                   </h3>
 
                   <section className="requirements-card">
-                    <form
-                      onSubmit={(event) =>
-                        void handleAddPreference(event)
-                      }
-                    >
+                    <form onSubmit={(event) => void handleAddPreference(event)}>
                       <div className="requirements-form-grid">
                         <label className="requirements-form-field">
                           <span>Property type *</span>
@@ -1324,9 +1249,7 @@ export default function RequirementsPage() {
                             step="1"
                             value={bhkMin}
                             disabled={saving}
-                            onChange={(event) =>
-                              setBhkMin(event.target.value)
-                            }
+                            onChange={(event) => setBhkMin(event.target.value)}
                             placeholder="Optional"
                           />
                         </label>
@@ -1339,9 +1262,7 @@ export default function RequirementsPage() {
                             step="1"
                             value={bhkMax}
                             disabled={saving}
-                            onChange={(event) =>
-                              setBhkMax(event.target.value)
-                            }
+                            onChange={(event) => setBhkMax(event.target.value)}
                             placeholder="Optional"
                           />
                         </label>
@@ -1380,18 +1301,14 @@ export default function RequirementsPage() {
                                   : `${preference.bhk_min ?? "Any"}–${
                                       preference.bhk_max ?? "Any"
                                     } BHK`}
-                                {!preference.is_active
-                                  ? " · Inactive"
-                                  : ""}
+                                {!preference.is_active ? " · Inactive" : ""}
                               </span>
                             </div>
                             <button
                               className="requirements-text-button"
                               type="button"
                               disabled={saving}
-                              onClick={() =>
-                                void togglePreference(preference)
-                              }
+                              onClick={() => void togglePreference(preference)}
                             >
                               {preference.is_active
                                 ? "Deactivate"
@@ -1409,9 +1326,7 @@ export default function RequirementsPage() {
 
                   <form
                     className="requirements-card"
-                    onSubmit={(event) =>
-                      void handleSavePossession(event)
-                    }
+                    onSubmit={(event) => void handleSavePossession(event)}
                   >
                     <div className="requirements-form-grid">
                       <label className="requirements-form-field">
@@ -1474,9 +1389,7 @@ export default function RequirementsPage() {
                         type="submit"
                         disabled={saving}
                       >
-                        {saving
-                          ? "Saving…"
-                          : "Save possession and parking"}
+                        {saving ? "Saving…" : "Save possession and parking"}
                       </button>
                     </div>
                   </form>
