@@ -1,8 +1,11 @@
-"""Data import API routes for DealFlow."""
+"""FastAPI routes for data import operations."""
 
+import csv
+import io
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -20,10 +23,16 @@ from app.imports.processing_service import (
     ImportProcessingNotFoundError,
     process_import_batch,
 )
+from app.imports.result_service import (
+    ImportResultDataError,
+    ImportResultNotFoundError,
+    get_import_result,
+)
 from app.imports.schemas import (
     ImportBatchResponse,
     ImportPreviewResponse,
     ImportProcessingResponse,
+    ImportResultResponse,
     ImportValidationResponse,
 )
 from app.imports.service import (
@@ -130,7 +139,7 @@ def validate_import_source_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> ImportValidationResponse:
-    """Validate imported rows without creating contacts or changing batch state."""
+    """Validate rows without creating contacts or changing batch state."""
     try:
         result = validate_import_source(
             db,
@@ -152,6 +161,7 @@ def validate_import_source_endpoint(
         ) from exc
 
     return ImportValidationResponse.model_validate(result)
+
 
 @router.post(
     "/{import_batch_id}/process",
@@ -197,3 +207,109 @@ def process_import_source_endpoint(
         ) from None
 
     return ImportProcessingResponse.model_validate(result)
+
+
+@router.get(
+    "/{import_batch_id}/result",
+    response_model=ImportResultResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_import_result_endpoint(
+    import_batch_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("imports.upload"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ImportResultResponse:
+    """Retrieve persisted counts and row-level errors for the verified tenant."""
+    try:
+        result = get_import_result(
+            db,
+            organization_id=tenant_context.organization_id,
+            import_batch_id=import_batch_id,
+        )
+    except ImportResultNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import batch not found.",
+        ) from exc
+    except ImportResultDataError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The stored import result could not be read.",
+        ) from exc
+
+    return ImportResultResponse.model_validate(result)
+
+
+def _safe_csv_cell(value: object) -> str:
+    """Prevent untrusted text from being interpreted as a spreadsheet formula."""
+    text = str(value) if value is not None else ""
+    probe = text.lstrip(" \t\r\n")
+
+    if probe.startswith(("=", "+", "-", "@")):
+        return "'" + text
+
+    return text
+
+
+@router.get(
+    "/{import_batch_id}/errors.csv",
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {
+            "content": {"text/csv": {}},
+            "description": "CSV report of persisted row-level import errors.",
+        },
+    },
+)
+def download_import_errors_endpoint(
+    import_batch_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("imports.upload"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> Response:
+    """Download persisted row-level errors for the verified tenant."""
+    try:
+        result = get_import_result(
+            db,
+            organization_id=tenant_context.organization_id,
+            import_batch_id=import_batch_id,
+        )
+    except ImportResultNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import batch not found.",
+        ) from exc
+    except ImportResultDataError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The stored import result could not be read.",
+        ) from exc
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["row_number", "field", "code", "message"])
+
+    for error in result["errors"]:
+        writer.writerow(
+            [
+                error["row_number"],
+                _safe_csv_cell(error["field"]),
+                _safe_csv_cell(error["code"]),
+                _safe_csv_cell(error["message"]),
+            ]
+        )
+
+    filename = f"import-{import_batch_id}-errors.csv"
+
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

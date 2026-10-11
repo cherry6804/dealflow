@@ -666,3 +666,158 @@ def test_processing_database_failure_rolls_back_all_contacts(
             persisted_batch = verify_db.get(ImportBatch, batch_id)
             assert persisted_batch is not None
             assert persisted_batch.status == "pending"
+
+def test_import_result_returns_persisted_summary_and_errors(
+    import_storage,
+) -> None:
+    """Retrieve persisted counts and row-level errors after processing."""
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        organization_id = organization.id
+        storage_key = f"{organization_id}/result-summary.csv"
+        source_path = import_storage / storage_key
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            "First Name,Last Name,Email,Phone\n"
+            "Rahul,Sharma,rahul@example.com,9876543210\n"
+            ",Rao,invalid-email,abc\n",
+            encoding="utf-8",
+        )
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=organization_id,
+            storage_key=storage_key,
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            process_response = client.post(
+                f"/api/v1/imports/{batch_id}/process"
+            )
+            assert process_response.status_code == 200, process_response.text
+
+            response = client.get(
+                f"/api/v1/imports/{batch_id}/result"
+            )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["import_batch_id"] == str(batch_id)
+        assert payload["source_filename"] == "contacts.csv"
+        assert payload["source_format"] == "csv"
+        assert payload["status"] == "completed_with_errors"
+        assert payload["total_rows"] == 2
+        assert payload["processed_rows"] == 2
+        assert payload["successful_rows"] == 1
+        assert payload["failed_rows"] == 1
+        assert payload["skipped_rows"] == 1
+        assert payload["contacts_created"] == 1
+        assert payload["errors_truncated"] is False
+        assert payload["error_limit"] == 100
+        assert {
+            (error["row_number"], error["field"], error["code"])
+            for error in payload["errors"]
+        } == {
+            (3, "first_name", "required"),
+            (3, "email", "invalid_format"),
+            (3, "phone", "invalid_format"),
+        }
+
+
+def test_import_errors_csv_download_contains_saved_errors(
+    import_storage,
+) -> None:
+    """Download the persisted row-level errors as a CSV file."""
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        organization_id = organization.id
+        storage_key = f"{organization_id}/errors-download.csv"
+        source_path = import_storage / storage_key
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            "First Name,Email\n"
+            "Rahul,rahul@example.com\n"
+            ",invalid-email\n",
+            encoding="utf-8",
+        )
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=organization_id,
+            storage_key=storage_key,
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            process_response = client.post(
+                f"/api/v1/imports/{batch_id}/process"
+            )
+            assert process_response.status_code == 200, process_response.text
+
+            response = client.get(
+                f"/api/v1/imports/{batch_id}/errors.csv"
+            )
+
+        assert response.status_code == 200, response.text
+        assert "text/csv" in response.headers["content-type"]
+        assert "attachment;" in response.headers["content-disposition"]
+        assert response.headers["cache-control"] == "no-store"
+        assert "row_number,field,code,message" in response.text
+        assert "first_name" in response.text
+        assert "required" in response.text
+        assert "email" in response.text
+        assert "invalid_format" in response.text
+
+
+def test_import_result_and_errors_csv_hide_another_tenants_batch(
+    import_storage,
+) -> None:
+    """Return 404 for result and error downloads across tenant boundaries."""
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        other_organization = create_organization(setup_db)
+        other_id = other_organization.id
+        storage_key = f"{other_id}/private-result.csv"
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=other_id,
+            storage_key=storage_key,
+        )
+        batch.status = "completed_with_errors"
+        batch.total_rows = 1
+        batch.processed_rows = 1
+        batch.failed_rows = 1
+        batch.skipped_rows = 1
+        batch.error_summary = (
+            '{"errors":[{"row_number":2,"field":"email",'
+            '"code":"invalid_format","message":"Private error"}],'
+            '"error_limit":100,"errors_truncated":false}'
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization.id)
+            result_response = client.get(
+                f"/api/v1/imports/{batch_id}/result"
+            )
+            csv_response = client.get(
+                f"/api/v1/imports/{batch_id}/errors.csv"
+            )
+
+        assert result_response.status_code == 404
+        assert result_response.json()["detail"] == "Import batch not found."
+        assert csv_response.status_code == 404
+        assert csv_response.json()["detail"] == "Import batch not found."

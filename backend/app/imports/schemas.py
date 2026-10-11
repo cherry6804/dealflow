@@ -67,6 +67,7 @@ class ImportValidationErrorDetail(BaseModel):
     code: str
     message: str
 
+
 class ImportValidationResponse(BaseModel):
     """Response containing the outcome of validating an import source."""
 
@@ -84,6 +85,7 @@ class ImportValidationResponse(BaseModel):
     errors_truncated: bool
     contacts_created: int
 
+
 class ImportProcessingResponse(BaseModel):
     """Response containing the outcome of processing an import batch."""
 
@@ -91,6 +93,24 @@ class ImportProcessingResponse(BaseModel):
     source_filename: str
     source_format: str
     worksheet_name: str | None
+    status: str
+    total_rows: int
+    processed_rows: int
+    successful_rows: int
+    failed_rows: int
+    skipped_rows: int
+    contacts_created: int
+    errors: list[ImportValidationErrorDetail]
+    error_limit: int
+    errors_truncated: bool
+
+
+class ImportResultResponse(BaseModel):
+    """Persisted summary and row-level errors for an import batch."""
+
+    import_batch_id: UUID
+    source_filename: str
+    source_format: str
     status: str
     total_rows: int
     processed_rows: int
