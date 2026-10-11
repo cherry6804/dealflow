@@ -23,10 +23,12 @@ from app.db.models.property import Property
 from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
+from app.db.models.activity import Activity
 
 __all__ = [
     "AuditEvent",
     "AuthSession",
+    "Activity",
     "Contact",
     "CustomerProfile",
     "CustomerRequirement",
