@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from io import BytesIO
-from uuid import UUID
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from threading import Barrier
+from uuid import UUID
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
