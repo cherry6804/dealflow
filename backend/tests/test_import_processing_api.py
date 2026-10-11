@@ -926,3 +926,90 @@ def test_concurrent_processing_of_same_batch_creates_contacts_once(
         persisted_batch = verify_db.get(ImportBatch, batch_id)
         assert persisted_batch is not None
         assert persisted_batch.status == "completed"
+
+def test_processing_rejects_duplicate_emails_and_continues_valid_rows(
+    import_storage,
+) -> None:
+    """Reject duplicate emails while importing other valid rows."""
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        organization_id = organization.id
+
+        setup_db.add(
+            Contact(
+                organization_id=organization_id,
+                first_name="Existing",
+                email="existing@example.com",
+            )
+        )
+        setup_db.flush()
+
+        storage_key = f"{organization_id}/duplicate-processing.csv"
+        source_path = import_storage / storage_key
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            "First Name,Email\n"
+            "Existing Duplicate,EXISTING@example.com\n"
+            "Rahul,rahul@example.com\n"
+            "Rahul Duplicate, RAHUL@example.com \n"
+            "Priya,priya@example.com\n",
+            encoding="utf-8",
+        )
+
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=organization_id,
+            storage_key=storage_key,
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            response = client.post(
+                f"/api/v1/imports/{batch_id}/process"
+            )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["status"] == "completed_with_errors"
+        assert payload["total_rows"] == 4
+        assert payload["processed_rows"] == 4
+        assert payload["successful_rows"] == 2
+        assert payload["failed_rows"] == 2
+        assert payload["skipped_rows"] == 2
+        assert payload["contacts_created"] == 2
+
+        duplicate_errors = {
+            (error["row_number"], error["field"], error["code"])
+            for error in payload["errors"]
+            if error["code"] == "duplicate"
+        }
+        assert duplicate_errors == {
+            (2, "email", "duplicate"),
+            (4, "email", "duplicate"),
+        }
+
+        with SessionLocal() as verify_db:
+            contacts = list(
+                verify_db.scalars(
+                    select(Contact).where(
+                        Contact.organization_id == organization_id
+                    )
+                ).all()
+            )
+
+            assert len(contacts) == 3
+            assert {
+                contact.first_name for contact in contacts
+            } == {"Existing", "Rahul", "Priya"}
+
+            persisted_batch = verify_db.get(ImportBatch, batch_id)
+            assert persisted_batch is not None
+            assert persisted_batch.status == "completed_with_errors"
+            assert persisted_batch.successful_rows == 2
+            assert persisted_batch.failed_rows == 2

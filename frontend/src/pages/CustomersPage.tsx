@@ -48,9 +48,7 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
-async function getAllProfiles(
-  isActive: boolean,
-): Promise<CustomerProfile[]> {
+async function getAllProfiles(isActive: boolean): Promise<CustomerProfile[]> {
   const firstPage = await customerProfilesApi.list({
     page: 1,
     page_size: 100,
@@ -100,8 +98,7 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState<StatusFilter>("active");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,9 +107,9 @@ export default function CustomersPage() {
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [registeredContactIds, setRegisteredContactIds] = useState<
-    Set<string>
-  >(new Set());
+  const [registeredContactIds, setRegisteredContactIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [contactsLoading, setContactsLoading] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState("");
   const [registrationNotes, setRegistrationNotes] = useState("");
@@ -122,9 +119,6 @@ export default function CustomersPage() {
   const [editingNotes, setEditingNotes] = useState("");
 
   const loadCustomers = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
     try {
       const result = await customerProfilesApi.list({
         page,
@@ -143,8 +137,39 @@ export default function CustomersPage() {
   }, [page, search, statusFilter]);
 
   useEffect(() => {
-    void loadCustomers();
-  }, [loadCustomers]);
+    let cancelled = false;
+
+    async function fetchCustomers() {
+      try {
+        const result = await customerProfilesApi.list({
+          page,
+          page_size: PAGE_SIZE,
+          search,
+          is_active: statusFilter === "active",
+        });
+
+        if (!cancelled) {
+          setCustomers(result.items);
+          setTotal(result.total);
+          setError("");
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(errorMessage(loadError));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void fetchCustomers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, search, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -157,12 +182,9 @@ export default function CustomersPage() {
     setContactsLoading(true);
 
     try {
-      const [allContacts, activeProfiles, inactiveProfiles] =
-        await Promise.all([
-          getAllActiveContacts(),
-          getAllProfiles(true),
-          getAllProfiles(false),
-        ]);
+      const [allContacts, activeProfiles, inactiveProfiles] = await Promise.all(
+        [getAllActiveContacts(), getAllProfiles(true), getAllProfiles(false)],
+      );
 
       const existingIds = new Set(
         [...activeProfiles, ...inactiveProfiles].map(
@@ -208,14 +230,16 @@ export default function CustomersPage() {
       setStatusFilter("active");
 
       // Refresh after the filter and page state have settled.
-      await customerProfilesApi.list({
-        page: 1,
-        page_size: PAGE_SIZE,
-        is_active: true,
-      }).then((result) => {
-        setCustomers(result.items);
-        setTotal(result.total);
-      });
+      await customerProfilesApi
+        .list({
+          page: 1,
+          page_size: PAGE_SIZE,
+          is_active: true,
+        })
+        .then((result) => {
+          setCustomers(result.items);
+          setTotal(result.total);
+        });
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -230,9 +254,7 @@ export default function CustomersPage() {
     setNotice("");
   }
 
-  async function saveCustomerNotes(
-    event: React.FormEvent<HTMLFormElement>,
-  ) {
+  async function saveCustomerNotes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!editingCustomer) {
@@ -316,8 +338,8 @@ export default function CustomersPage() {
           <p className="customers-eyebrow">CUSTOMER MANAGEMENT</p>
           <h1>Customers</h1>
           <p className="customers-subtitle">
-            Manage customer profiles linked to your existing contacts.
-            Register a contact as a customer only when you choose to.
+            Manage customer profiles linked to your existing contacts. Register
+            a contact as a customer only when you choose to.
           </p>
         </div>
 
@@ -360,7 +382,9 @@ export default function CustomersPage() {
       <div className="customers-summary">
         <div className="customers-summary-card">
           <span className="customers-summary-label">
-            {statusFilter === "active" ? "Active customers" : "Inactive customers"}
+            {statusFilter === "active"
+              ? "Active customers"
+              : "Inactive customers"}
           </span>
           <strong>{loading ? "—" : total}</strong>
           <span className="customers-summary-caption">
@@ -402,9 +426,7 @@ export default function CustomersPage() {
 
         <form className="customers-search-form" onSubmit={submitSearch}>
           <label className="customers-search-field">
-            <span className="customers-visually-hidden">
-              Search customers
-            </span>
+            <span className="customers-visually-hidden">Search customers</span>
             <input
               type="search"
               value={searchInput}
@@ -441,7 +463,9 @@ export default function CustomersPage() {
           </div>
         ) : customers.length === 0 ? (
           <div className="customers-state">
-            <div className="customers-empty-icon" aria-hidden="true">◎</div>
+            <div className="customers-empty-icon" aria-hidden="true">
+              ◎
+            </div>
             <h3>
               {search
                 ? "No matching customers"
@@ -488,7 +512,10 @@ export default function CustomersPage() {
                       <tr key={customer.id}>
                         <td>
                           <div className="customers-person">
-                            <span className="customers-avatar" aria-hidden="true">
+                            <span
+                              className="customers-avatar"
+                              aria-hidden="true"
+                            >
                               {name.charAt(0).toUpperCase()}
                             </span>
                             <div>
@@ -536,7 +563,9 @@ export default function CustomersPage() {
                                   ? "customers-text-button is-danger"
                                   : "customers-text-button is-positive"
                               }
-                              onClick={() => void toggleCustomerStatus(customer)}
+                              onClick={() =>
+                                void toggleCustomerStatus(customer)
+                              }
                               disabled={saving}
                             >
                               {customer.is_active ? "Deactivate" : "Reactivate"}
@@ -583,7 +612,6 @@ export default function CustomersPage() {
         )}
       </div>
 
-      
       {registerOpen &&
         createPortal(
           <div
@@ -629,10 +657,7 @@ export default function CustomersPage() {
                 <div className="customers-modal-body">
                   {contactsLoading ? (
                     <div className="customers-state compact">
-                      <span
-                        className="customers-spinner"
-                        aria-hidden="true"
-                      />
+                      <span className="customers-spinner" aria-hidden="true" />
                       <p>Loading available Contacts…</p>
                     </div>
                   ) : (
@@ -649,8 +674,7 @@ export default function CustomersPage() {
                             setSelectedContactId(event.target.value)
                           }
                           disabled={
-                            saving ||
-                            registeredContactOptions.length === 0
+                            saving || registeredContactOptions.length === 0
                           }
                         >
                           <option value="">Select a Contact</option>
@@ -668,9 +692,7 @@ export default function CustomersPage() {
                           {registeredContactOptions.length === 0
                             ? "All active Contacts are already registered, or there are no active Contacts."
                             : `${registeredContactOptions.length} available Contact${
-                                registeredContactOptions.length === 1
-                                  ? ""
-                                  : "s"
+                                registeredContactOptions.length === 1 ? "" : "s"
                               }.`}
                         </small>
                       </label>
@@ -768,9 +790,7 @@ export default function CustomersPage() {
                     <textarea
                       rows={5}
                       value={editingNotes}
-                      onChange={(event) =>
-                        setEditingNotes(event.target.value)
-                      }
+                      onChange={(event) => setEditingNotes(event.target.value)}
                       placeholder="Add relevant customer notes"
                       maxLength={5000}
                       disabled={saving}
@@ -801,7 +821,6 @@ export default function CustomersPage() {
           </div>,
           document.body,
         )}
-
     </section>
   );
 }

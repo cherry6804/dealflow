@@ -1789,3 +1789,140 @@ def test_update_contact_with_empty_payload_preserves_contact() -> None:
         assert payload["email"] == "rahul@example.com"
         assert payload["phone"] == "+919876543210"
         assert payload["is_active"] is True
+
+def test_create_contact_rejects_duplicate_email_case_insensitively() -> None:
+    """Reject an email already used within the same organization."""
+    permission_key = "contacts.create"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Existing",
+            email="rahul@example.com",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/contacts",
+                json={
+                    "first_name": "Duplicate",
+                    "email": "  RAHUL@example.com  ",
+                },
+            )
+
+        assert response.status_code == 409
+        payload = response.json()
+        assert payload["detail"]["code"] == "duplicate_contact"
+        assert "email" in payload["detail"]["fields"]
+
+def test_create_contact_rejects_duplicate_phone_after_normalization() -> None:
+    """Reject a phone number that matches after removing formatting."""
+    permission_key = "contacts.create"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Existing",
+            phone="+91 98765-43210",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/contacts",
+                json={
+                    "first_name": "Duplicate",
+                    "phone": "919876543210",
+                },
+            )
+
+        assert response.status_code == 409
+        payload = response.json()
+        assert payload["detail"]["code"] == "duplicate_contact"
+        assert "phone" in payload["detail"]["fields"]
+
+def test_update_contact_rejects_email_owned_by_another_contact() -> None:
+    """Reject an update that uses another contact's email."""
+    permission_key = "contacts.update"
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        target_contact = create_contact(
+            db,
+            organization=organization,
+            first_name="Target",
+            email="target@example.com",
+        )
+        create_contact(
+            db,
+            organization=organization,
+            first_name="Existing",
+            email="existing@example.com",
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.patch(
+                f"/api/v1/contacts/{target_contact.id}",
+                json={"email": " EXISTING@example.com "},
+            )
+
+        assert response.status_code == 409
+        payload = response.json()
+        assert payload["detail"]["code"] == "duplicate_contact"
+        assert "email" in payload["detail"]["fields"]
+
+def test_create_contact_allows_duplicate_email_in_different_organizations() -> None:
+    """Allow the same email in separate organizations."""
+    permission_key = "contacts.create"
+
+    with TestingSessionLocal() as db:
+        user_one, organization_one = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+        user_two, organization_two = create_authorized_user(
+            db,
+            permission_key=permission_key,
+        )
+
+        create_contact(
+            db,
+            organization=organization_one,
+            first_name="Existing",
+            email="shared@example.com",
+        )
+
+        with make_test_client(user=user_two) as client:
+            add_tenant_header(client, organization_two)
+
+            response = client.post(
+                "/api/v1/contacts",
+                json={
+                    "first_name": "Other Organization",
+                    "email": "SHARED@example.com",
+                },
+            )
+
+        assert response.status_code == 201
+        assert response.json()["email"] == "SHARED@example.com"

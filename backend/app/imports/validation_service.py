@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models.import_batch import ImportBatch
+from app.imports.duplicate_detection import (
+    duplicate_errors,
+    load_existing_contact_keys,
+    remember_contact_keys,
+)
 from app.imports.preview import (
     CONTACT_FIELDS,
     FIELD_ALIASES,
@@ -236,24 +241,49 @@ def _iter_xlsx_rows(
 
 
 def _collect_validation_result(
+    db: Session,
+    organization_id: UUID,
     rows: Iterator[tuple[int, list[object]]],
     mapping: dict[str, int],
 ) -> dict[str, Any]:
-    """Validate rows incrementally while bounding retained error details."""
+    """Validate rows and detect duplicates without changing database state."""
     total_rows = 0
     valid_rows = 0
     invalid_rows = 0
     errors: list[dict[str, Any]] = []
     errors_truncated = False
 
+    # Load tenant-scoped identifiers once rather than querying per row.
+    existing_emails, existing_phones = load_existing_contact_keys(
+        db,
+        organization_id,
+    )
+    seen_emails: set[str] = set()
+    seen_phones: set[str] = set()
+
     for row_number, raw_row in rows:
         total_rows += 1
         normalized_row = _normalize_source_row(raw_row, mapping)
         result = validate_contact_rows([normalized_row])
 
-        if result["invalid_rows"]:
+        row_errors = list(result["errors"])
+
+        # Only check duplicates after normal field validation succeeds.
+        # Invalid rows must not reserve identifiers for later rows.
+        if not result["invalid_rows"]:
+            row_errors.extend(
+                duplicate_errors(
+                    normalized_row,
+                    existing_emails=existing_emails,
+                    existing_phones=existing_phones,
+                    seen_emails=seen_emails,
+                    seen_phones=seen_phones,
+                )
+            )
+
+        if row_errors:
             invalid_rows += 1
-            for error in result["errors"]:
+            for error in row_errors:
                 error["row_number"] = row_number
                 if len(errors) < MAX_VALIDATION_ERRORS:
                     errors.append(error)
@@ -261,6 +291,11 @@ def _collect_validation_result(
                     errors_truncated = True
         else:
             valid_rows += 1
+            remember_contact_keys(
+                normalized_row,
+                seen_emails=seen_emails,
+                seen_phones=seen_phones,
+            )
 
     return {
         "total_rows": total_rows,
@@ -314,14 +349,24 @@ def validate_import_source(
         headers = _read_csv_headers(path)
         mapping = _resolve_column_mapping(headers)
         rows = _iter_csv_rows(path)
-        result = _collect_validation_result(rows, mapping)
+        result = _collect_validation_result(
+            db,
+            organization_id,
+            rows,
+            mapping,
+        )
 
     elif canonical_format == "xlsx":
         workbook_rows = _iter_xlsx_rows(path)
         try:
             worksheet_name, headers, rows = next(workbook_rows)
             mapping = _resolve_column_mapping(headers)
-            result = _collect_validation_result(rows, mapping)
+            result = _collect_validation_result(
+                db,
+                organization_id,
+                rows,
+                mapping,
+            )
         finally:
             workbook_rows.close()
     else:

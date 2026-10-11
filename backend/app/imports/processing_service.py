@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.contacts.schemas import ContactCreateRequest
-from app.contacts.service import create_contact
+from app.contacts.service import ContactDuplicateError, create_contact
 from app.db.models.import_batch import ImportBatch
 from app.imports.preview import (
     ImportPreviewFileError,
@@ -132,7 +132,6 @@ def _process_rows(
         if validation["invalid_rows"]:
             failed_rows += 1
             for error in validation["errors"]:
-                error["row_number"] = row_number
                 _record_error(
                     errors,
                     row_number=row_number,
@@ -162,14 +161,42 @@ def _process_rows(
             ),
         )
 
-        create_contact(
-            db,
-            organization_id=organization_id,
-            payload=payload,
-            import_batch_id=import_batch_id,
-            source_row_number=row_number,
-            imported_at=datetime.now(UTC),
-        )
+        try:
+            create_contact(
+                db,
+                organization_id=organization_id,
+                payload=payload,
+                import_batch_id=import_batch_id,
+                source_row_number=row_number,
+                imported_at=datetime.now(UTC),
+            )
+        except ContactDuplicateError as exc:
+            # The shared contact service rechecks identifiers against the
+            # current tenant data, including earlier successful rows in this
+            # transaction. A duplicate fails only this row.
+            failed_rows += 1
+            for field in exc.fields:
+                if field == "email":
+                    message = (
+                        "A contact with this email already exists in this "
+                        "organization."
+                    )
+                else:
+                    message = (
+                        "A contact with this phone number already exists in "
+                        "this organization."
+                    )
+
+                _record_error(
+                    errors,
+                    row_number=row_number,
+                    field=field,
+                    code="duplicate",
+                    message=message,
+                    state=error_state,
+                )
+            continue
+
         successful_rows += 1
 
     return {

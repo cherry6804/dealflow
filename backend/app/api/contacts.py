@@ -15,6 +15,7 @@ from app.contacts.schemas import (
     ContactUpdateRequest,
 )
 from app.contacts.service import (
+    ContactDuplicateError,
     create_contact,
     get_contact,
     list_contacts,
@@ -27,6 +28,20 @@ router = APIRouter(
     prefix="/api/v1/contacts",
     tags=["contacts"],
 )
+
+
+def _duplicate_contact_http_exception(
+    error: ContactDuplicateError,
+) -> HTTPException:
+    """Translate duplicate identifiers into a client-facing conflict."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "duplicate_contact",
+            "message": str(error),
+            "fields": error.fields,
+        },
+    )
 
 
 @router.post(
@@ -42,11 +57,15 @@ def create_contact_endpoint(
     db: Session = Depends(get_db_session),
 ) -> ContactResponse:
     """Create a Contact within the verified tenant."""
-    contact = create_contact(
-        db=db,
-        organization_id=tenant_context.organization_id,
-        payload=payload,
-    )
+    try:
+        contact = create_contact(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            payload=payload,
+        )
+    except ContactDuplicateError as error:
+        raise _duplicate_contact_http_exception(error) from error
+
     db.commit()
     db.refresh(contact)
     return ContactResponse.model_validate(contact)
@@ -113,11 +132,13 @@ def get_contact_endpoint(
         organization_id=tenant_context.organization_id,
         contact_id=contact_id,
     )
+
     if contact is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Contact not found.",
         )
+
     return ContactResponse.model_validate(contact)
 
 
@@ -135,12 +156,15 @@ def update_contact_endpoint(
     db: Session = Depends(get_db_session),
 ) -> ContactResponse:
     """Partially update a Contact within the verified tenant."""
-    contact = update_contact(
-        db=db,
-        organization_id=tenant_context.organization_id,
-        contact_id=contact_id,
-        payload=payload,
-    )
+    try:
+        contact = update_contact(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            contact_id=contact_id,
+            payload=payload,
+        )
+    except ContactDuplicateError as error:
+        raise _duplicate_contact_http_exception(error) from error
 
     if contact is None:
         raise HTTPException(
