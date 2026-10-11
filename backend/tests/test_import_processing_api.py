@@ -668,6 +668,39 @@ def test_processing_database_failure_rolls_back_all_contacts(
             assert persisted_batch is not None
             assert persisted_batch.status == "pending"
 
+        # A retry after rollback should process the batch successfully.
+        monkeypatch.setattr(
+            processing_service,
+            "create_contact",
+            original_create_contact,
+        )
+
+        with make_client(user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            retry_response = client.post(
+                f"/api/v1/imports/{batch_id}/process"
+            )
+
+        assert retry_response.status_code == 200, retry_response.text
+        assert retry_response.json()["status"] == "completed"
+        assert retry_response.json()["contacts_created"] == 2
+
+        with SessionLocal() as verify_db:
+            contacts_created = verify_db.scalar(
+                select(func.count())
+                .select_from(Contact)
+                .where(
+                    Contact.organization_id == organization_id,
+                    Contact.import_batch_id == batch_id,
+                )
+            )
+            assert contacts_created == 2
+
+            persisted_batch = verify_db.get(ImportBatch, batch_id)
+            assert persisted_batch is not None
+            assert persisted_batch.status == "completed"
+
+
 def test_import_result_returns_persisted_summary_and_errors(
     import_storage,
 ) -> None:
