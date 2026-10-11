@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from io import BytesIO
 from uuid import UUID
-
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -821,3 +822,73 @@ def test_import_result_and_errors_csv_hide_another_tenants_batch(
         assert result_response.json()["detail"] == "Import batch not found."
         assert csv_response.status_code == 404
         assert csv_response.json()["detail"] == "Import batch not found."
+
+def test_concurrent_processing_of_same_batch_creates_contacts_once(
+    import_storage,
+) -> None:
+
+    from app.db.models.user import User
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=PERMISSION_KEY,
+        )
+        user_id = user.id
+        organization_id = organization.id
+        storage_key = f"{organization_id}/concurrent-processing.csv"
+        source_path = import_storage / storage_key
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            "First Name,Email\n"
+            "Rahul,rahul@example.com\n",
+            encoding="utf-8",
+        )
+
+        batch = create_stored_batch(
+            setup_db,
+            organization_id=organization_id,
+            storage_key=storage_key,
+        )
+        setup_db.commit()
+        batch_id = batch.id
+
+    barrier = Barrier(2)
+
+    def process_batch_concurrently() -> int:
+        with SessionLocal() as user_db:
+            worker_user = user_db.get(User, user_id)
+            assert worker_user is not None
+            user_db.expunge(worker_user)
+
+        with make_client(worker_user) as client:
+            client.headers["X-Organization-ID"] = str(organization_id)
+            barrier.wait(timeout=10)
+            response = client.post(
+                f"/api/v1/imports/{batch_id}/process"
+            )
+            return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(process_batch_concurrently),
+            executor.submit(process_batch_concurrently),
+        ]
+        statuses = sorted(future.result(timeout=30) for future in futures)
+
+    assert statuses == [200, 409]
+
+    with SessionLocal() as verify_db:
+        contacts_created = verify_db.scalar(
+            select(func.count())
+            .select_from(Contact)
+            .where(
+                Contact.organization_id == organization_id,
+                Contact.import_batch_id == batch_id,
+            )
+        )
+        assert contacts_created == 1
+
+        persisted_batch = verify_db.get(ImportBatch, batch_id)
+        assert persisted_batch is not None
+        assert persisted_batch.status == "completed"
