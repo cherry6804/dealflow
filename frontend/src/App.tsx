@@ -14,6 +14,7 @@ import PropertiesPage from "./pages/PropertiesPage";
 import RequirementsPage from "./pages/RequirementsPage";
 import TodayPage from "./pages/TodayPage";
 
+import PipelinePage from "./pages/PipelinePage";
 function ApplicationRoutes() {
   const {
     user,
@@ -76,6 +77,7 @@ function ApplicationRoutes() {
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/leads" element={<LeadsPage />} />
+        <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/properties" element={<PropertiesPage />} />
         <Route path="/requirements" element={<RequirementsPage />} />
         <Route path="/imports" element={<ImportsPage />} />
