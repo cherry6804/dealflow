@@ -183,11 +183,12 @@ def update_lead_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> LeadResponse:
-    """Update a Lead within the verified tenant."""
+    """Update a Lead and record its status and owner changes."""
     try:
         lead = update_lead(
             db=db,
             organization_id=tenant_context.organization_id,
+            actor_id=tenant_context.membership.user_id,
             lead_id=lead_id,
             payload=payload,
         )
@@ -203,6 +204,7 @@ def update_lead_endpoint(
             detail="Lead not found.",
         )
 
+    # Commit the lead update and generated activities together.
     db.commit()
     db.refresh(lead)
 
