@@ -1,4 +1,3 @@
-
 import {
   useCallback,
   useEffect,
@@ -7,7 +6,6 @@ import {
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
-
 import { ApiError } from "../lib/api";
 import { contactsApi, type Contact } from "../services/contactApi";
 import {
@@ -35,7 +33,6 @@ const STATUSES: LeadStatus[] = [
   "ON_HOLD",
 ];
 
-
 const ALLOWED_STATUS_TRANSITIONS: Record<LeadStatus, LeadStatus[]> = {
   NEW: ["CONTACTED", "QUALIFIED", "ON_HOLD"],
   CONTACTED: ["QUALIFIED", "MATCHING", "ON_HOLD"],
@@ -49,12 +46,8 @@ const ALLOWED_STATUS_TRANSITIONS: Record<LeadStatus, LeadStatus[]> = {
 };
 
 function getAvailableStatuses(currentStatus: LeadStatus): LeadStatus[] {
-  return [
-    currentStatus,
-    ...ALLOWED_STATUS_TRANSITIONS[currentStatus],
-  ];
+  return [currentStatus, ...ALLOWED_STATUS_TRANSITIONS[currentStatus]];
 }
-
 
 const INTERESTS: LeadInterest[] = ["LOW", "MEDIUM", "HIGH"];
 
@@ -146,13 +139,29 @@ function toIsoDateTime(value: string): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function toLocalDateTimeInput(value: string | null): string {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  const localDate = new Date(
+    date.getTime() - date.getTimezoneOffset() * 60_000,
+  );
+
+  return localDate.toISOString().slice(0, 16);
+}
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+
   const [timelineLead, setTimelineLead] = useState<{
-  id: string;
-  contactName: string;
-} | null>(null);
+    id: string;
+    contactName: string;
+  } | null>(null);
+
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | LeadStatus>("");
@@ -174,6 +183,7 @@ export default function LeadsPage() {
   const [formError, setFormError] = useState("");
 
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [form, setForm] = useState<LeadForm>(EMPTY_FORM);
 
   const [contactSearch, setContactSearch] = useState("");
@@ -283,6 +293,7 @@ export default function LeadsPage() {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && !saving) {
         setIsFormOpen(false);
+        setEditingLead(null);
         setFormError("");
       }
     }
@@ -297,7 +308,7 @@ export default function LeadsPage() {
   }, [isFormOpen, saving]);
 
   useEffect(() => {
-    if (!isFormOpen) return;
+    if (!isFormOpen || editingLead) return;
 
     let cancelled = false;
 
@@ -335,7 +346,7 @@ export default function LeadsPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isFormOpen, contactSearch]);
+  }, [isFormOpen, editingLead, contactSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +375,7 @@ export default function LeadsPage() {
   }, []);
 
   function openCreateForm() {
+    setEditingLead(null);
     setForm(EMPTY_FORM);
     setFormError("");
     setContactError("");
@@ -373,20 +385,57 @@ export default function LeadsPage() {
     setIsFormOpen(true);
   }
 
+  function openEditForm(lead: Lead) {
+    setEditingLead(lead);
+    setForm({
+      contact_id: lead.contact_id,
+      interest: lead.interest ?? "",
+      next_action: lead.next_action ?? "",
+    });
+    setFormError("");
+    setContactError("");
+    setContactSearch("");
+    setFormContacts([]);
+    setNextActionDate(toLocalDateTimeInput(lead.next_action_at));
+    setIsFormOpen(true);
+  }
+
   async function handleCreateLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError("");
     setSuccess("");
 
-    if (!form.contact_id) {
-      setFormError("Select a contact before creating a lead.");
-      return;
-    }
-
     const nextAction = form.next_action.trim();
 
     if (nextActionDate && !nextAction) {
       setFormError("Enter a next action when scheduling a date.");
+      return;
+    }
+
+    if (editingLead) {
+      setSaving(true);
+
+      try {
+        await leadsApi.update(editingLead.id, {
+          next_action: nextAction || null,
+          next_action_at: toIsoDateTime(nextActionDate),
+        });
+
+        setIsFormOpen(false);
+        setEditingLead(null);
+        setSuccess("Lead next action and follow-up updated successfully.");
+        await loadLeads();
+      } catch (updateError) {
+        setFormError(getErrorMessage(updateError));
+      } finally {
+        setSaving(false);
+      }
+
+      return;
+    }
+
+    if (!form.contact_id) {
+      setFormError("Select a contact before creating a lead.");
       return;
     }
 
@@ -403,6 +452,7 @@ export default function LeadsPage() {
       await leadsApi.create(payload);
 
       setIsFormOpen(false);
+      setEditingLead(null);
       setForm(EMPTY_FORM);
       setContactSearch("");
       setPage(1);
@@ -555,6 +605,7 @@ export default function LeadsPage() {
             <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
         </div>
+
         <div>
           <p className="leads-summary-label">
             {activeFilter === "active"
@@ -589,6 +640,7 @@ export default function LeadsPage() {
             <h2>All leads</h2>
             <p>Search and update your sales pipeline.</p>
           </div>
+
           <button
             className="leads-secondary-button"
             type="button"
@@ -602,7 +654,9 @@ export default function LeadsPage() {
         <div className="leads-toolbar">
           <label className="leads-search">
             <span className="leads-visually-hidden">Search leads</span>
-            <span className="leads-search-icon" aria-hidden="true">⌕</span>
+            <span className="leads-search-icon" aria-hidden="true">
+              ⌕
+            </span>
             <input
               type="search"
               value={searchInput}
@@ -690,19 +744,30 @@ export default function LeadsPage() {
           </div>
         ) : !error && leads.length === 0 ? (
           <div className="leads-empty">
-            <div className="leads-empty-icon" aria-hidden="true">↗</div>
+            <div className="leads-empty-icon" aria-hidden="true">
+              ↗
+            </div>
             <h3>
-              {search || statusFilter || interestFilter || activeFilter !== "active"
+              {search ||
+              statusFilter ||
+              interestFilter ||
+              activeFilter !== "active"
                 ? "No matching leads"
                 : "Your pipeline starts here"}
             </h3>
             <p>
-              {search || statusFilter || interestFilter || activeFilter !== "active"
+              {search ||
+              statusFilter ||
+              interestFilter ||
+              activeFilter !== "active"
                 ? "Try changing your search or filters."
                 : "Create a lead from an existing contact to start tracking an opportunity."}
             </p>
 
-            {search || statusFilter || interestFilter || activeFilter !== "active" ? (
+            {search ||
+            statusFilter ||
+            interestFilter ||
+            activeFilter !== "active" ? (
               <button
                 className="leads-secondary-button"
                 type="button"
@@ -742,6 +807,7 @@ export default function LeadsPage() {
                     <th scope="col">Actions</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {leads.map((lead) => {
                     const contact = contactById.get(lead.contact_id);
@@ -759,6 +825,7 @@ export default function LeadsPage() {
                               "No contact details"}
                           </div>
                         </td>
+
                         <td>
                           <span className={getStatusClass(lead.status)}>
                             {formatLabel(lead.status)}
@@ -779,6 +846,7 @@ export default function LeadsPage() {
                             ))}
                           </select>
                         </td>
+
                         <td>
                           <select
                             className="leads-inline-select"
@@ -797,14 +865,26 @@ export default function LeadsPage() {
                             ))}
                           </select>
                         </td>
+
                         <td>
                           <span className="leads-action-text">
                             {lead.next_action || "—"}
                           </span>
                         </td>
+
                         <td>{formatDateTime(lead.next_action_at)}</td>
                         <td>{formatDate(lead.created_at)}</td>
+
                         <td>
+                          <button
+                            className="leads-text-button"
+                            type="button"
+                            disabled={busy || saving}
+                            onClick={() => openEditForm(lead)}
+                          >
+                            Edit
+                          </button>
+
                           <button
                             className="leads-text-button"
                             type="button"
@@ -817,6 +897,7 @@ export default function LeadsPage() {
                           >
                             View timeline
                           </button>
+
                           <button
                             className="leads-text-button"
                             type="button"
@@ -842,6 +923,7 @@ export default function LeadsPage() {
                 Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
                 <strong>{total}</strong> leads
               </p>
+
               <div className="leads-pagination-controls">
                 <button
                   className="leads-page-button"
@@ -851,9 +933,12 @@ export default function LeadsPage() {
                 >
                   Previous
                 </button>
+
                 <span>
-                  Page {page}{totalPages > 0 ? ` of ${totalPages}` : ""}
+                  Page {page}
+                  {totalPages > 0 ? ` of ${totalPages}` : ""}
                 </span>
+
                 <button
                   className="leads-page-button"
                   type="button"
@@ -866,6 +951,7 @@ export default function LeadsPage() {
             </footer>
           </>
         ) : null}
+
         {timelineLead && (
           <LeadTimeline
             leadId={timelineLead.id}
@@ -876,199 +962,224 @@ export default function LeadsPage() {
       </section>
 
       {isFormOpen &&
-  createPortal(
-    <div
-      className="leads-modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !saving) {
-          setIsFormOpen(false);
-          setFormError("");
-        }
-      }}
-    >
-      <section
-        ref={modalRef}
-        className="leads-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="leads-modal-title"
-      >
-        <header className="leads-modal-header">
-          <div>
-            <span className="leads-eyebrow">OPPORTUNITY DETAILS</span>
-            <h2 id="leads-modal-title">Add a lead</h2>
-            <p>Choose a contact and capture the next step.</p>
-          </div>
-
-          <button
-            className="leads-modal-close"
-            type="button"
-            aria-label="Close form"
-            disabled={saving}
-            onClick={() => {
-              setIsFormOpen(false);
-              setFormError("");
+        createPortal(
+          <div
+            className="leads-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !saving) {
+                setIsFormOpen(false);
+                setEditingLead(null);
+                setFormError("");
+              }
             }}
           >
-            ×
-          </button>
-        </header>
-
-        <form className="leads-form" onSubmit={handleCreateLead}>
-          <div className="leads-form-body">
-            {formError && (
-              <div
-                className="leads-alert leads-alert-error"
-                role="alert"
-              >
-                {formError}
-              </div>
-            )}
-
-            <label className="leads-form-field">
-              <span>Find contact</span>
-              <input
-                type="search"
-                value={contactSearch}
-                maxLength={320}
-                onChange={(event) => setContactSearch(event.target.value)}
-                placeholder="Search active contacts..."
-                disabled={saving}
-              />
-            </label>
-
-            <label className="leads-form-field">
-              <span>
-                Contact <span aria-hidden="true">*</span>
-              </span>
-
-              <select
-                required
-                value={form.contact_id}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    contact_id: event.target.value,
-                  }))
-                }
-                disabled={saving || contactLoading}
-              >
-                <option value="">
-                  {contactLoading ? "Loading contacts..." : "Select a contact"}
-                </option>
-
-                {formContacts.map((contact) => (
-                  <option value={contact.id} key={contact.id}>
-                    {getContactName(contact)}
-                    {contact.phone ? ` · ${contact.phone}` : ""}
-                  </option>
-                ))}
-              </select>
-
-              {contactLoading && (
-                <span className="leads-field-hint">
-                  Loading contacts…
-                </span>
-              )}
-
-              {contactError && (
-                <span className="leads-field-error">
-                  {contactError}
-                </span>
-              )}
-
-              {!contactLoading &&
-                !contactError &&
-                formContacts.length === 0 && (
-                  <span className="leads-field-hint">
-                    No active contacts found. Add a contact first or change
-                    your search.
-                  </span>
-                )}
-            </label>
-
-            <label className="leads-form-field">
-              <span>Interest level</span>
-              <select
-                value={form.interest}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    interest: event.target.value as "" | LeadInterest,
-                  }))
-                }
-                disabled={saving}
-              >
-                <option value="">Not set</option>
-                {INTERESTS.map((interest) => (
-                  <option key={interest} value={interest}>
-                    {formatLabel(interest)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="leads-form-field">
-              <span>Next action</span>
-              <input
-                type="text"
-                maxLength={500}
-                value={form.next_action}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    next_action: event.target.value,
-                  }))
-                }
-                placeholder="e.g. Call about 2BHK apartment"
-                disabled={saving}
-              />
-            </label>
-
-            <label className="leads-form-field">
-              <span>Next action date and time</span>
-              <input
-                type="datetime-local"
-                value={nextActionDate}
-                onChange={(event) => setNextActionDate(event.target.value)}
-                disabled={saving}
-              />
-            </label>
-
-            <p className="leads-field-hint">
-              New leads are created with the status New. You can update the
-              status as the opportunity progresses.
-            </p>
-          </div>
-
-          <footer className="leads-form-actions">
-            <button
-              className="leads-secondary-button"
-              type="button"
-              onClick={() => {
-                setIsFormOpen(false);
-                setFormError("");
-              }}
-              disabled={saving}
+            <section
+              ref={modalRef}
+              className="leads-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="leads-modal-title"
             >
-              Cancel
-            </button>
+              <header className="leads-modal-header">
+                <div>
+                  <span className="leads-eyebrow">OPPORTUNITY DETAILS</span>
+                  <h2 id="leads-modal-title">
+                    {editingLead ? "Edit lead" : "Add a lead"}
+                  </h2>
+                  <p>
+                    {editingLead
+                      ? "Update the next action and follow-up schedule."
+                      : "Choose a contact and capture the next step."}
+                  </p>
+                </div>
 
-            <button
-              className="leads-primary-button"
-              type="submit"
-              disabled={
-                saving || contactLoading || formContacts.length === 0
-              }
-            >
-              {saving ? "Saving..." : "Create lead"}
-            </button>
-          </footer>
-        </form>
-      </section>
-    </div>,
-    document.body,
-  )}
+                <button
+                  className="leads-modal-close"
+                  type="button"
+                  aria-label="Close form"
+                  disabled={saving}
+                  onClick={() => {
+                    setIsFormOpen(false);
+                    setEditingLead(null);
+                    setFormError("");
+                  }}
+                >
+                  ×
+                </button>
+              </header>
+
+              <form className="leads-form" onSubmit={handleCreateLead}>
+                <div className="leads-form-body">
+                  {formError && (
+                    <div
+                      className="leads-alert leads-alert-error"
+                      role="alert"
+                    >
+                      {formError}
+                    </div>
+                  )}
+
+                  {!editingLead && (
+                    <>
+                      <label className="leads-form-field">
+                        <span>Find contact</span>
+                        <input
+                          type="search"
+                          value={contactSearch}
+                          maxLength={320}
+                          onChange={(event) =>
+                            setContactSearch(event.target.value)
+                          }
+                          placeholder="Search active contacts..."
+                          disabled={saving}
+                        />
+                      </label>
+
+                      <label className="leads-form-field">
+                        <span>
+                          Contact <span aria-hidden="true">*</span>
+                        </span>
+
+                        <select
+                          required
+                          value={form.contact_id}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              contact_id: event.target.value,
+                            }))
+                          }
+                          disabled={saving || contactLoading}
+                        >
+                          <option value="">
+                            {contactLoading
+                              ? "Loading contacts..."
+                              : "Select a contact"}
+                          </option>
+
+                          {formContacts.map((contact) => (
+                            <option value={contact.id} key={contact.id}>
+                              {getContactName(contact)}
+                              {contact.phone ? ` · ${contact.phone}` : ""}
+                            </option>
+                          ))}
+                        </select>
+
+                        {contactLoading && (
+                          <span className="leads-field-hint">
+                            Loading contacts…
+                          </span>
+                        )}
+
+                        {contactError && (
+                          <span className="leads-field-error">
+                            {contactError}
+                          </span>
+                        )}
+
+                        {!contactLoading &&
+                          !contactError &&
+                          formContacts.length === 0 && (
+                            <span className="leads-field-hint">
+                              No active contacts found. Add a contact first or
+                              change your search.
+                            </span>
+                          )}
+                      </label>
+
+                      <label className="leads-form-field">
+                        <span>Interest level</span>
+                        <select
+                          value={form.interest}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              interest: event.target.value as "" | LeadInterest,
+                            }))
+                          }
+                          disabled={saving}
+                        >
+                          <option value="">Not set</option>
+                          {INTERESTS.map((interest) => (
+                            <option key={interest} value={interest}>
+                              {formatLabel(interest)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  )}
+
+                  <label className="leads-form-field">
+                    <span>Next action</span>
+                    <input
+                      type="text"
+                      maxLength={500}
+                      value={form.next_action}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          next_action: event.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Call about 2BHK apartment"
+                      disabled={saving}
+                    />
+                  </label>
+
+                  <label className="leads-form-field">
+                    <span>Next action date and time</span>
+                    <input
+                      type="datetime-local"
+                      value={nextActionDate}
+                      onChange={(event) => setNextActionDate(event.target.value)}
+                      disabled={saving}
+                    />
+                  </label>
+
+                  {!editingLead && (
+                    <p className="leads-field-hint">
+                      New leads are created with the status New. You can update
+                      the status as the opportunity progresses.
+                    </p>
+                  )}
+                </div>
+
+                <footer className="leads-form-actions">
+                  <button
+                    className="leads-secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setIsFormOpen(false);
+                      setEditingLead(null);
+                      setFormError("");
+                    }}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    className="leads-primary-button"
+                    type="submit"
+                    disabled={
+                      saving ||
+                      (!editingLead &&
+                        (contactLoading || formContacts.length === 0))
+                    }
+                  >
+                    {saving
+                      ? "Saving..."
+                      : editingLead
+                        ? "Save changes"
+                        : "Create lead"}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }
