@@ -1,3 +1,4 @@
+
 """Pydantic schemas for DealFlow Activity APIs."""
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ class ActivityResponse(BaseModel):
     organization_id: UUID
     lead_id: UUID
     actor_id: UUID
+    actor_display_name: str | None = None
     activity_type: ActivityType
     title: str
     description: str | None
