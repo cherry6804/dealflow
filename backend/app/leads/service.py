@@ -81,7 +81,7 @@ def update_lead(
     lead_id: UUID,
     payload: LeadUpdateRequest,
 ) -> Lead | None:
-    """Update a Lead and record its status and ownership changes."""
+    """Update a Lead and record status, owner, and next-action changes."""
     lead = get_lead(
         db=db,
         organization_id=organization_id,
@@ -100,9 +100,11 @@ def update_lead(
     if "is_active" in updates and updates["is_active"] is None:
         raise ValueError("is_active cannot be null.")
 
-    # Capture the persisted values before applying the requested changes.
+    # Capture persisted values before applying requested changes.
     previous_status = lead.status
     previous_owner_user_id = lead.owner_user_id
+    previous_next_action = lead.next_action
+    previous_next_action_at = lead.next_action_at
 
     requested_status = updates.get(
         "status",
@@ -131,7 +133,7 @@ def update_lead(
             owner_user_id=updates["owner_user_id"],
         )
 
-    # Only record events when the persisted values actually change.
+    # Create activities only for fields explicitly supplied and actually changed.
     status_changed = (
         "status" in updates
         and updates["status"] != previous_status
@@ -142,7 +144,17 @@ def update_lead(
         and updates["owner_user_id"] != previous_owner_user_id
     )
 
-    # Apply the requested lead changes.
+    next_action_changed = (
+        "next_action" in updates
+        and updates["next_action"] != previous_next_action
+    )
+
+    next_action_at_changed = (
+        "next_action_at" in updates
+        and updates["next_action_at"] != previous_next_action_at
+    )
+
+    # Apply all requested lead changes.
     for field_name, value in updates.items():
         setattr(
             lead,
@@ -150,7 +162,7 @@ def update_lead(
             value,
         )
 
-    # Add status-change activity to the same transaction.
+    # Record status changes in the same transaction.
     if status_changed:
         db.add(
             Activity(
@@ -170,7 +182,7 @@ def update_lead(
             )
         )
 
-    # Add ownership-change activity to the same transaction.
+    # Record ownership changes in the same transaction.
     if owner_changed:
         db.add(
             Activity(
@@ -195,7 +207,52 @@ def update_lead(
             )
         )
 
-    # Flush changes without committing. The API endpoint owns the commit.
+    # Record next-action text changes.
+    if next_action_changed:
+        db.add(
+            Activity(
+                organization_id=organization_id,
+                lead_id=lead.id,
+                actor_id=actor_id,
+                activity_type=Activity.TYPE_OTHER,
+                title="Lead next action changed",
+                description="The lead's next action was changed.",
+                details={
+                    "field": "next_action",
+                    "old_next_action": previous_next_action,
+                    "new_next_action": lead.next_action,
+                },
+            )
+        )
+
+    # Record scheduling changes independently, including clearing a date.
+    if next_action_at_changed:
+        db.add(
+            Activity(
+                organization_id=organization_id,
+                lead_id=lead.id,
+                actor_id=actor_id,
+                activity_type=Activity.TYPE_OTHER,
+                title="Lead follow-up schedule changed",
+                description="The lead's follow-up schedule was changed.",
+                details={
+                    "field": "next_action_at",
+                    "old_next_action_at": (
+                        previous_next_action_at.isoformat()
+                        if previous_next_action_at is not None
+                        else None
+                    ),
+                    "new_next_action_at": (
+                        lead.next_action_at.isoformat()
+                        if lead.next_action_at is not None
+                        else None
+                    ),
+                },
+            )
+        )
+
+    # Flush without committing. The API endpoint commits the lead and
+    # generated activities together.
     db.flush()
     db.refresh(lead)
 
