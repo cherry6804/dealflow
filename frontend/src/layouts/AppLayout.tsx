@@ -5,6 +5,7 @@ const navigation = [
   { label: "Contacts", path: "/contacts", end: false },
   { label: "Customers", path: "/customers", end: false },
   { label: "Leads", path: "/leads", end: false },
+  { label: "Pipeline", path: "/pipeline", end: false },
   { label: "Properties", path: "/properties", end: false },
   { label: "Requirements", path: "/requirements", end: false },
   { label: "Imports", path: "/imports", end: false },
