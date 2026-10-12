@@ -1363,3 +1363,218 @@
     align-self: flex-start;
   }
 }
+
+/* DF-98: Today's Attention */
+.attention-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+.attention-group {
+  min-width: 0;
+}
+
+.attention-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.attention-group-heading h3 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.attention-count {
+  display: inline-flex;
+  min-width: 28px;
+  min-height: 25px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.attention-count-overdue {
+  border-color: #e8b4ad;
+  color: #a83225;
+}
+
+.attention-count-today {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.attention-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-item {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface, transparent);
+}
+
+.attention-item-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.attention-item-copy {
+  min-width: 0;
+}
+
+.attention-contact {
+  margin: 0 0 5px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.attention-action {
+  margin: 0 0 7px;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.attention-due {
+  margin: 0;
+  color: var(--color-text-secondary, var(--color-muted));
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.attention-status {
+  flex-shrink: 0;
+  max-width: 45%;
+  padding: 4px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary, var(--color-muted));
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.attention-open-link {
+  margin-top: var(--space-3);
+}
+
+.attention-empty {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  color: var(--color-text-secondary, var(--color-muted));
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.attention-all-link {
+  align-self: flex-start;
+}
+
+.attention-loading {
+  min-height: 160px;
+}
+
+@media (max-width: 480px) {
+  .attention-item {
+    padding: 13px;
+  }
+
+  .attention-item-main {
+    flex-direction: column;
+  }
+
+  .attention-status {
+    max-width: 100%;
+  }
+}
+
+
+.recent-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-activity-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.recent-activity-item:last-child {
+  border-bottom: 0;
+}
+
+.recent-activity-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.recent-activity-type {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #64748b);
+}
+
+.recent-activity-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.recent-activity-description {
+  margin: 5px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.recent-activity-meta {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+
+.recent-activity-link {
+  flex-shrink: 0;
+  margin-top: 24px;
+}
+
+@media (max-width: 480px) {
+  .recent-activity-item {
+    gap: 8px;
+  }
+}

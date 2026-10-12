@@ -35,4 +35,12 @@ export const activityApi = {
       `/leads/${encodeURIComponent(leadId)}/activities`,
     );
   },
+
+  listRecent(limit = 10): Promise<LeadActivityListResponse> {
+    const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+
+    return api.get<LeadActivityListResponse>(
+      `/leads/activities/recent?limit=${safeLimit}`,
+    );
+  },
 };

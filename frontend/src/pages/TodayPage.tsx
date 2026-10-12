@@ -1,13 +1,21 @@
+
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 
 import { ApiError } from "../lib/api";
 import { contactsApi } from "../services/contactApi";
+import type { Contact } from "../services/contactApi";
 import { leadsApi } from "../services/leadApi";
+import type { Lead, LeadStatus } from "../services/leadApi";
 import { propertiesApi } from "../services/propertyApi";
+import {
+  activityApi,
+  type LeadActivity,
+} from "../services/activityApi";
 
 type MetricKey = "contacts" | "leads" | "properties";
+type AttentionCategory = "overdue" | "today";
 
 interface DashboardMetric {
   value: number | null;
@@ -28,6 +36,14 @@ interface OverviewCard {
   icon: string;
 }
 
+interface AttentionItem {
+  lead: Lead;
+  contactName: string;
+  action: string;
+  dueAt: Date;
+  category: AttentionCategory;
+}
+
 const INITIAL_METRIC: DashboardMetric = {
   value: null,
   loading: true,
@@ -39,6 +55,10 @@ const INITIAL_METRICS: DashboardMetrics = {
   leads: { ...INITIAL_METRIC },
   properties: { ...INITIAL_METRIC },
 };
+
+const PAGE_SIZE = 100;
+
+const CLOSED_STATUSES: LeadStatus[] = ["WON", "LOST"];
 
 const overviewCards: OverviewCard[] = [
   {
@@ -91,13 +111,36 @@ const quickActions = [
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 403) {
-      return "You don't have permission to view this metric.";
+      return "You don't have permission to view this data.";
     }
 
     return error.message;
   }
 
-  return "This metric could not be loaded.";
+  return "The data could not be loaded. Check your connection and try again.";
+}
+
+function getContactName(contact: Contact | undefined): string {
+  if (!contact) {
+    return "Contact unavailable";
+  }
+
+  const name = [contact.first_name, contact.last_name]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join(" ")
+    .trim();
+
+  return name || "Unnamed contact";
+}
+
+function formatDueDate(date: Date): string {
+  return date.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function OverviewIcon({ name }: { name: string }) {
@@ -153,12 +196,199 @@ function OverviewIcon({ name }: { name: string }) {
   }
 }
 
+async function fetchAllLeads(): Promise<Lead[]> {
+  const firstPage = await leadsApi.list({
+    page: 1,
+    page_size: PAGE_SIZE,
+    is_active: true,
+  });
+
+  const allLeads = [...firstPage.items];
+
+  for (let page = 2; page <= firstPage.total_pages; page += 1) {
+    const result = await leadsApi.list({
+      page,
+      page_size: PAGE_SIZE,
+      is_active: true,
+    });
+
+    allLeads.push(...result.items);
+  }
+
+  return allLeads;
+}
+
+async function fetchAllContacts(): Promise<Contact[]> {
+  const firstPage = await contactsApi.list({
+    page: 1,
+    page_size: PAGE_SIZE,
+  });
+
+  const allContacts = [...firstPage.items];
+
+  for (let page = 2; page <= firstPage.total_pages; page += 1) {
+    const result = await contactsApi.list({
+      page,
+      page_size: PAGE_SIZE,
+    });
+
+    allContacts.push(...result.items);
+  }
+
+  return allContacts;
+}
+
+function buildAttentionItems(
+  leads: Lead[],
+  contacts: Contact[],
+  now: Date,
+): AttentionItem[] {
+  const contactsById = new Map(
+    contacts.map((contact) => [contact.id, contact]),
+  );
+
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+
+  const startOfTomorrow = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  );
+
+  const items: AttentionItem[] = [];
+
+  for (const lead of leads) {
+    if (!lead.is_active || CLOSED_STATUSES.includes(lead.status)) {
+      continue;
+    }
+
+    if (!lead.next_action?.trim() || !lead.next_action_at) {
+      continue;
+    }
+
+    const dueAt = new Date(lead.next_action_at);
+
+    if (Number.isNaN(dueAt.getTime())) {
+      continue;
+    }
+
+    let category: AttentionCategory;
+
+    if (dueAt < startOfToday) {
+      category = "overdue";
+    } else if (dueAt < startOfTomorrow) {
+      category = "today";
+    } else {
+      continue;
+    }
+
+    const contact = contactsById.get(lead.contact_id);
+
+    items.push({
+      lead,
+      contactName: getContactName(contact),
+      action: lead.next_action.trim(),
+      dueAt,
+      category,
+    });
+  }
+
+  return items.sort((a, b) => {
+    if (a.category !== b.category) {
+      return a.category === "overdue" ? -1 : 1;
+    }
+
+    return a.dueAt.getTime() - b.dueAt.getTime();
+  });
+}
+
+function AttentionList({
+  title,
+  items,
+  category,
+}: {
+  title: string;
+  items: AttentionItem[];
+  category: AttentionCategory;
+}) {
+  return (
+    <section
+      className="attention-group"
+      aria-labelledby={`attention-${category}-heading`}
+    >
+      <div className="attention-group-heading">
+        <h3 id={`attention-${category}-heading`}>{title}</h3>
+        <span
+          className={`attention-count attention-count-${category}`}
+          aria-label={`${items.length} ${category} follow-ups`}
+        >
+          {items.length}
+        </span>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="attention-empty">
+          {category === "overdue"
+            ? "No overdue follow-ups. You're caught up."
+            : "No remaining follow-ups due today."}
+        </p>
+      ) : (
+        <ul className="attention-list">
+          {items.map((item) => (
+            <li
+              className="attention-item"
+              key={item.lead.id}
+            >
+              <div className="attention-item-main">
+                <div className="attention-item-copy">
+                  <p className="attention-contact">
+                    {item.contactName}
+                  </p>
+                  <p className="attention-action">
+                    {item.action}
+                  </p>
+                  <p className="attention-due">
+                    {category === "overdue" ? "Was due " : "Due "}
+                    {formatDueDate(item.dueAt)}
+                  </p>
+                </div>
+
+                <span className="attention-status">
+                  {item.lead.status.replaceAll("_", " ")}
+                </span>
+              </div>
+
+              <Link
+                className="text-link attention-open-link"
+                to="/leads"
+                aria-label={`Open leads to manage ${item.contactName}`}
+              >
+                Open leads <span aria-hidden="true">→</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function TodayPage() {
   const [metrics, setMetrics] =
     useState<DashboardMetrics>(INITIAL_METRICS);
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+const [recentActivities, setRecentActivities] = useState<LeadActivity[]>([]);
+const [activityLoading, setActivityLoading] = useState(true);
+const [activityError, setActivityError] = useState("");
+  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
+  const [attentionLoading, setAttentionLoading] = useState(true);
+  const [attentionError, setAttentionError] = useState("");
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
@@ -172,19 +402,13 @@ export default function TodayPage() {
 
     try {
       const results = await Promise.allSettled([
-        contactsApi.list({
-          page: 1,
-          page_size: 1,
-        }),
+        contactsApi.list({ page: 1, page_size: 1 }),
         leadsApi.list({
           page: 1,
           page_size: 1,
           is_active: true,
         }),
-        propertiesApi.search({
-          page: 1,
-          page_size: 1,
-        }),
+        propertiesApi.search({ page: 1, page_size: 1 }),
       ]);
 
       const nextMetrics: DashboardMetrics = {
@@ -193,11 +417,7 @@ export default function TodayPage() {
         properties: { value: null, loading: false, error: null },
       };
 
-      const keys: MetricKey[] = [
-        "contacts",
-        "leads",
-        "properties",
-      ];
+      const keys: MetricKey[] = ["contacts", "leads", "properties"];
 
       results.forEach((result, index) => {
         const key = keys[index];
@@ -216,79 +436,58 @@ export default function TodayPage() {
           "Dashboard data could not be loaded. Check your connection and permissions.",
         );
       }
+    } catch {
+      setRefreshError(
+        "Dashboard data could not be loaded. Check your connection and permissions.",
+      );
     } finally {
       setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadAttention = useCallback(async () => {
+    setAttentionLoading(true);
+    setAttentionError("");
 
-    async function fetchDashboard() {
-      setRefreshing(true);
-      setRefreshError("");
+    try {
+      const [leads, contacts] = await Promise.all([
+        fetchAllLeads(),
+        fetchAllContacts(),
+      ]);
 
-      try {
-        const results = await Promise.allSettled([
-          contactsApi.list({
-            page: 1,
-            page_size: 1,
-          }),
-          leadsApi.list({
-            page: 1,
-            page_size: 1,
-            is_active: true,
-          }),
-          propertiesApi.search({
-            page: 1,
-            page_size: 1,
-          }),
-        ]);
-
-        if (cancelled) return;
-
-        const nextMetrics: DashboardMetrics = {
-          contacts: { value: null, loading: false, error: null },
-          leads: { value: null, loading: false, error: null },
-          properties: { value: null, loading: false, error: null },
-        };
-
-        const keys: MetricKey[] = [
-          "contacts",
-          "leads",
-          "properties",
-        ];
-
-        results.forEach((result, index) => {
-          const key = keys[index];
-
-          if (result.status === "fulfilled") {
-            nextMetrics[key].value = result.value.total;
-          } else {
-            nextMetrics[key].error = getErrorMessage(result.reason);
-          }
-        });
-
-        setMetrics(nextMetrics);
-
-        if (results.every((result) => result.status === "rejected")) {
-          setRefreshError(
-            "Dashboard data could not be loaded. Check your connection and permissions.",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setRefreshing(false);
-        }
-      }
+      setAttentionItems(buildAttentionItems(leads, contacts, new Date()));
+    } catch (error) {
+      setAttentionError(getErrorMessage(error));
+      setAttentionItems([]);
+    } finally {
+      setAttentionLoading(false);
     }
-
-    void fetchDashboard();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
+const loadRecentActivity = useCallback(async () => {
+  setActivityLoading(true);
+  setActivityError("");
+
+  try {
+    const response = await activityApi.listRecent(10);
+    setRecentActivities(response.items);
+  } catch (error) {
+    setActivityError(getErrorMessage(error));
+    setRecentActivities([]);
+  } finally {
+    setActivityLoading(false);
+  }
+}, []);
+  const refreshAll = useCallback(async () => {
+  await Promise.all([
+    loadDashboard(),
+    loadAttention(),
+    loadRecentActivity(),
+  ]);
+}, [loadDashboard, loadAttention, loadRecentActivity]);
+
+  useEffect(() => {
+    void refreshAll();
+  }, [refreshAll]);
 
   function displayMetric(key: MetricKey): string {
     const metric = metrics[key];
@@ -328,6 +527,16 @@ export default function TodayPage() {
     return defaultDescription;
   }
 
+  const overdueItems = attentionItems.filter(
+    (item) => item.category === "overdue",
+  );
+
+  const dueTodayItems = attentionItems.filter(
+    (item) => item.category === "today",
+  );
+
+  const attentionCount = attentionItems.length;
+
   return (
     <section className="today-page">
       <header className="page-heading today-heading">
@@ -362,22 +571,21 @@ export default function TodayPage() {
           <button
             className="button button-secondary button-sm"
             type="button"
-            onClick={() => void loadDashboard()}
-            disabled={refreshing}
+            onClick={() => void refreshAll()}
+            disabled={refreshing || attentionLoading}
           >
-            {refreshing ? "Refreshing…" : "Refresh"}
+            {refreshing || attentionLoading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
 
         {refreshError && (
           <div className="dashboard-data-error" role="alert">
             <p>{refreshError}</p>
-
             <button
               className="button button-secondary button-sm"
               type="button"
-              onClick={() => void loadDashboard()}
-              disabled={refreshing}
+              onClick={() => void refreshAll()}
+              disabled={refreshing || attentionLoading}
             >
               Try again
             </button>
@@ -388,16 +596,30 @@ export default function TodayPage() {
           {overviewCards.map((card, index) => {
             const metricKey =
               card.key === "followups" ? null : card.key;
-
             const metric =
               metricKey === null ? null : metrics[metricKey];
 
             let value = "—";
-            let description = "Follow-up tracking is not configured yet.";
+            let description = "Follow-up data is loading…";
+            let unavailable = false;
+            let busy = false;
 
             if (metricKey !== null) {
               value = displayMetric(metricKey);
               description = metricDescription(metricKey, card.detail);
+              unavailable = Boolean(metric?.error);
+              busy = metric?.loading ?? false;
+            } else if (attentionLoading) {
+              value = "…";
+              description = "Checking overdue and due-today actions.";
+              busy = true;
+            } else if (attentionError) {
+              value = "—";
+              description = "Follow-ups could not be loaded.";
+              unavailable = true;
+            } else {
+              value = attentionCount.toLocaleString("en-IN");
+              description = `${overdueItems.length} overdue · ${dueTodayItems.length} due today`;
             }
 
             return (
@@ -412,7 +634,7 @@ export default function TodayPage() {
                   </span>
 
                   <span className="overview-indicator">
-                    {metric?.error ? "Unavailable" : "Overview"}
+                    {unavailable ? "Unavailable" : "Overview"}
                   </span>
                 </div>
 
@@ -421,7 +643,7 @@ export default function TodayPage() {
                 <p
                   className="overview-value"
                   aria-live="polite"
-                  aria-busy={metric?.loading ?? false}
+                  aria-busy={busy}
                 >
                   {value}
                 </p>
@@ -450,9 +672,7 @@ export default function TodayPage() {
               className="quick-action-card"
               key={action.title}
               to={action.path}
-              style={
-                { "--card-index": index } as CSSProperties
-              }
+              style={{ "--card-index": index } as CSSProperties}
             >
               <span className="quick-action-symbol" aria-hidden="true">
                 {action.symbol}
@@ -483,32 +703,78 @@ export default function TodayPage() {
         <article className="surface dashboard-panel">
           <div className="section-heading">
             <div>
-              <h2>Follow-up workspace</h2>
-              <p>
-                Keep conversations from slipping through the cracks.
-              </p>
+              <h2>Today’s attention</h2>
+              <p>Prioritize overdue actions and today's follow-ups.</p>
             </div>
 
-            <span className="panel-count">01</span>
+            <button
+              className="button button-secondary button-sm"
+              type="button"
+              onClick={() => void loadAttention()}
+              disabled={attentionLoading}
+            >
+              {attentionLoading ? "Loading…" : "Refresh"}
+            </button>
           </div>
 
-          <div className="dashboard-empty-state">
-            <span className="empty-state-icon" aria-hidden="true">
-              <OverviewIcon name="followups" />
-            </span>
+          {attentionError && (
+            <div className="dashboard-data-error" role="alert">
+              <p>{attentionError}</p>
+              <button
+                className="button button-secondary button-sm"
+                type="button"
+                onClick={() => void loadAttention()}
+                disabled={attentionLoading}
+              >
+                Try again
+              </button>
+            </div>
+          )}
 
-            <h3>Follow-up tracking is coming next</h3>
+          {attentionLoading ? (
+            <div
+              className="dashboard-empty-state attention-loading"
+              role="status"
+            >
+              <span className="empty-state-icon" aria-hidden="true">
+                <OverviewIcon name="followups" />
+              </span>
+              <h3>Loading today's attention</h3>
+              <p>
+                Checking active leads and their scheduled follow-up actions.
+              </p>
+            </div>
+          ) : attentionError ? (
+            <div className="dashboard-empty-state">
+              <span className="empty-state-icon" aria-hidden="true">
+                <OverviewIcon name="followups" />
+              </span>
+              <h3>Attention items are unavailable</h3>
+              <p>
+                Retry the request. Your follow-up data has not been changed.
+              </p>
+            </div>
+          ) : (
+            <div className="attention-content">
+              <AttentionList
+                title="Overdue"
+                items={overdueItems}
+                category="overdue"
+              />
 
-            <p>
-              Once follow-up dates and reminders are implemented, upcoming
-              actions will appear here.
-            </p>
+              <AttentionList
+                title="Due today"
+                items={dueTodayItems}
+                category="today"
+              />
 
-            <Link className="text-link" to="/leads">
-              Explore leads <span aria-hidden="true">→</span>
-            </Link>
-          </div>
+              <Link className="text-link attention-all-link" to="/leads">
+                View all leads <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          )}
         </article>
+
 
         <article className="surface dashboard-panel">
           <div className="section-heading">
@@ -517,21 +783,94 @@ export default function TodayPage() {
               <p>Stay informed about changes in your workspace.</p>
             </div>
 
-            <span className="panel-count">02</span>
-          </div>
-
-          <div className="dashboard-empty-state activity-empty-state">
-            <span className="empty-state-icon" aria-hidden="true">
-              <OverviewIcon name="followups" />
+            <span className="panel-count">
+              {recentActivities.length.toString().padStart(2, "0")}
             </span>
-
-            <h3>Activity tracking isn't connected yet</h3>
-
-            <p>
-              Recent contact, lead, and property updates will appear here
-              after activity tracking is implemented.
-            </p>
           </div>
+
+          {activityError && (
+            <div className="dashboard-data-error" role="alert">
+              <p>{activityError}</p>
+              <button
+                className="button button-secondary button-sm"
+                type="button"
+                onClick={() => void loadRecentActivity()}
+                disabled={activityLoading}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {activityLoading ? (
+            <div className="dashboard-empty-state activity-empty-state" role="status">
+              <span className="empty-state-icon" aria-hidden="true">
+                <OverviewIcon name="followups" />
+              </span>
+              <h3>Loading recent activity</h3>
+              <p>Fetching the latest recorded lead activities.</p>
+            </div>
+          ) : activityError ? (
+            <div className="dashboard-empty-state activity-empty-state">
+              <span className="empty-state-icon" aria-hidden="true">
+                <OverviewIcon name="followups" />
+              </span>
+              <h3>Activity is temporarily unavailable</h3>
+              <p>Retry to load the latest recorded activities.</p>
+            </div>
+          ) : recentActivities.length === 0 ? (
+            <div className="dashboard-empty-state activity-empty-state">
+              <span className="empty-state-icon" aria-hidden="true">
+                <OverviewIcon name="followups" />
+              </span>
+              <h3>No activity recorded yet</h3>
+              <p>
+                Activities recorded against leads will appear here.
+              </p>
+              <Link className="text-link" to="/leads">
+                View leads <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          ) : (
+            <ul className="recent-activity-list">
+              {recentActivities.map((activity) => (
+                <li className="recent-activity-item" key={activity.id}>
+                  <div className="recent-activity-main">
+                    <span className="recent-activity-type">
+                      {activity.activity_type.replaceAll("_", " ")}
+                    </span>
+
+                    <p className="recent-activity-title">{activity.title}</p>
+
+                    {activity.description && (
+                      <p className="recent-activity-description">
+                        {activity.description}
+                      </p>
+                    )}
+
+                    <p className="recent-activity-meta">
+                      {activity.actor_display_name?.trim() || "Workspace member"}
+                      {" · "}
+                      {new Date(activity.occurred_at).toLocaleString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </div>
+
+                  <Link
+                    className="text-link recent-activity-link"
+                    to="/leads"
+                    aria-label={`View leads related to ${activity.title}`}
+                  >
+                    View <span aria-hidden="true">→</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </article>
       </section>
     </section>
