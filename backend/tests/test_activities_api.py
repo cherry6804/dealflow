@@ -1,3 +1,4 @@
+
 """Tests for DealFlow lead activity API routes."""
 
 from __future__ import annotations
@@ -6,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 from uuid import UUID, uuid4
+
 from app.activities.schemas import ActivityCreateRequest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,7 +17,6 @@ from sqlalchemy.orm import Session
 from app.activities.service import create_activity
 from app.api.activities import router as activities_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
-from app.authz.dependencies import require_permission
 from app.db.models.activity import Activity
 from app.db.models.contact import Contact
 from app.db.models.lead import Lead
@@ -27,13 +28,13 @@ from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-from app.tenant.dependencies import get_tenant_context
 
 
 TestingSessionLocal = SessionLocal
 
 
 def create_user(db: Session) -> User:
+    """Create a unique test user."""
     user = User(
         email=f"activity-api-{uuid4()}@example.com",
         display_name=f"Activity API User {uuid4()}",
@@ -46,6 +47,7 @@ def create_user(db: Session) -> User:
 
 
 def create_organization(db: Session) -> Organization:
+    """Create a unique test organization."""
     organization = Organization(
         name=f"Activity API Organization {uuid4()}",
         is_active=True,
@@ -61,6 +63,7 @@ def create_membership(
     user: User,
     organization: Organization,
 ) -> Membership:
+    """Create a membership for the supplied user and organization."""
     membership = Membership(
         user_id=user.id,
         organization_id=organization.id,
@@ -77,6 +80,7 @@ def grant_permission(
     membership: Membership,
     permission_key: str,
 ) -> None:
+    """Grant a permission to the supplied membership."""
     permission = db.scalar(
         select(Permission).where(Permission.key == permission_key)
     )
@@ -119,6 +123,7 @@ def create_authorized_user(
     *,
     permission_keys: tuple[str, ...],
 ) -> tuple[User, Organization]:
+    """Create a user with the requested tenant permissions."""
     user = create_user(db)
     organization = create_organization(db)
     membership = create_membership(
@@ -143,6 +148,7 @@ def create_lead(
     *,
     organization: Organization,
 ) -> Lead:
+    """Create and persist a lead for the supplied organization."""
     contact = Contact(
         organization_id=organization.id,
         first_name="Activity",
@@ -165,6 +171,7 @@ def create_lead(
 
 
 def create_test_app(*, user: User) -> FastAPI:
+    """Create a test application with injected authentication."""
     app = FastAPI()
     app.include_router(activities_router)
 
@@ -185,6 +192,7 @@ def create_test_app(*, user: User) -> FastAPI:
 
 @contextmanager
 def make_test_client(*, user: User) -> Iterator[TestClient]:
+    """Create a test client for activity API calls."""
     app = create_test_app(user=user)
     with TestClient(app) as client:
         yield client
@@ -194,6 +202,7 @@ def add_tenant_header(
     client: TestClient,
     organization: Organization,
 ) -> None:
+    """Select the organization for the API request."""
     client.headers.update(
         {"X-Organization-ID": str(organization.id)}
     )
@@ -209,7 +218,6 @@ def test_create_activity_successfully() -> None:
 
         with make_test_client(user=user) as client:
             add_tenant_header(client, organization)
-
             response = client.post(
                 f"/api/v1/leads/{lead.id}/activities",
                 json={
@@ -220,11 +228,12 @@ def test_create_activity_successfully() -> None:
                 },
             )
 
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         payload = response.json()
         assert payload["organization_id"] == str(organization.id)
         assert payload["lead_id"] == str(lead.id)
         assert payload["actor_id"] == str(user.id)
+        assert payload["actor_display_name"] == user.display_name
         assert payload["activity_type"] == "NOTE"
         assert payload["title"] == "Customer discussion"
 
@@ -248,7 +257,6 @@ def test_create_activity_rejects_cross_tenant_lead() -> None:
 
         with make_test_client(user=user) as client:
             add_tenant_header(client, organization_a)
-
             response = client.post(
                 f"/api/v1/leads/{lead_b.id}/activities",
                 json={
@@ -283,7 +291,6 @@ def test_create_activity_requires_permission() -> None:
 
         with make_test_client(user=user) as client:
             add_tenant_header(client, organization)
-
             response = client.post(
                 f"/api/v1/leads/{lead.id}/activities",
                 json={
@@ -315,9 +322,9 @@ def test_list_activities_successfully_in_timeline_order() -> None:
                 actor_id=user.id,
                 lead_id=lead.id,
                 payload=ActivityCreateRequest(
-                activity_type="NOTE",
-                title=title,
-                occurred_at=occurred_at,
+                    activity_type="NOTE",
+                    title=title,
+                    occurred_at=occurred_at,
                 ),
             )
             assert activity is not None
@@ -330,11 +337,15 @@ def test_list_activities_successfully_in_timeline_order() -> None:
                 f"/api/v1/leads/{lead.id}/activities"
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         payload = response.json()
         assert [
             item["title"] for item in payload["items"]
         ] == ["Earlier activity", "Later activity"]
+        assert all(
+            item["actor_display_name"] == user.display_name
+            for item in payload["items"]
+        )
 
 
 def test_list_activities_returns_404_for_missing_lead() -> None:

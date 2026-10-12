@@ -18,7 +18,7 @@ import {
   type LeadOutcome,
   type LeadStatus,
 } from "../services/leadApi";
-
+import LeadTimeline from "../components/LeadTimeline";
 import "./LeadsPage.css";
 
 const PAGE_SIZE = 10;
@@ -149,7 +149,10 @@ function toIsoDateTime(value: string): string | null {
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-
+  const [timelineLead, setTimelineLead] = useState<{
+  id: string;
+  contactName: string;
+} | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | LeadStatus>("");
@@ -805,6 +808,18 @@ export default function LeadsPage() {
                           <button
                             className="leads-text-button"
                             type="button"
+                            onClick={() =>
+                              setTimelineLead({
+                                id: lead.id,
+                                contactName: getContactName(contact),
+                              })
+                            }
+                          >
+                            View timeline
+                          </button>
+                          <button
+                            className="leads-text-button"
+                            type="button"
                             disabled={busy}
                             onClick={() => void handleActiveToggle(lead)}
                           >
@@ -851,6 +866,13 @@ export default function LeadsPage() {
             </footer>
           </>
         ) : null}
+        {timelineLead && (
+          <LeadTimeline
+            leadId={timelineLead.id}
+            contactName={timelineLead.contactName}
+            onClose={() => setTimelineLead(null)}
+          />
+        )}
       </section>
 
       {isFormOpen &&

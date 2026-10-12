@@ -58,7 +58,11 @@ def create_activity_endpoint(
     db.commit()
     db.refresh(activity)
 
-    return ActivityResponse.model_validate(activity)
+    return ActivityResponse.model_validate(activity).model_copy(
+        update={
+            "actor_display_name": activity.actor.display_name,
+        }
+    )
 
 
 @router.get(
@@ -88,7 +92,11 @@ def list_activities_endpoint(
 
     return ActivityListResponse(
         items=[
-            ActivityResponse.model_validate(activity)
+            ActivityResponse.model_validate(activity).model_copy(
+                update={
+                    "actor_display_name": activity.actor.display_name,
+                }
+            )
             for activity in activities
         ],
     )
