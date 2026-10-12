@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "../lib/api";
@@ -45,6 +44,34 @@ function formatTimestamp(value: string): string {
   }).format(date);
 }
 
+function formatDateTimeValue(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return "Not scheduled";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatActionValue(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return "Not set";
+  }
+
+  return value;
+}
+
 function sortActivities(items: LeadActivity[]): LeadActivity[] {
   return [...items].sort((a, b) => {
     const timeDifference =
@@ -53,6 +80,53 @@ function sortActivities(items: LeadActivity[]): LeadActivity[] {
 
     return timeDifference || b.id.localeCompare(a.id);
   });
+}
+
+function ActivityChangeDetails({
+  activity,
+}: {
+  activity: LeadActivity;
+}) {
+  const details = activity.details;
+
+  if (!details) {
+    return null;
+  }
+
+  if (details.field === "next_action") {
+    return (
+      <div className="lead-timeline-change" aria-label="Next action changes">
+        <div className="lead-timeline-change-row">
+          <span>Previous action</span>
+          <p>{formatActionValue(details.old_next_action)}</p>
+        </div>
+        <div className="lead-timeline-change-row">
+          <span>Updated action</span>
+          <p>{formatActionValue(details.new_next_action)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (details.field === "next_action_at") {
+    return (
+      <div
+        className="lead-timeline-change"
+        aria-label="Follow-up schedule changes"
+      >
+        <div className="lead-timeline-change-row">
+          <span>Previous follow-up</span>
+          <p>{formatDateTimeValue(details.old_next_action_at)}</p>
+        </div>
+        <div className="lead-timeline-change-row">
+          <span>Updated follow-up</span>
+          <p>{formatDateTimeValue(details.new_next_action_at)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default function LeadTimeline({
@@ -169,10 +243,7 @@ export default function LeadTimeline({
               role="status"
               aria-live="polite"
             >
-              <span
-                className="leads-spinner"
-                aria-hidden="true"
-              />
+              <span className="leads-spinner" aria-hidden="true" />
               <p>Loading activity history…</p>
             </div>
           ) : error ? (
@@ -188,10 +259,7 @@ export default function LeadTimeline({
             </div>
           ) : activities.length === 0 ? (
             <div className="lead-timeline-state">
-              <div
-                className="lead-timeline-empty-icon"
-                aria-hidden="true"
-              >
+              <div className="lead-timeline-empty-icon" aria-hidden="true">
                 ◷
               </div>
               <h3>No activity recorded yet</h3>
@@ -203,10 +271,7 @@ export default function LeadTimeline({
           ) : (
             <ol className="lead-timeline-list">
               {activities.map((activity) => (
-                <li
-                  className="lead-timeline-item"
-                  key={activity.id}
-                >
+                <li className="lead-timeline-item" key={activity.id}>
                   <span
                     className="lead-timeline-marker"
                     aria-hidden="true"
@@ -229,6 +294,8 @@ export default function LeadTimeline({
                         {activity.description}
                       </p>
                     )}
+
+                    <ActivityChangeDetails activity={activity} />
 
                     <p className="lead-timeline-actor">
                       Performed by{" "}
