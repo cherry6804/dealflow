@@ -7,7 +7,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-
+from app.activities.schemas import ActivityListResponse, ActivityResponse
+from app.activities.service import list_recent_activities
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
 from app.leads.schemas import (
@@ -141,6 +142,40 @@ def list_leads_endpoint(
         total_pages=total_pages,
     )
 
+@router.get(
+    "/activities/recent",
+    response_model=ActivityListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_recent_activities_endpoint(
+    limit: int = Query(default=10, ge=1, le=50),
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> ActivityListResponse:
+    """List recent activities for the verified organization."""
+
+    activities = list_recent_activities(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        limit=limit,
+    )
+
+    return ActivityListResponse(
+        items=[
+            ActivityResponse.model_validate(activity).model_copy(
+                update={
+                    "actor_display_name": (
+                        activity.actor.display_name
+                        if activity.actor
+                        else None
+                    ),
+                }
+            )
+            for activity in activities
+        ],
+    )
 
 @router.get(
     "/{lead_id}",
