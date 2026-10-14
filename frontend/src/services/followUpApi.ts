@@ -38,6 +38,30 @@ export interface FollowUpRescheduleInput {
   due_at: string;
 }
 
+
+export interface BulkFollowUpRequest {
+  follow_up_ids: string[];
+}
+
+export interface BulkFollowUpRescheduleInput extends BulkFollowUpRequest {
+  due_at: string;
+}
+
+export interface BulkFollowUpItemResult {
+  follow_up_id: string;
+  success: boolean;
+  message: string;
+  follow_up?: FollowUp | null;
+}
+
+export interface BulkFollowUpResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkFollowUpItemResult[];
+}
+
+
 export interface FollowUpListParams {
   due_before?: string;
   overdue_only?: boolean;
@@ -89,4 +113,24 @@ export const followUpsApi = {
       input,
     );
   },
+
+
+  bulkComplete(
+    input: BulkFollowUpRequest,
+  ): Promise<BulkFollowUpResponse> {
+    return api.post<BulkFollowUpResponse>(
+      "/follow-ups/bulk-complete",
+      input,
+    );
+  },
+
+  bulkReschedule(
+    input: BulkFollowUpRescheduleInput,
+  ): Promise<BulkFollowUpResponse> {
+    return api.post<BulkFollowUpResponse>(
+      "/follow-ups/bulk-reschedule",
+      input,
+    );
+  },
+
 };

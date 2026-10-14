@@ -687,3 +687,303 @@ def test_list_follow_ups_requires_permission() -> None:
 
         assert response.status_code == 403
         assert response.json()["detail"] == "Permission denied."
+
+
+def test_bulk_complete_follow_ups_returns_individual_results() -> None:
+    """Report the outcome for every selected follow-up."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+
+        first = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+        second = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        follow_up_ids = [str(first.id), str(second.id)]
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={"follow_up_ids": follow_up_ids},
+            )
+
+        assert response.status_code == 200, response.text
+
+        result = response.json()
+
+        assert result["total"] == 2
+        assert result["succeeded"] == 2
+        assert result["failed"] == 0
+        assert len(result["results"]) == 2
+
+        for item in result["results"]:
+            assert item["success"] is True
+            assert item["follow_up"]["status"] == "COMPLETED"
+            assert item["follow_up"]["completed_at"] is not None
+            assert (
+                item["follow_up"]["completed_by_user_id"]
+                == str(user.id)
+            )
+
+
+def test_bulk_reschedule_follow_ups_successfully() -> None:
+    """Reschedule multiple pending follow-ups in one request."""
+
+    new_due_at = datetime.now(timezone.utc) + timedelta(days=10)
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+
+        first = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+        second = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-reschedule",
+                json={
+                    "follow_up_ids": [
+                        str(first.id),
+                        str(second.id),
+                    ],
+                    "due_at": new_due_at.isoformat(),
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        result = response.json()
+
+        assert result["total"] == 2
+        assert result["succeeded"] == 2
+        assert result["failed"] == 0
+
+        for item in result["results"]:
+            assert item["success"] is True
+            assert item["follow_up"]["status"] == "PENDING"
+            assert (
+                datetime.fromisoformat(item["follow_up"]["due_at"])
+                == new_due_at
+            )
+
+
+def test_bulk_complete_reports_mixed_success_and_failure() -> None:
+    """Complete pending items and report already-completed items."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+
+        pending = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+        already_completed = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        already_completed.status = FollowUp.STATUS_COMPLETED
+        already_completed.completed_at = datetime.now(timezone.utc)
+        already_completed.completed_by_user_id = user.id
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={
+                    "follow_up_ids": [
+                        str(pending.id),
+                        str(already_completed.id),
+                    ]
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        result = response.json()
+
+        assert result["total"] == 2
+        assert result["succeeded"] == 1
+        assert result["failed"] == 1
+
+        results_by_id = {
+            item["follow_up_id"]: item
+            for item in result["results"]
+        }
+
+        assert results_by_id[str(pending.id)]["success"] is True
+        assert (
+            results_by_id[str(already_completed.id)]["success"]
+            is False
+        )
+        assert (
+            results_by_id[str(already_completed.id)]["message"]
+            == "Only pending follow-ups can be completed."
+        )
+
+
+def test_bulk_complete_does_not_modify_another_organizations_follow_up() -> None:
+    """Do not expose or modify another tenant's follow-up."""
+
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+
+        organization_b = create_organization(db)
+
+        user_b = create_user(db)
+        create_membership(
+            db,
+            user=user_b,
+            organization=organization_b,
+        )
+        db.commit()
+
+        lead_b = create_lead(db, organization=organization_b)
+
+        foreign_follow_up = create_pending_follow_up(
+            db,
+            organization=organization_b,
+            lead=lead_b,
+            owner=user_b,
+        )
+
+        foreign_id = foreign_follow_up.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={"follow_up_ids": [str(foreign_id)]},
+            )
+
+        assert response.status_code == 200, response.text
+
+        result = response.json()
+
+        assert result["total"] == 1
+        assert result["succeeded"] == 0
+        assert result["failed"] == 1
+        assert result["results"][0]["success"] is False
+        assert result["results"][0]["message"] == "Follow-up not found."
+
+        db.refresh(foreign_follow_up)
+        assert foreign_follow_up.status == FollowUp.STATUS_PENDING
+        assert foreign_follow_up.completed_at is None
+        assert foreign_follow_up.completed_by_user_id is None
+
+
+def test_bulk_complete_requires_permission() -> None:
+    """Require leads.update permission for bulk completion."""
+
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={"follow_up_ids": [str(uuid4())]},
+            )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Permission denied."
+
+
+def test_bulk_complete_rejects_empty_selection() -> None:
+    """Reject a bulk request with no selected follow-ups."""
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={"follow_up_ids": []},
+            )
+
+        assert response.status_code == 422
+
+
+def test_bulk_complete_rejects_duplicate_ids() -> None:
+    """Reject duplicate follow-up IDs in one request."""
+
+    follow_up_id = str(uuid4())
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            response = client.post(
+                "/api/v1/follow-ups/bulk-complete",
+                json={
+                    "follow_up_ids": [
+                        follow_up_id,
+                        follow_up_id,
+                    ]
+                },
+            )
+
+        assert response.status_code == 422

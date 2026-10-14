@@ -10,10 +10,12 @@ from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.follow_ups.schemas import (
+    BulkFollowUpItemResult,
+    BulkFollowUpRequest,
+    BulkFollowUpRescheduleRequest,
     FollowUpCreateRequest,
     FollowUpRescheduleRequest,
 )
-
 
 def create_follow_up(
     db: Session,
@@ -163,3 +165,116 @@ def list_follow_ups(
     )
 
     return list(db.scalars(statement).all())
+
+
+def bulk_complete_follow_ups(
+    db: Session,
+    *,
+    organization_id: UUID,
+    current_user_id: UUID,
+    payload: BulkFollowUpRequest,
+) -> list[BulkFollowUpItemResult]:
+    """Complete selected pending follow-ups independently."""
+
+    results: list[BulkFollowUpItemResult] = []
+
+    for follow_up_id in payload.follow_up_ids:
+        with db.begin_nested():
+            statement = select(FollowUp).where(
+                FollowUp.id == follow_up_id,
+                FollowUp.organization_id == organization_id,
+            )
+            follow_up = db.scalar(statement)
+
+            if follow_up is None:
+                results.append(
+                    BulkFollowUpItemResult(
+                        follow_up_id=follow_up_id,
+                        success=False,
+                        message="Follow-up not found.",
+                    )
+                )
+                continue
+
+            if follow_up.status != FollowUp.STATUS_PENDING:
+                results.append(
+                    BulkFollowUpItemResult(
+                        follow_up_id=follow_up_id,
+                        success=False,
+                        message="Only pending follow-ups can be completed.",
+                    )
+                )
+                continue
+
+            follow_up.status = FollowUp.STATUS_COMPLETED
+            follow_up.completed_at = datetime.now(timezone.utc)
+            follow_up.completed_by_user_id = current_user_id
+
+            db.flush()
+            db.refresh(follow_up)
+
+            results.append(
+                BulkFollowUpItemResult(
+                    follow_up_id=follow_up_id,
+                    success=True,
+                    message="Follow-up completed successfully.",
+                    follow_up=follow_up,
+                )
+            )
+
+    return results
+
+
+def bulk_reschedule_follow_ups(
+    db: Session,
+    *,
+    organization_id: UUID,
+    payload: BulkFollowUpRescheduleRequest,
+) -> list[BulkFollowUpItemResult]:
+    """Reschedule selected pending follow-ups independently."""
+
+    results: list[BulkFollowUpItemResult] = []
+
+    for follow_up_id in payload.follow_up_ids:
+        with db.begin_nested():
+            statement = select(FollowUp).where(
+                FollowUp.id == follow_up_id,
+                FollowUp.organization_id == organization_id,
+            )
+            follow_up = db.scalar(statement)
+
+            if follow_up is None:
+                results.append(
+                    BulkFollowUpItemResult(
+                        follow_up_id=follow_up_id,
+                        success=False,
+                        message="Follow-up not found.",
+                    )
+                )
+                continue
+
+            if follow_up.status != FollowUp.STATUS_PENDING:
+                results.append(
+                    BulkFollowUpItemResult(
+                        follow_up_id=follow_up_id,
+                        success=False,
+                        message="Only pending follow-ups can be rescheduled.",
+                    )
+                )
+                continue
+
+            follow_up.due_at = payload.due_at
+
+            db.flush()
+            db.refresh(follow_up)
+
+            results.append(
+                BulkFollowUpItemResult(
+                    follow_up_id=follow_up_id,
+                    success=True,
+                    message="Follow-up rescheduled successfully.",
+                    follow_up=follow_up,
+                )
+            )
+
+    return results

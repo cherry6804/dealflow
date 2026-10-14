@@ -10,13 +10,20 @@ from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
+
 from app.follow_ups.schemas import (
+    BulkFollowUpRequest,
+    BulkFollowUpRescheduleRequest,
+    BulkFollowUpResponse,
     FollowUpCompleteRequest,
     FollowUpCreateRequest,
     FollowUpRescheduleRequest,
     FollowUpResponse,
 )
+
 from app.follow_ups.service import (
+    bulk_complete_follow_ups,
+    bulk_reschedule_follow_ups,
     complete_follow_up,
     create_follow_up,
     list_follow_ups,
@@ -174,3 +181,68 @@ def list_follow_ups_endpoint(
         FollowUpResponse.model_validate(follow_up)
         for follow_up in follow_ups
     ]
+
+
+@router.post(
+    "/api/v1/follow-ups/bulk-complete",
+    response_model=BulkFollowUpResponse,
+    status_code=status.HTTP_200_OK,
+)
+def bulk_complete_follow_ups_endpoint(
+    payload: BulkFollowUpRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> BulkFollowUpResponse:
+    """Complete selected pending follow-ups in the verified tenant."""
+
+    results = bulk_complete_follow_ups(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        current_user_id=tenant_context.membership.user_id,
+        payload=payload,
+    )
+
+    db.commit()
+
+    succeeded = sum(1 for result in results if result.success)
+
+    return BulkFollowUpResponse(
+        total=len(results),
+        succeeded=succeeded,
+        failed=len(results) - succeeded,
+        results=results,
+    )
+
+
+@router.post(
+    "/api/v1/follow-ups/bulk-reschedule",
+    response_model=BulkFollowUpResponse,
+    status_code=status.HTTP_200_OK,
+)
+def bulk_reschedule_follow_ups_endpoint(
+    payload: BulkFollowUpRescheduleRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> BulkFollowUpResponse:
+    """Reschedule selected pending follow-ups in the verified tenant."""
+
+    results = bulk_reschedule_follow_ups(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        payload=payload,
+    )
+
+    db.commit()
+
+    succeeded = sum(1 for result in results if result.success)
+
+    return BulkFollowUpResponse(
+        total=len(results),
+        succeeded=succeeded,
+        failed=len(results) - succeeded,
+        results=results,
+    )
