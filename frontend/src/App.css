@@ -1578,3 +1578,125 @@
     gap: 8px;
   }
 }
+
+
+/* Follow-up manager cards */
+.follow-up-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  margin: 0 0 12px;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(25, 45, 80, 0.04);
+  min-width: 0;
+}
+
+.follow-up-card h4 {
+  margin: 0;
+  color: #1d2b45;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.follow-up-card p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.follow-up-card .leads-form-actions {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid #edf0f5;
+}
+
+.follow-up-card .leads-primary-button,
+.follow-up-card .leads-secondary-button {
+  min-height: 40px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.follow-up-card .leads-primary-button {
+  background: #315fb2;
+  border-color: #315fb2;
+  color: #ffffff;
+}
+
+.follow-up-card .leads-primary-button:hover:not(:disabled) {
+  background: #254d96;
+  border-color: #254d96;
+}
+
+.follow-up-card .leads-secondary-button {
+  background: #ffffff;
+  border: 1px solid #d5deec;
+  color: #263750;
+}
+
+.follow-up-card .leads-secondary-button:hover:not(:disabled) {
+  background: #f4f7fc;
+}
+
+.follow-up-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Keep the follow-up form visually consistent */
+.leads-modal .leads-form-body > h3 {
+  margin: 8px 0 14px;
+  color: #1d2b45;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.leads-modal .leads-form-body > hr {
+  margin: 22px 0 18px;
+  border: 0;
+  border-top: 1px solid #e5eaf2;
+}
+
+.leads-modal .leads-form-body textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 76px;
+  padding: 10px 12px;
+  border: 1px solid #d5deec;
+  border-radius: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.leads-modal .leads-form-body textarea:focus {
+  outline: 2px solid rgba(49, 95, 178, 0.18);
+  border-color: #315fb2;
+}
+
+@media (max-width: 600px) {
+  .follow-up-card {
+    padding: 12px;
+  }
+
+  .follow-up-card .leads-form-actions {
+    align-items: stretch;
+  }
+
+  .follow-up-card .leads-primary-button,
+  .follow-up-card .leads-secondary-button {
+    flex: 1;
+  }
+}

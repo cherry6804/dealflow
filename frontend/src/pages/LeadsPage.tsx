@@ -18,6 +18,11 @@ import {
 } from "../services/leadApi";
 import LeadTimeline from "../components/LeadTimeline";
 import "./LeadsPage.css";
+import {
+  followUpsApi,
+  type FollowUp,
+  type FollowUpType,
+} from "../services/followUpApi";
 
 const PAGE_SIZE = 10;
 
@@ -191,7 +196,23 @@ export default function LeadsPage() {
   const [contactError, setContactError] = useState("");
   const [formContacts, setFormContacts] = useState<Contact[]>([]);
   const [nextActionDate, setNextActionDate] = useState("");
+  
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+const [selectedFollowUpLead, setSelectedFollowUpLead] =
+  useState<Lead | null>(null);
+const [followUpsLoading, setFollowUpsLoading] = useState(false);
+const [followUpSaving, setFollowUpSaving] = useState(false);
+const [followUpError, setFollowUpError] = useState("");
+const [followUpSuccess, setFollowUpSuccess] = useState("");
 
+const [followUpType, setFollowUpType] =
+  useState<FollowUpType>("CALL");
+const [followUpTitle, setFollowUpTitle] = useState("");
+const [followUpDescription, setFollowUpDescription] = useState("");
+const [followUpDueAt, setFollowUpDueAt] = useState("");
+const [reschedulingFollowUpId, setReschedulingFollowUpId] =
+  useState<string | null>(null);
+const [rescheduleDueAt, setRescheduleDueAt] = useState("");
   const requestSequence = useRef(0);
   const modalRef = useRef<HTMLElement>(null);
 
@@ -559,6 +580,129 @@ export default function LeadsPage() {
     }
   }
 
+    async function loadFollowUpsForLead(lead: Lead) {
+    setFollowUpsLoading(true);
+    setFollowUpError("");
+
+    try {
+      const result = await followUpsApi.list();
+      setFollowUps(result.filter((item) => item.lead_id === lead.id));
+    } catch (loadError) {
+      setFollowUpError(getErrorMessage(loadError));
+    } finally {
+      setFollowUpsLoading(false);
+    }
+  }
+
+  function openFollowUps(lead: Lead) {
+    setSelectedFollowUpLead(lead);
+    setFollowUps([]);
+    setFollowUpError("");
+    setFollowUpSuccess("");
+    setFollowUpTitle("");
+    setFollowUpDescription("");
+    setFollowUpDueAt("");
+    setFollowUpType("CALL");
+    setReschedulingFollowUpId(null);
+    setRescheduleDueAt("");
+    void loadFollowUpsForLead(lead);
+  }
+
+  async function handleCreateFollowUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const lead = selectedFollowUpLead;
+    const title = followUpTitle.trim();
+    const dueAt = toIsoDateTime(followUpDueAt);
+
+    if (!lead) {
+      setFollowUpError("Select a lead before creating a follow-up.");
+      return;
+    }
+
+    if (!title) {
+      setFollowUpError("Enter a title for the follow-up.");
+      return;
+    }
+
+    if (!dueAt) {
+      setFollowUpError("Enter a valid follow-up date and time.");
+      return;
+    }
+
+    setFollowUpSaving(true);
+    setFollowUpError("");
+    setFollowUpSuccess("");
+
+    try {
+      await followUpsApi.create(lead.id, {
+        follow_up_type: followUpType,
+        title,
+        description: followUpDescription.trim() || null,
+        due_at: dueAt,
+      });
+
+      setFollowUpTitle("");
+      setFollowUpDescription("");
+      setFollowUpDueAt("");
+      setFollowUpType("CALL");
+      setFollowUpSuccess("Follow-up created successfully.");
+      await loadFollowUpsForLead(lead);
+    } catch (createError) {
+      setFollowUpError(getErrorMessage(createError));
+    } finally {
+      setFollowUpSaving(false);
+    }
+  }
+
+  async function handleCompleteFollowUp(followUp: FollowUp) {
+    const lead = selectedFollowUpLead;
+    if (!lead || followUpSaving) return;
+
+    setFollowUpSaving(true);
+    setFollowUpError("");
+    setFollowUpSuccess("");
+
+    try {
+      await followUpsApi.complete(followUp.id);
+      setFollowUps((current) =>
+        current.filter((item) => item.id !== followUp.id),
+      );
+      setFollowUpSuccess("Follow-up marked as completed.");
+    } catch (completeError) {
+      setFollowUpError(getErrorMessage(completeError));
+    } finally {
+      setFollowUpSaving(false);
+    }
+  }
+
+  async function handleRescheduleFollowUp(followUp: FollowUp) {
+    const lead = selectedFollowUpLead;
+    const dueAt = toIsoDateTime(rescheduleDueAt);
+
+    if (!lead || !dueAt || followUpSaving) {
+      setFollowUpError("Enter a valid new date and time.");
+      return;
+    }
+
+    setFollowUpSaving(true);
+    setFollowUpError("");
+    setFollowUpSuccess("");
+
+    try {
+      await followUpsApi.reschedule(followUp.id, { due_at: dueAt });
+      setReschedulingFollowUpId(null);
+      setRescheduleDueAt("");
+      setFollowUpSuccess("Follow-up rescheduled successfully.");
+      await loadFollowUpsForLead(lead);
+    } catch (rescheduleError) {
+      setFollowUpError(getErrorMessage(rescheduleError));
+    } finally {
+      setFollowUpSaving(false);
+    }
+  }
+
+
   const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastResult = Math.min(page * PAGE_SIZE, total);
 
@@ -897,7 +1041,14 @@ export default function LeadsPage() {
                           >
                             View timeline
                           </button>
-
+                          <button
+                            className="leads-text-button"
+                            type="button"
+                            disabled={busy || !lead.is_active}
+                            onClick={() => openFollowUps(lead)}
+                          >
+                            Follow-ups
+                          </button>
                           <button
                             className="leads-text-button"
                             type="button"
@@ -959,6 +1110,268 @@ export default function LeadsPage() {
             onClose={() => setTimelineLead(null)}
           />
         )}
+        
+{selectedFollowUpLead &&
+  createPortal(
+    <div
+      className="leads-modal-backdrop"
+      onMouseDown={(event) => {
+        if (
+          event.target === event.currentTarget &&
+          !followUpSaving
+        ) {
+          setSelectedFollowUpLead(null);
+        }
+      }}
+    >
+      <section
+        className="leads-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="follow-ups-title"
+      >
+        <header className="leads-modal-header">
+          <div>
+            <span className="leads-eyebrow">
+              FOLLOW-UP MANAGEMENT
+            </span>
+            <h2 id="follow-ups-title">
+              Follow-ups —{" "}
+              {getContactName(
+                contactById.get(selectedFollowUpLead.contact_id),
+              )}
+            </h2>
+            <p>
+              Schedule, complete, and reschedule activities for this lead.
+            </p>
+          </div>
+
+          <button
+            className="leads-modal-close"
+            type="button"
+            aria-label="Close follow-up manager"
+            disabled={followUpSaving}
+            onClick={() => setSelectedFollowUpLead(null)}
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="leads-form">
+          <div className="leads-form-body">
+            {followUpError && (
+              <div
+                className="leads-alert leads-alert-error"
+                role="alert"
+              >
+                {followUpError}
+              </div>
+            )}
+
+            {followUpSuccess && (
+              <div
+                className="leads-alert leads-alert-success"
+                role="status"
+              >
+                {followUpSuccess}
+              </div>
+            )}
+
+            <h3>Schedule a follow-up</h3>
+
+            <form onSubmit={handleCreateFollowUp}>
+              <label className="leads-form-field">
+                <span>Activity type</span>
+                <select
+                  value={followUpType}
+                  onChange={(event) =>
+                    setFollowUpType(
+                      event.target.value as FollowUpType,
+                    )
+                  }
+                  disabled={followUpSaving}
+                >
+                  <option value="CALL">Call</option>
+                  <option value="EMAIL">Email</option>
+                  <option value="MEETING">Meeting</option>
+                  <option value="VISIT">Visit</option>
+                  <option value="TASK">Task</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+
+              <label className="leads-form-field">
+                <span>Title *</span>
+                <input
+                  type="text"
+                  required
+                  maxLength={200}
+                  value={followUpTitle}
+                  onChange={(event) =>
+                    setFollowUpTitle(event.target.value)
+                  }
+                  placeholder="e.g. Call to discuss property options"
+                  disabled={followUpSaving}
+                />
+              </label>
+
+              <label className="leads-form-field">
+                <span>Description</span>
+                <textarea
+                  maxLength={10000}
+                  rows={3}
+                  value={followUpDescription}
+                  onChange={(event) =>
+                    setFollowUpDescription(event.target.value)
+                  }
+                  placeholder="Optional notes"
+                  disabled={followUpSaving}
+                />
+              </label>
+
+              <label className="leads-form-field">
+                <span>Due date and time *</span>
+                <input
+                  type="datetime-local"
+                  required
+                  value={followUpDueAt}
+                  onChange={(event) =>
+                    setFollowUpDueAt(event.target.value)
+                  }
+                  disabled={followUpSaving}
+                />
+              </label>
+
+              <button
+                className="leads-primary-button"
+                type="submit"
+                disabled={followUpSaving}
+              >
+                {followUpSaving ? "Saving..." : "Create follow-up"}
+              </button>
+            </form>
+
+            <hr />
+
+            <h3>Pending follow-ups</h3>
+
+            {followUpsLoading ? (
+              <p role="status">Loading follow-ups...</p>
+            ) : followUps.length === 0 ? (
+              <p>No pending follow-ups for this lead.</p>
+            ) : (
+              <div>
+                {followUps.map((followUp) => (
+                  <article
+                    key={followUp.id}
+                    className="follow-up-card"
+                  >
+                    <h4>{followUp.title}</h4>
+
+                    <p>
+                      {formatLabel(followUp.follow_up_type)}
+                      {" · "}
+                      {formatDateTime(followUp.due_at)}
+                    </p>
+
+                    {followUp.description && (
+                      <p>{followUp.description}</p>
+                    )}
+
+                    {reschedulingFollowUpId === followUp.id ? (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleRescheduleFollowUp(followUp);
+                        }}
+                      >
+                        <label className="leads-form-field">
+                          <span>New date and time *</span>
+                          <input
+                            type="datetime-local"
+                            required
+                            value={rescheduleDueAt}
+                            onChange={(event) =>
+                              setRescheduleDueAt(event.target.value)
+                            }
+                            disabled={followUpSaving}
+                          />
+                        </label>
+
+                        <div className="leads-form-actions">
+                          <button
+                            className="leads-primary-button"
+                            type="submit"
+                            disabled={followUpSaving}
+                          >
+                            Save new time
+                          </button>
+
+                          <button
+                            className="leads-secondary-button"
+                            type="button"
+                            disabled={followUpSaving}
+                            onClick={() => {
+                              setReschedulingFollowUpId(null);
+                              setRescheduleDueAt("");
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="leads-form-actions">
+                        <button
+                          className="leads-primary-button"
+                          type="button"
+                          disabled={followUpSaving}
+                          onClick={() =>
+                            void handleCompleteFollowUp(followUp)
+                          }
+                        >
+                          Complete
+                        </button>
+
+                        <button
+                          className="leads-secondary-button"
+                          type="button"
+                          disabled={followUpSaving}
+                          onClick={() => {
+                            setReschedulingFollowUpId(followUp.id);
+                            setRescheduleDueAt(
+                              toLocalDateTimeInput(followUp.due_at),
+                            );
+                            setFollowUpError("");
+                            setFollowUpSuccess("");
+                          }}
+                        >
+                          Reschedule
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <footer className="leads-form-actions">
+            <button
+              className="leads-secondary-button"
+              type="button"
+              disabled={followUpSaving}
+              onClick={() => setSelectedFollowUpLead(null)}
+            >
+              Close
+            </button>
+          </footer>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  )}
+
       </section>
 
       {isFormOpen &&
