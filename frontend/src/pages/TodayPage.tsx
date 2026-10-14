@@ -354,11 +354,40 @@ function buildAttentionItems(
   }
 
   return items.sort((a, b) => {
+    // 1. Overdue work always appears before work due today.
     if (a.category !== b.category) {
       return a.category === "overdue" ? -1 : 1;
     }
 
-    return a.dueAt.getTime() - b.dueAt.getTime();
+    // 2. Within each category, prioritize the earliest due time.
+    const dueTimeDifference =
+      a.dueAt.getTime() - b.dueAt.getTime();
+
+    if (dueTimeDifference !== 0) {
+      return dueTimeDifference;
+    }
+
+    // 3. For items with the same due time, prioritize
+    // higher-interest business opportunities.
+    const interestRank: Record<"HIGH" | "MEDIUM" | "LOW", number> = {
+      HIGH: 3,
+      MEDIUM: 2,
+      LOW: 1,
+    };
+
+    const aInterest = a.lead.interest;
+    const bInterest = b.lead.interest;
+
+    const aRank = aInterest ? interestRank[aInterest] : 0;
+    const bRank = bInterest ? interestRank[bInterest] : 0;
+
+    if (aRank !== bRank) {
+      return bRank - aRank;
+    }
+
+    // 4. Keep the order deterministic when all priority
+    // factors are equal.
+    return a.id.localeCompare(b.id);
   });
 }
 
