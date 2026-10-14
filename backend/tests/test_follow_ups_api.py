@@ -1,4 +1,4 @@
-"""Tests for DealFlow follow-up creation API routes."""
+"""Tests for DealFlow follow-up API routes."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-
 
 TestingSessionLocal = SessionLocal
 
@@ -127,6 +126,7 @@ def create_authorized_user(
     """Create a user with the specified tenant permissions."""
     user = create_user(db)
     organization = create_organization(db)
+
     membership = create_membership(
         db,
         user=user,
@@ -255,6 +255,7 @@ def test_create_follow_up_successfully() -> None:
                 FollowUp.id == UUID(payload["id"])
             )
         )
+
         assert persisted is not None
         assert persisted.organization_id == organization.id
         assert persisted.lead_id == lead.id
@@ -288,6 +289,7 @@ def test_create_follow_up_rejects_cross_tenant_lead() -> None:
                 FollowUp.lead_id == lead_b.id,
             )
         ).all()
+
         assert persisted == []
 
 
@@ -296,6 +298,7 @@ def test_create_follow_up_requires_permission() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
+
         create_membership(
             db,
             user=user,
@@ -349,6 +352,7 @@ def test_create_follow_up_rejects_inactive_owner() -> None:
             permission_keys=("leads.update",),
         )
         inactive_user = create_user(db)
+
         create_membership(
             db,
             user=inactive_user,
@@ -391,6 +395,7 @@ def test_create_follow_up_rejects_invalid_request() -> None:
             )
 
         assert response.status_code == 422
+
 
 def create_pending_follow_up(
     db: Session,
@@ -440,6 +445,7 @@ def test_complete_follow_up_successfully() -> None:
 
         assert response.status_code == 200, response.text
         result = response.json()
+
         assert result["status"] == "COMPLETED"
         assert result["completed_by_user_id"] == str(user.id)
         assert result["completed_at"] is not None
@@ -476,6 +482,7 @@ def test_reschedule_pending_follow_up_successfully() -> None:
 
         assert response.status_code == 200, response.text
         result = response.json()
+
         assert result["status"] == "PENDING"
         assert datetime.fromisoformat(result["due_at"]) == new_due_at
 
@@ -500,6 +507,7 @@ def test_complete_follow_up_rejects_already_completed_follow_up() -> None:
 
         with make_test_client(user=user) as client:
             add_tenant_header(client, organization)
+
             first_response = client.post(
                 f"/api/v1/follow-ups/{follow_up.id}/complete",
                 json={},
@@ -514,6 +522,7 @@ def test_complete_follow_up_rejects_already_completed_follow_up() -> None:
             )
 
         assert second_response.status_code == 409
+
         db.refresh(follow_up)
         assert follow_up.completed_at is not None
         assert follow_up.completed_at.isoformat() == (
@@ -538,6 +547,7 @@ def test_reschedule_follow_up_rejects_completed_follow_up() -> None:
 
         with make_test_client(user=user) as client:
             add_tenant_header(client, organization)
+
             complete_response = client.post(
                 f"/api/v1/follow-ups/{follow_up.id}/complete",
                 json={},
@@ -554,3 +564,126 @@ def test_reschedule_follow_up_rejects_completed_follow_up() -> None:
             )
 
         assert response.status_code == 409
+
+
+def test_list_follow_ups_returns_only_current_tenant_pending_records() -> None:
+    """Return pending follow-ups from the selected tenant only."""
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        organization_b = create_organization(db)
+
+        # Each follow-up owner must be a member of its own organization.
+        user_b = create_user(db)
+        create_membership(
+            db,
+            user=user_b,
+            organization=organization_b,
+        )
+        db.commit()
+
+        lead_a = create_lead(db, organization=organization_a)
+        lead_b = create_lead(db, organization=organization_b)
+
+        own_follow_up = create_pending_follow_up(
+            db,
+            organization=organization_a,
+            lead=lead_a,
+            owner=user,
+        )
+        create_pending_follow_up(
+            db,
+            organization=organization_b,
+            lead=lead_b,
+            owner=user_b,
+        )
+
+        cancelled_follow_up = create_pending_follow_up(
+            db,
+            organization=organization_a,
+            lead=lead_a,
+            owner=user,
+        )
+        cancelled_follow_up.status = FollowUp.STATUS_CANCELLED
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+            response = client.get("/api/v1/follow-ups")
+
+        assert response.status_code == 200, response.text
+        results = response.json()
+
+        assert [item["id"] for item in results] == [
+            str(own_follow_up.id),
+        ]
+        assert all(
+            item["organization_id"] == str(organization_a.id)
+            for item in results
+        )
+
+
+def test_list_follow_ups_overdue_only_excludes_future_due_records() -> None:
+    """Return only pending follow-ups whose due time has passed."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+
+        overdue_follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+        overdue_follow_up.due_at = (
+            datetime.now(timezone.utc) - timedelta(days=2)
+        )
+        db.commit()
+
+        future_follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.get(
+                "/api/v1/follow-ups",
+                params={"overdue_only": "true"},
+            )
+
+        assert response.status_code == 200, response.text
+        results = response.json()
+        result_ids = {item["id"] for item in results}
+
+        assert str(overdue_follow_up.id) in result_ids
+        assert str(future_follow_up.id) not in result_ids
+        assert all(item["status"] == "PENDING" for item in results)
+
+
+def test_list_follow_ups_requires_permission() -> None:
+    """Require authorization to list follow-ups."""
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.get("/api/v1/follow-ups")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Permission denied."

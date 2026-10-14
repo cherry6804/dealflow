@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
-
+import { followUpsApi } from "../services/followUpApi";
+import type { FollowUp } from "../services/followUpApi";
 import { ApiError } from "../lib/api";
 import { contactsApi } from "../services/contactApi";
 import type { Contact } from "../services/contactApi";
@@ -37,11 +38,14 @@ interface OverviewCard {
 }
 
 interface AttentionItem {
+  id: string;
+  source: "lead" | "follow-up";
   lead: Lead;
   contactName: string;
   action: string;
   dueAt: Date;
   category: AttentionCategory;
+  statusLabel: string;
 }
 
 const INITIAL_METRIC: DashboardMetric = {
@@ -241,10 +245,15 @@ async function fetchAllContacts(): Promise<Contact[]> {
 function buildAttentionItems(
   leads: Lead[],
   contacts: Contact[],
+  followUps: FollowUp[],
   now: Date,
 ): AttentionItem[] {
   const contactsById = new Map(
     contacts.map((contact) => [contact.id, contact]),
+  );
+
+  const leadsById = new Map(
+    leads.map((lead) => [lead.id, lead]),
   );
 
   const startOfToday = new Date(
@@ -261,6 +270,7 @@ function buildAttentionItems(
 
   const items: AttentionItem[] = [];
 
+  // Preserve existing lead-level next actions.
   for (const lead of leads) {
     if (!lead.is_active || CLOSED_STATUSES.includes(lead.status)) {
       continue;
@@ -286,14 +296,60 @@ function buildAttentionItems(
       continue;
     }
 
-    const contact = contactsById.get(lead.contact_id);
-
     items.push({
+      id: `lead-${lead.id}`,
+      source: "lead",
       lead,
-      contactName: getContactName(contact),
+      contactName: getContactName(
+        contactsById.get(lead.contact_id),
+      ),
       action: lead.next_action.trim(),
       dueAt,
       category,
+      statusLabel: lead.status.replaceAll("_", " "),
+    });
+  }
+
+  // Add individual pending follow-up records.
+  for (const followUp of followUps) {
+    const lead = leadsById.get(followUp.lead_id);
+
+    // Only show follow-ups associated with active, open leads.
+    if (
+      !lead ||
+      !lead.is_active ||
+      CLOSED_STATUSES.includes(lead.status)
+    ) {
+      continue;
+    }
+
+    const dueAt = new Date(followUp.due_at);
+
+    if (Number.isNaN(dueAt.getTime())) {
+      continue;
+    }
+
+    let category: AttentionCategory;
+
+    if (dueAt < now) {
+      category = "overdue";
+    } else if (dueAt < startOfTomorrow) {
+      category = "today";
+    } else {
+      continue;
+    }
+
+    items.push({
+      id: `follow-up-${followUp.id}`,
+      source: "follow-up",
+      lead,
+      contactName: getContactName(
+        contactsById.get(lead.contact_id),
+      ),
+      action: followUp.title,
+      dueAt,
+      category,
+      statusLabel: followUp.follow_up_type.replaceAll("_", " "),
     });
   }
 
@@ -341,7 +397,7 @@ function AttentionList({
           {items.map((item) => (
             <li
               className="attention-item"
-              key={item.lead.id}
+              key={item.id}
             >
               <div className="attention-item-main">
                 <div className="attention-item-copy">
@@ -358,7 +414,7 @@ function AttentionList({
                 </div>
 
                 <span className="attention-status">
-                  {item.lead.status.replaceAll("_", " ")}
+                  {item.statusLabel}
                 </span>
               </div>
 
@@ -450,12 +506,15 @@ const [activityError, setActivityError] = useState("");
     setAttentionError("");
 
     try {
-      const [leads, contacts] = await Promise.all([
+      const [leads, contacts, followUps] = await Promise.all([
         fetchAllLeads(),
         fetchAllContacts(),
+        followUpsApi.list(),
       ]);
 
-      setAttentionItems(buildAttentionItems(leads, contacts, new Date()));
+      setAttentionItems(
+        buildAttentionItems(leads, contacts, followUps, new Date()),
+      );
     } catch (error) {
       setAttentionError(getErrorMessage(error));
       setAttentionItems([]);
@@ -741,7 +800,7 @@ const loadRecentActivity = useCallback(async () => {
               </span>
               <h3>Loading today's attention</h3>
               <p>
-                Checking active leads and their scheduled follow-up actions.
+                Checking lead actions and individual scheduled follow-ups.
               </p>
             </div>
           ) : attentionError ? (

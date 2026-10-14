@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 from uuid import UUID
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
@@ -19,6 +19,7 @@ from app.follow_ups.schemas import (
 from app.follow_ups.service import (
     complete_follow_up,
     create_follow_up,
+    list_follow_ups,
     reschedule_follow_up,
 )
 from app.tenant.dependencies import TenantContext
@@ -147,3 +148,29 @@ def reschedule_follow_up_endpoint(
     db.refresh(follow_up)
 
     return FollowUpResponse.model_validate(follow_up)
+
+@router.get(
+    "/api/v1/follow-ups",
+    response_model=list[FollowUpResponse],
+    status_code=status.HTTP_200_OK,
+)
+def list_follow_ups_endpoint(
+    due_before: datetime | None = Query(default=None),
+    overdue_only: bool = Query(default=False),
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> list[FollowUpResponse]:
+    """List pending follow-ups belonging to the verified tenant."""
+    follow_ups = list_follow_ups(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        due_before=due_before,
+        overdue_only=overdue_only,
+    )
+
+    return [
+        FollowUpResponse.model_validate(follow_up)
+        for follow_up in follow_ups
+    ]

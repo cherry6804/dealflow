@@ -3,8 +3,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
-
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.follow_up import FollowUp
@@ -134,3 +133,33 @@ def reschedule_follow_up(
     db.refresh(follow_up)
 
     return follow_up
+
+def list_follow_ups(
+    db: Session,
+    *,
+    organization_id: UUID,
+    due_before: datetime | None = None,
+    overdue_only: bool = False,
+) -> list[FollowUp]:
+    """List pending follow-ups belonging to the verified tenant."""
+    statement = select(FollowUp).where(
+        FollowUp.organization_id == organization_id,
+        FollowUp.status == FollowUp.STATUS_PENDING,
+    )
+
+    if due_before is not None:
+        statement = statement.where(
+            FollowUp.due_at < due_before,
+        )
+
+    if overdue_only:
+        statement = statement.where(
+            FollowUp.due_at < func.now(),
+        )
+
+    statement = statement.order_by(
+        FollowUp.due_at.asc(),
+        FollowUp.id.asc(),
+    )
+
+    return list(db.scalars(statement).all())
