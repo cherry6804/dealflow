@@ -182,7 +182,11 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [updatingLeadId, setUpdatingLeadId] = useState<string | null>(null);
-
+  const [statusPromptLead, setStatusPromptLead] = useState<Lead | null>(null);
+const [pendingStatus, setPendingStatus] = useState<LeadStatus | null>(null);
+const [statusPromptAction, setStatusPromptAction] = useState("");
+const [statusPromptDate, setStatusPromptDate] = useState("");
+const [statusPromptError, setStatusPromptError] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [formError, setFormError] = useState("");
@@ -503,38 +507,116 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
     }
   }
 
-  async function handleStatusChange(lead: Lead, value: string) {
-    const newStatus = value as LeadStatus;
 
-    if (newStatus === lead.status || updatingLeadId) return;
+async function handleStatusChange(lead: Lead, value: string) {
+  const newStatus = value as LeadStatus;
 
-    const payload: {
-      status: LeadStatus;
-      outcome?: LeadOutcome | null;
-    } = { status: newStatus };
+  if (newStatus === lead.status || updatingLeadId) return;
 
-    if (newStatus === "WON") {
-      payload.outcome = "SUCCESSFUL";
-    } else if (newStatus === "LOST") {
-      payload.outcome = "UNSUCCESSFUL";
-    } else if (lead.status === "WON" || lead.status === "LOST") {
-      payload.outcome = null;
-    }
+  const requiredActionStatuses: LeadStatus[] = [
+    "CONTACTED",
+    "QUALIFIED",
+    "MATCHING",
+    "VISIT",
+    "NEGOTIATION",
+  ];
 
-    setUpdatingLeadId(lead.id);
-    setError("");
-    setSuccess("");
-
-    try {
-      await leadsApi.update(lead.id, payload);
-      setSuccess(`Lead status updated to ${formatLabel(newStatus)}.`);
-      await loadLeads();
-    } catch (updateError) {
-      setError(getErrorMessage(updateError));
-    } finally {
-      setUpdatingLeadId(null);
-    }
+  // Ask for a next action before moving an active lead into a key stage.
+  if (
+    lead.is_active &&
+    requiredActionStatuses.includes(newStatus) &&
+    !lead.next_action?.trim()
+  ) {
+    setStatusPromptLead(lead);
+    setPendingStatus(newStatus);
+    setStatusPromptAction("");
+    setStatusPromptDate("");
+    setStatusPromptError("");
+    return;
   }
+
+  const payload: {
+    status: LeadStatus;
+    outcome?: LeadOutcome | null;
+  } = { status: newStatus };
+
+  if (newStatus === "WON") {
+    payload.outcome = "SUCCESSFUL";
+  } else if (newStatus === "LOST") {
+    payload.outcome = "UNSUCCESSFUL";
+  } else if (lead.status === "WON" || lead.status === "LOST") {
+    payload.outcome = null;
+  }
+
+  setUpdatingLeadId(lead.id);
+  setError("");
+  setSuccess("");
+
+  try {
+    await leadsApi.update(lead.id, payload);
+    setSuccess(`Lead status updated to ${formatLabel(newStatus)}.`);
+    await loadLeads();
+  } catch (updateError) {
+    setError(getErrorMessage(updateError));
+    await loadLeads();
+  } finally {
+    setUpdatingLeadId(null);
+  }
+}
+
+async function handleStatusPromptSubmit(
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+
+  const lead = statusPromptLead;
+  const newStatus = pendingStatus;
+  const nextAction = statusPromptAction.trim();
+
+  if (!lead || !newStatus) {
+    setStatusPromptError("Unable to update the lead. Please try again.");
+    return;
+  }
+
+  if (!nextAction) {
+    setStatusPromptError("Enter the next action before continuing.");
+    return;
+  }
+
+  if (statusPromptDate && !toIsoDateTime(statusPromptDate)) {
+    setStatusPromptError("Enter a valid next-action date and time.");
+    return;
+  }
+
+  setUpdatingLeadId(lead.id);
+  setStatusPromptError("");
+  setError("");
+  setSuccess("");
+
+  try {
+    await leadsApi.update(lead.id, {
+      status: newStatus,
+      next_action: nextAction,
+      next_action_at: toIsoDateTime(statusPromptDate),
+    });
+
+    setStatusPromptLead(null);
+    setPendingStatus(null);
+    setStatusPromptAction("");
+    setStatusPromptDate("");
+    setStatusPromptError("");
+
+    setSuccess(
+      `Lead status updated to ${formatLabel(newStatus)} and next action saved.`,
+    );
+
+    await loadLeads();
+  } catch (updateError) {
+    setStatusPromptError(getErrorMessage(updateError));
+  } finally {
+    setUpdatingLeadId(null);
+  }
+}
 
   async function handleInterestChange(lead: Lead, value: string) {
     const interest = value ? (value as LeadInterest) : null;
@@ -1102,6 +1184,146 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
             </footer>
           </>
         ) : null}
+
+{statusPromptLead &&
+  createPortal(
+    <div
+      className="leads-modal-backdrop"
+      onMouseDown={(event) => {
+        if (
+          event.target === event.currentTarget &&
+          !updatingLeadId
+        ) {
+          setStatusPromptLead(null);
+          setPendingStatus(null);
+          setStatusPromptAction("");
+          setStatusPromptDate("");
+          setStatusPromptError("");
+        }
+      }}
+    >
+      <section
+        className="leads-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="status-prompt-title"
+      >
+        <header className="leads-modal-header">
+          <div>
+            <span className="leads-eyebrow">
+              FOLLOW-UP INTELLIGENCE
+            </span>
+            <h2 id="status-prompt-title">
+              Set the next action
+            </h2>
+            <p>
+              Before moving this lead to{" "}
+              <strong>
+                {pendingStatus ? formatLabel(pendingStatus) : ""}
+              </strong>
+              , define what needs to happen next.
+            </p>
+          </div>
+
+          <button
+            className="leads-modal-close"
+            type="button"
+            aria-label="Cancel status change"
+            disabled={updatingLeadId !== null}
+            onClick={() => {
+              setStatusPromptLead(null);
+              setPendingStatus(null);
+              setStatusPromptAction("");
+              setStatusPromptDate("");
+              setStatusPromptError("");
+            }}
+          >
+            ×
+          </button>
+        </header>
+
+        <form
+          className="leads-form"
+          onSubmit={handleStatusPromptSubmit}
+        >
+          <div className="leads-form-body">
+            {statusPromptError && (
+              <div
+                className="leads-alert leads-alert-error"
+                role="alert"
+              >
+                {statusPromptError}
+              </div>
+            )}
+
+            <label className="leads-form-field">
+              <span>
+                Next action <span aria-hidden="true">*</span>
+              </span>
+              <input
+                type="text"
+                required
+                maxLength={500}
+                autoFocus
+                value={statusPromptAction}
+                onChange={(event) =>
+                  setStatusPromptAction(event.target.value)
+                }
+                placeholder="e.g. Call the lead to discuss requirements"
+                disabled={updatingLeadId !== null}
+              />
+              <span className="leads-field-hint">
+                Specify a concrete action to keep this opportunity moving.
+              </span>
+            </label>
+
+            <label className="leads-form-field">
+              <span>Next action date and time (optional)</span>
+              <input
+                type="datetime-local"
+                value={statusPromptDate}
+                onChange={(event) =>
+                  setStatusPromptDate(event.target.value)
+                }
+                disabled={updatingLeadId !== null}
+              />
+            </label>
+          </div>
+
+          <footer className="leads-form-actions">
+            <button
+              className="leads-secondary-button"
+              type="button"
+              disabled={updatingLeadId !== null}
+              onClick={() => {
+                setStatusPromptLead(null);
+                setPendingStatus(null);
+                setStatusPromptAction("");
+                setStatusPromptDate("");
+                setStatusPromptError("");
+              }}
+            >
+              Cancel
+            </button>
+
+            <button
+              className="leads-primary-button"
+              type="submit"
+              disabled={
+                updatingLeadId !== null ||
+                !statusPromptAction.trim()
+              }
+            >
+              {updatingLeadId === statusPromptLead.id
+                ? "Saving..."
+                : "Save and update status"}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>,
+    document.body,
+  )}
 
         {timelineLead && (
           <LeadTimeline

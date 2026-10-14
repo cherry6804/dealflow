@@ -573,6 +573,7 @@ def test_update_lead_status() -> None:
                 lead_id=lead.id,
                 payload={
                     "status": Lead.STATUS_CONTACTED,
+                    "next_action": "Call the lead to discuss requirements",
                 },
             )
 
@@ -1107,6 +1108,7 @@ def test_on_hold_is_reversible() -> None:
                 lead_id=lead.id,
                 payload={
                     "status": Lead.STATUS_QUALIFIED,
+                    "next_action": "Schedule a qualification discussion",
                 },
             )
 
