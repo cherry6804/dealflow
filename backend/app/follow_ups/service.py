@@ -1,7 +1,7 @@
 """Follow-up creation service operations for DealFlow."""
 
 from __future__ import annotations
-
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
-from app.follow_ups.schemas import FollowUpCreateRequest
+from app.follow_ups.schemas import (
+    FollowUpCreateRequest,
+    FollowUpRescheduleRequest,
+)
 
 
 def create_follow_up(
@@ -61,6 +64,72 @@ def create_follow_up(
     )
 
     db.add(follow_up)
+    db.flush()
+    db.refresh(follow_up)
+
+    return follow_up
+
+
+def complete_follow_up(
+    db: Session,
+    *,
+    organization_id: UUID,
+    current_user_id: UUID,
+    follow_up_id: UUID,
+) -> FollowUp | None:
+    """Complete a pending follow-up in the verified organization.
+
+    Return None when the follow-up does not belong to the organization.
+    Raise ValueError when the follow-up is not pending.
+    """
+    statement = select(FollowUp).where(
+        FollowUp.id == follow_up_id,
+        FollowUp.organization_id == organization_id,
+    )
+    follow_up = db.scalar(statement)
+
+    if follow_up is None:
+        return None
+
+    if follow_up.status != FollowUp.STATUS_PENDING:
+        raise ValueError("Only pending follow-ups can be completed.")
+
+    follow_up.status = FollowUp.STATUS_COMPLETED
+    follow_up.completed_at = datetime.now(timezone.utc)
+    follow_up.completed_by_user_id = current_user_id
+
+    db.flush()
+    db.refresh(follow_up)
+
+    return follow_up
+
+
+def reschedule_follow_up(
+    db: Session,
+    *,
+    organization_id: UUID,
+    follow_up_id: UUID,
+    payload: FollowUpRescheduleRequest,
+) -> FollowUp | None:
+    """Reschedule a pending follow-up in the verified organization.
+
+    Return None when the follow-up does not belong to the organization.
+    Raise ValueError when the follow-up is not pending.
+    """
+    statement = select(FollowUp).where(
+        FollowUp.id == follow_up_id,
+        FollowUp.organization_id == organization_id,
+    )
+    follow_up = db.scalar(statement)
+
+    if follow_up is None:
+        return None
+
+    if follow_up.status != FollowUp.STATUS_PENDING:
+        raise ValueError("Only pending follow-ups can be rescheduled.")
+
+    follow_up.due_at = payload.due_at
+
     db.flush()
     db.refresh(follow_up)
 
