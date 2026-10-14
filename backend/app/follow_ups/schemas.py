@@ -82,3 +82,27 @@ class FollowUpResponse(BaseModel):
     completed_by_user_id: UUID | None
     created_at: datetime
     updated_at: datetime
+
+class FollowUpCompleteRequest(BaseModel):
+    """Request payload for completing a follow-up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FollowUpRescheduleRequest(BaseModel):
+    """Request payload for rescheduling a follow-up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    due_at: datetime
+
+    @field_validator("due_at")
+    @classmethod
+    def validate_due_at(cls, value: datetime) -> datetime:
+        """Require a timezone-aware rescheduled due date and time."""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(
+                "Follow-up due_at must include a timezone."
+            )
+
+        return value

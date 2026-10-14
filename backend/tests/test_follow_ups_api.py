@@ -391,3 +391,166 @@ def test_create_follow_up_rejects_invalid_request() -> None:
             )
 
         assert response.status_code == 422
+
+def create_pending_follow_up(
+    db: Session,
+    *,
+    organization: Organization,
+    lead: Lead,
+    owner: User,
+) -> FollowUp:
+    """Create and persist a pending follow-up for API tests."""
+    follow_up = FollowUp(
+        organization_id=organization.id,
+        lead_id=lead.id,
+        owner_user_id=owner.id,
+        follow_up_type="CALL",
+        title="Follow up with customer",
+        description="Discuss next steps",
+        due_at=datetime.now(timezone.utc) + timedelta(days=2),
+        status=FollowUp.STATUS_PENDING,
+    )
+    db.add(follow_up)
+    db.commit()
+    db.refresh(follow_up)
+    return follow_up
+
+
+def test_complete_follow_up_successfully() -> None:
+    """Record completion status, timestamp, and authenticated user."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.post(
+                f"/api/v1/follow-ups/{follow_up.id}/complete",
+                json={},
+            )
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["status"] == "COMPLETED"
+        assert result["completed_by_user_id"] == str(user.id)
+        assert result["completed_at"] is not None
+
+        db.refresh(follow_up)
+        assert follow_up.status == FollowUp.STATUS_COMPLETED
+        assert follow_up.completed_by_user_id == user.id
+        assert follow_up.completed_at is not None
+
+
+def test_reschedule_pending_follow_up_successfully() -> None:
+    """Update the due date of a pending follow-up."""
+    new_due_at = datetime.now(timezone.utc) + timedelta(days=5)
+
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/follow-ups/{follow_up.id}/reschedule",
+                json={"due_at": new_due_at.isoformat()},
+            )
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["status"] == "PENDING"
+        assert datetime.fromisoformat(result["due_at"]) == new_due_at
+
+        db.refresh(follow_up)
+        assert follow_up.due_at == new_due_at
+
+
+def test_complete_follow_up_rejects_already_completed_follow_up() -> None:
+    """Reject a second completion attempt."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            first_response = client.post(
+                f"/api/v1/follow-ups/{follow_up.id}/complete",
+                json={},
+            )
+            assert first_response.status_code == 200
+
+            original_completed_at = first_response.json()["completed_at"]
+
+            second_response = client.post(
+                f"/api/v1/follow-ups/{follow_up.id}/complete",
+                json={},
+            )
+
+        assert second_response.status_code == 409
+        db.refresh(follow_up)
+        assert follow_up.completed_at is not None
+        assert follow_up.completed_at.isoformat() == (
+            datetime.fromisoformat(original_completed_at).isoformat()
+        )
+
+
+def test_reschedule_follow_up_rejects_completed_follow_up() -> None:
+    """Do not reschedule a completed follow-up."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=user,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            complete_response = client.post(
+                f"/api/v1/follow-ups/{follow_up.id}/complete",
+                json={},
+            )
+            assert complete_response.status_code == 200
+
+            response = client.patch(
+                f"/api/v1/follow-ups/{follow_up.id}/reschedule",
+                json={
+                    "due_at": (
+                        datetime.now(timezone.utc) + timedelta(days=7)
+                    ).isoformat()
+                },
+            )
+
+        assert response.status_code == 409
