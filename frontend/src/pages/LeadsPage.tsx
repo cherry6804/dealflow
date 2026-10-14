@@ -18,11 +18,14 @@ import {
 } from "../services/leadApi";
 import LeadTimeline from "../components/LeadTimeline";
 import "./LeadsPage.css";
+
 import {
   followUpsApi,
+  type BulkFollowUpResponse,
   type FollowUp,
   type FollowUpType,
 } from "../services/followUpApi";
+
 
 const PAGE_SIZE = 10;
 
@@ -84,11 +87,11 @@ function formatLabel(value: string): string {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "â€”";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -102,7 +105,7 @@ function formatDateTime(value: string | null): string {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "â€”";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -200,8 +203,12 @@ const [statusPromptError, setStatusPromptError] = useState("");
   const [contactError, setContactError] = useState("");
   const [formContacts, setFormContacts] = useState<Contact[]>([]);
   const [nextActionDate, setNextActionDate] = useState("");
-  
+
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+
+const [selectedFollowUpIds, setSelectedFollowUpIds] = useState<string[]>([]);
+const [bulkRescheduleDueAt, setBulkRescheduleDueAt] = useState("");
+
 const [selectedFollowUpLead, setSelectedFollowUpLead] =
   useState<Lead | null>(null);
 const [followUpsLoading, setFollowUpsLoading] = useState(false);
@@ -678,6 +685,8 @@ async function handleStatusPromptSubmit(
 
   function openFollowUps(lead: Lead) {
     setSelectedFollowUpLead(lead);
+    setSelectedFollowUpIds([]);
+setBulkRescheduleDueAt("");
     setFollowUps([]);
     setFollowUpError("");
     setFollowUpSuccess("");
@@ -785,6 +794,138 @@ async function handleStatusPromptSubmit(
   }
 
 
+function toggleFollowUpSelection(followUpId: string) {
+  setSelectedFollowUpIds((current) =>
+    current.includes(followUpId)
+      ? current.filter((id) => id !== followUpId)
+      : [...current, followUpId],
+  );
+}
+
+function toggleAllPendingFollowUps() {
+  const pendingIds = followUps
+    .filter((item) => item.status === "PENDING")
+    .map((item) => item.id);
+
+  const allSelected =
+    pendingIds.length > 0 &&
+    pendingIds.every((id) => selectedFollowUpIds.includes(id));
+
+  setSelectedFollowUpIds((current) =>
+    allSelected
+      ? current.filter((id) => !pendingIds.includes(id))
+      : [...new Set([...current, ...pendingIds])],
+  );
+}
+
+function showBulkFollowUpResult(
+  result: BulkFollowUpResponse,
+  action: "completed" | "rescheduled",
+) {
+  setFollowUpSuccess(
+    `${result.succeeded} follow-up(s) ${action} successfully; ${result.failed} failed.`,
+  );
+
+  if (result.failed > 0) {
+    const failures = result.results
+      .filter((item) => !item.success)
+      .map((item) => `${item.follow_up_id}: ${item.message}`)
+      .join(" ");
+
+    setFollowUpError(failures);
+  }
+}
+
+async function handleBulkCompleteFollowUps() {
+  const ids = followUps
+    .filter(
+      (item) =>
+        item.status === "PENDING" &&
+        selectedFollowUpIds.includes(item.id),
+    )
+    .map((item) => item.id);
+
+  if (ids.length === 0 || followUpSaving) return;
+
+  setFollowUpSaving(true);
+  setFollowUpError("");
+  setFollowUpSuccess("");
+
+  try {
+    const result = await followUpsApi.bulkComplete({
+      follow_up_ids: ids,
+    });
+
+    showBulkFollowUpResult(result, "completed");
+
+    setSelectedFollowUpIds((current) =>
+      current.filter(
+        (id) => !result.results.some(
+          (item) => item.follow_up_id === id && item.success,
+        ),
+      ),
+    );
+
+    if (selectedFollowUpLead) {
+      await loadFollowUpsForLead(selectedFollowUpLead);
+    }
+  } catch (bulkError) {
+    setFollowUpError(getErrorMessage(bulkError));
+  } finally {
+    setFollowUpSaving(false);
+  }
+}
+
+async function handleBulkRescheduleFollowUps() {
+  const dueAt = toIsoDateTime(bulkRescheduleDueAt);
+
+  const ids = followUps
+    .filter(
+      (item) =>
+        item.status === "PENDING" &&
+        selectedFollowUpIds.includes(item.id),
+    )
+    .map((item) => item.id);
+
+  if (!dueAt) {
+    setFollowUpError("Enter a valid bulk reschedule date and time.");
+    return;
+  }
+
+  if (ids.length === 0 || followUpSaving) return;
+
+  setFollowUpSaving(true);
+  setFollowUpError("");
+  setFollowUpSuccess("");
+
+  try {
+    const result = await followUpsApi.bulkReschedule({
+      follow_up_ids: ids,
+      due_at: dueAt,
+    });
+
+    showBulkFollowUpResult(result, "rescheduled");
+
+    setSelectedFollowUpIds((current) =>
+      current.filter(
+        (id) => !result.results.some(
+          (item) => item.follow_up_id === id && item.success,
+        ),
+      ),
+    );
+
+    if (selectedFollowUpLead) {
+      await loadFollowUpsForLead(selectedFollowUpLead);
+    }
+  } catch (bulkError) {
+    setFollowUpError(getErrorMessage(bulkError));
+  } finally {
+    setFollowUpSaving(false);
+  }
+}
+
+
+
   const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastResult = Math.min(page * PAGE_SIZE, total);
 
@@ -841,7 +982,7 @@ async function handleStatusPromptSubmit(
                 : "All leads"}
           </p>
           <p className="leads-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
+            {loading && total === 0 ? "â€”" : total.toLocaleString("en-IN")}
           </p>
         </div>
       </section>
@@ -855,7 +996,7 @@ async function handleStatusPromptSubmit(
             onClick={() => setSuccess("")}
             aria-label="Dismiss success message"
           >
-            ×
+            Ã—
           </button>
         </div>
       )}
@@ -873,7 +1014,7 @@ async function handleStatusPromptSubmit(
             onClick={() => void loadLeads()}
             disabled={loading}
           >
-            {loading ? "Refreshing..." : "↻ Refresh"}
+            {loading ? "Refreshing..." : "â†» Refresh"}
           </button>
         </header>
 
@@ -881,7 +1022,7 @@ async function handleStatusPromptSubmit(
           <label className="leads-search">
             <span className="leads-visually-hidden">Search leads</span>
             <span className="leads-search-icon" aria-hidden="true">
-              ⌕
+              âŒ•
             </span>
             <input
               type="search"
@@ -971,7 +1112,7 @@ async function handleStatusPromptSubmit(
         ) : !error && leads.length === 0 ? (
           <div className="leads-empty">
             <div className="leads-empty-icon" aria-hidden="true">
-              ↗
+              â†—
             </div>
             <h3>
               {search ||
@@ -1094,7 +1235,7 @@ async function handleStatusPromptSubmit(
 
                         <td>
                           <span className="leads-action-text">
-                            {lead.next_action || "—"}
+                            {lead.next_action || "â€”"}
                           </span>
                         </td>
 
@@ -1153,7 +1294,7 @@ async function handleStatusPromptSubmit(
 
             <footer className="leads-pagination">
               <p>
-                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
+                Showing <strong>{firstResult}â€“{lastResult}</strong> of{" "}
                 <strong>{total}</strong> leads
               </p>
 
@@ -1238,7 +1379,7 @@ async function handleStatusPromptSubmit(
               setStatusPromptError("");
             }}
           >
-            ×
+            Ã—
           </button>
         </header>
 
@@ -1332,7 +1473,7 @@ async function handleStatusPromptSubmit(
             onClose={() => setTimelineLead(null)}
           />
         )}
-        
+
 {selectedFollowUpLead &&
   createPortal(
     <div
@@ -1358,7 +1499,7 @@ async function handleStatusPromptSubmit(
               FOLLOW-UP MANAGEMENT
             </span>
             <h2 id="follow-ups-title">
-              Follow-ups —{" "}
+              Follow-ups â€”{" "}
               {getContactName(
                 contactById.get(selectedFollowUpLead.contact_id),
               )}
@@ -1375,7 +1516,7 @@ async function handleStatusPromptSubmit(
             disabled={followUpSaving}
             onClick={() => setSelectedFollowUpLead(null)}
           >
-            ×
+            Ã—
           </button>
         </header>
 
@@ -1477,6 +1618,82 @@ async function handleStatusPromptSubmit(
 
             <h3>Pending follow-ups</h3>
 
+
+{!followUpsLoading && followUps.some((item) => item.status === "PENDING") && (
+  <div className="leads-form-body">
+    <label className="leads-form-field">
+      <span>
+        <input
+          type="checkbox"
+          checked={
+            followUps.filter((item) => item.status === "PENDING").length > 0 &&
+            followUps
+              .filter((item) => item.status === "PENDING")
+              .every((item) => selectedFollowUpIds.includes(item.id))
+          }
+          onChange={toggleAllPendingFollowUps}
+          disabled={followUpSaving}
+        />
+        {" "}Select all pending follow-ups
+      </span>
+    </label>
+
+    <p>
+      {selectedFollowUpIds.filter((id) =>
+        followUps.some(
+          (item) => item.id === id && item.status === "PENDING",
+        ),
+      ).length} selected
+    </p>
+
+    <div className="leads-form-actions">
+      <button
+        className="leads-primary-button"
+        type="button"
+        disabled={
+          followUpSaving ||
+          !followUps.some(
+            (item) =>
+              item.status === "PENDING" &&
+              selectedFollowUpIds.includes(item.id),
+          )
+        }
+        onClick={() => void handleBulkCompleteFollowUps()}
+      >
+        {followUpSaving ? "Processing..." : "Complete selected"}
+      </button>
+    </div>
+
+    <label className="leads-form-field">
+      <span>New date and time for selected follow-ups</span>
+      <input
+        type="datetime-local"
+        value={bulkRescheduleDueAt}
+        onChange={(event) => setBulkRescheduleDueAt(event.target.value)}
+        disabled={followUpSaving}
+      />
+    </label>
+
+    <button
+      className="leads-secondary-button"
+      type="button"
+      disabled={
+        followUpSaving ||
+        !bulkRescheduleDueAt ||
+        !followUps.some(
+          (item) =>
+            item.status === "PENDING" &&
+            selectedFollowUpIds.includes(item.id),
+        )
+      }
+      onClick={() => void handleBulkRescheduleFollowUps()}
+    >
+      Reschedule selected
+    </button>
+  </div>
+)}
+
+
             {followUpsLoading ? (
               <p role="status">Loading follow-ups...</p>
             ) : followUps.length === 0 ? (
@@ -1488,11 +1705,24 @@ async function handleStatusPromptSubmit(
                     key={followUp.id}
                     className="follow-up-card"
                   >
+
+{followUp.status === "PENDING" && (
+  <label className="leads-form-field">
+    <input
+      type="checkbox"
+      checked={selectedFollowUpIds.includes(followUp.id)}
+      onChange={() => toggleFollowUpSelection(followUp.id)}
+      disabled={followUpSaving}
+    />
+    {" "}Select this follow-up
+  </label>
+)}
+
                     <h4>{followUp.title}</h4>
 
                     <p>
                       {formatLabel(followUp.follow_up_type)}
-                      {" · "}
+                      {" Â· "}
                       {formatDateTime(followUp.due_at)}
                     </p>
 
@@ -1639,7 +1869,7 @@ async function handleStatusPromptSubmit(
                     setFormError("");
                   }}
                 >
-                  ×
+                  Ã—
                 </button>
               </header>
 
@@ -1695,14 +1925,14 @@ async function handleStatusPromptSubmit(
                           {formContacts.map((contact) => (
                             <option value={contact.id} key={contact.id}>
                               {getContactName(contact)}
-                              {contact.phone ? ` · ${contact.phone}` : ""}
+                              {contact.phone ? ` Â· ${contact.phone}` : ""}
                             </option>
                           ))}
                         </select>
 
                         {contactLoading && (
                           <span className="leads-field-hint">
-                            Loading contacts…
+                            Loading contactsâ€¦
                           </span>
                         )}
 

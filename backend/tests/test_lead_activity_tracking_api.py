@@ -54,6 +54,7 @@ def test_status_change_creates_activity_with_actor_and_details() -> None:
             organization=organization,
             contact=contact,
             status=Lead.STATUS_NEW,
+            next_action="Call customer",
         )
 
         db.commit()
@@ -366,6 +367,7 @@ def test_combined_status_and_owner_change_creates_two_activities() -> None:
             organization=organization,
             contact=contact,
             status=Lead.STATUS_NEW,
+            next_action="Call customer",
         )
 
         db.commit()
@@ -442,6 +444,7 @@ def test_activity_insert_failure_does_not_commit_lead_change() -> None:
             organization=organization,
             contact=contact,
             status=Lead.STATUS_NEW,
+            next_action="Call customer",
         )
         lead_id = lead.id
         organization_id = organization.id
