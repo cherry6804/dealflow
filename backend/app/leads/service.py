@@ -11,6 +11,7 @@ from app.db.models.activity import Activity
 from app.db.models.contact import Contact
 from app.db.models.lead import Lead
 from app.leads.lifecycle import (
+    validate_next_action_for_outcome,
     validate_status_outcome,
     validate_status_transition,
 )
@@ -152,6 +153,23 @@ def update_lead(
     next_action_at_changed = (
         "next_action_at" in updates
         and updates["next_action_at"] != previous_next_action_at
+    )
+
+    resulting_next_action = updates.get(
+        "next_action",
+        previous_next_action,
+    )
+
+    validate_next_action_for_outcome(
+        status=requested_status,
+        outcome=requested_outcome,
+        is_active=updates.get("is_active", lead.is_active),
+        next_action=resulting_next_action,
+        status_changed=status_changed,
+        next_action_cleared=(
+            "next_action" in updates
+            and updates["next_action"] is None
+        ),
     )
 
     # Apply all requested lead changes.

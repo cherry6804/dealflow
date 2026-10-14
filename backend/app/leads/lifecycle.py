@@ -139,3 +139,43 @@ def validate_status_outcome(
         raise ValueError(
             f"Lead status {status} requires outcome {required_outcome}."
         )
+
+
+def validate_next_action_for_outcome(
+    *,
+    status: str,
+    outcome: str | None,
+    is_active: bool,
+    next_action: str | None,
+    status_changed: bool,
+    next_action_cleared: bool,
+) -> None:
+    """Require a next action when an active lead enters a key pipeline stage."""
+    required_action_statuses = {
+        Lead.STATUS_CONTACTED,
+        Lead.STATUS_QUALIFIED,
+        Lead.STATUS_MATCHING,
+        Lead.STATUS_VISIT,
+        Lead.STATUS_NEGOTIATION,
+    }
+
+    if not is_active or is_terminal_status(status):
+        return
+
+    # ON_HOLD must remain reversible without forcing an action.
+    if status == Lead.STATUS_ON_HOLD:
+        return
+
+    # Enforce the requirement when entering a key stage, or when
+    # attempting to clear the action while already in that stage.
+    requires_next_action = (
+        status_changed and status in required_action_statuses
+    ) or (
+        next_action_cleared and status in required_action_statuses
+    )
+
+    if requires_next_action and not (next_action or "").strip():
+        raise ValueError(
+            "A next action is required for this active lead. "
+            "Enter the next action before saving."
+        )
