@@ -196,6 +196,54 @@ export interface RequirementShortlistResponse {
 }
 
 
+export interface RequirementMatchRunResult {
+  id: string;
+  organization_id: string;
+  match_run_id: string;
+  property_id: string;
+  overall_match: boolean;
+  property_snapshot: Record<string, unknown>;
+  criteria_results_snapshot: Record<string, unknown>[];
+}
+
+export interface RequirementMatchRunSummary {
+  id: string;
+  organization_id: string;
+  customer_requirement_id: string;
+  actor_id: string;
+  created_at: string;
+  criteria_snapshot: Record<string, unknown>;
+  total_candidates: number;
+  matched_candidates: number;
+}
+
+export interface RequirementMatchRunDetail
+  extends RequirementMatchRunSummary {
+  results: RequirementMatchRunResult[];
+}
+
+export interface RequirementMatchRunListResponse {
+  items: RequirementMatchRunSummary[];
+  total: number;
+}
+
+export interface RequirementShortlistEvent {
+  id: string;
+  organization_id: string;
+  customer_requirement_id: string;
+  property_id: string;
+  actor_id: string;
+  event_type: "ADDED" | "REMOVED";
+  created_at: string;
+  property_snapshot: Record<string, unknown>;
+}
+
+export interface RequirementShortlistEventListResponse {
+  requirement_id: string;
+  items: RequirementShortlistEvent[];
+  total: number;
+}
+
 function requirementPath(requirementId: string): string {
   return `/customer-requirements/${encodeURIComponent(requirementId)}`;
 }
@@ -412,4 +460,41 @@ export const requirementsApi = {
       `${requirementPath(requirementId)}/history/${version}`,
     );
   },
+
+  
+  recordMatchRun(
+    requirementId: string,
+  ): Promise<RequirementMatchRunDetail> {
+    return api.post<RequirementMatchRunDetail>(
+      `${requirementPath(requirementId)}/match-runs`,
+      {},
+    );
+  },
+
+  listMatchRuns(
+    requirementId: string,
+  ): Promise<RequirementMatchRunListResponse> {
+    return api.get<RequirementMatchRunListResponse>(
+      `${requirementPath(requirementId)}/match-runs`,
+    );
+  },
+
+  getMatchRunResults(
+    requirementId: string,
+    runId: string,
+  ): Promise<RequirementMatchRunResult[]> {
+    return api.get<RequirementMatchRunResult[]>(
+      `${requirementPath(requirementId)}/match-runs/${encodeURIComponent(runId)}/results`,
+    );
+  },
+
+  listShortlistEvents(
+    requirementId: string,
+  ): Promise<RequirementShortlistEventListResponse> {
+    return api.get<RequirementShortlistEventListResponse>(
+      `${requirementPath(requirementId)}/shortlist-events`,
+    );
+  },
+
 };
+

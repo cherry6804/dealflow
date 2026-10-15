@@ -177,6 +177,25 @@ export default function RequirementsPage() {
   const [propertySearchError, setPropertySearchError] = useState("");
   const [shortlistActionId, setShortlistActionId] = useState("");
 
+  const [matchRunHistory, setMatchRunHistory] = useState<
+    import("../services/requirementApi").RequirementMatchRunSummary[]
+  >([]);
+  const [matchHistoryLoading, setMatchHistoryLoading] = useState(false);
+  const [matchHistoryError, setMatchHistoryError] = useState("");
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [historicalResults, setHistoricalResults] = useState<
+    import("../services/requirementApi").RequirementMatchRunResult[]
+  >([]);
+  const [historicalResultsLoading, setHistoricalResultsLoading] =
+    useState(false);
+  const [historicalResultsError, setHistoricalResultsError] = useState("");
+
+  const [shortlistEvents, setShortlistEvents] = useState<
+    import("../services/requirementApi").RequirementShortlistEvent[]
+  >([]);
+  const [shortlistEventsLoading, setShortlistEventsLoading] = useState(false);
+  const [shortlistEventsError, setShortlistEventsError] = useState("");
+
   const [matchingProperties, setMatchingProperties] = useState<Property[]>([]);
   const [matchResults, setMatchResults] = useState<
     RequirementPropertyMatchResult[]
@@ -433,6 +452,18 @@ export default function RequirementsPage() {
       setMatchingError("");
       setMatchingLoaded(false);
 
+      setMatchRunHistory([]);
+      setMatchHistoryError("");
+      setSelectedRunId("");
+      setHistoricalResults([]);
+      setHistoricalResultsError("");
+
+      setShortlistEvents([]);
+      setShortlistEventsError("");
+
+      void loadMatchHistory(id);
+      void loadShortlistActivity(id);
+
       return true;
     } catch (loadError) {
       setError(getErrorMessage(loadError));
@@ -466,6 +497,7 @@ export default function RequirementsPage() {
     }
   }
 
+  
   async function handleFindMatches() {
     if (!requirement || matchingLoading) return;
 
@@ -473,14 +505,48 @@ export default function RequirementsPage() {
     setMatchingError("");
 
     try {
-      const [properties, explanations] = await Promise.all([
-        requirementsApi.listMatches(requirement.id),
-        requirementsApi.getMatchResults(requirement.id),
-      ]);
+      // This executes matching and saves an immutable history record.
+      const run = await requirementsApi.recordMatchRun(requirement.id);
+
+      const properties = run.results.map((result) => ({
+        ...result.property_snapshot,
+        id: result.property_id,
+      })) as unknown as Property[];
+
+      const explanations: RequirementPropertyMatchResult[] =
+        run.results.map((result) => {
+          const snapshot = result.property_snapshot;
+          const criteria = result.criteria_results_snapshot.map(
+            (criterion) => ({
+              criterion: String(criterion.criterion ?? "LOCATION") as
+                RequirementPropertyMatchResult["criteria"][number]["criterion"],
+              status: String(criterion.status ?? "UNKNOWN") as
+                RequirementPropertyMatchResult["criteria"][number]["status"],
+              explanation: String(criterion.explanation ?? ""),
+            }),
+          );
+
+          return {
+            property: {
+              ...snapshot,
+              id: result.property_id,
+            } as unknown as Property,
+            overall_match: result.overall_match,
+            criteria,
+          };
+        });
 
       setMatchingProperties(properties);
-      setMatchResults(explanations.items);
+      setMatchResults(explanations);
       setMatchingLoaded(true);
+
+      try {
+        const history = await requirementsApi.listMatchRuns(requirement.id);
+        setMatchRunHistory(history.items);
+        setMatchHistoryError("");
+      } catch (historyError) {
+        setMatchHistoryError(getErrorMessage(historyError));
+      }
     } catch (matchError) {
       setMatchingError(getErrorMessage(matchError));
       setMatchingProperties([]);
@@ -488,6 +554,55 @@ export default function RequirementsPage() {
       setMatchingLoaded(false);
     } finally {
       setMatchingLoading(false);
+    }
+  }
+
+  async function loadMatchHistory(requirementId: string) {
+    setMatchHistoryLoading(true);
+    setMatchHistoryError("");
+
+    try {
+      const result = await requirementsApi.listMatchRuns(requirementId);
+      setMatchRunHistory(result.items);
+    } catch (error) {
+      setMatchHistoryError(getErrorMessage(error));
+    } finally {
+      setMatchHistoryLoading(false);
+    }
+  }
+
+  async function handleViewHistoricalResults(runId: string) {
+    if (!requirement) return;
+
+    setSelectedRunId(runId);
+    setHistoricalResultsLoading(true);
+    setHistoricalResultsError("");
+    setHistoricalResults([]);
+
+    try {
+      const results = await requirementsApi.getMatchRunResults(
+        requirement.id,
+        runId,
+      );
+      setHistoricalResults(results);
+    } catch (error) {
+      setHistoricalResultsError(getErrorMessage(error));
+    } finally {
+      setHistoricalResultsLoading(false);
+    }
+  }
+
+  async function loadShortlistActivity(requirementId: string) {
+    setShortlistEventsLoading(true);
+    setShortlistEventsError("");
+
+    try {
+      const result = await requirementsApi.listShortlistEvents(requirementId);
+      setShortlistEvents(result.items);
+    } catch (error) {
+      setShortlistEventsError(getErrorMessage(error));
+    } finally {
+      setShortlistEventsLoading(false);
     }
   }
 
@@ -508,6 +623,7 @@ export default function RequirementsPage() {
 
       const result = await requirementsApi.listShortlist(requirement.id);
       setShortlist(result.items);
+      await loadShortlistActivity(requirement.id);
       setNotice("Property added to the shortlist.");
     } catch (actionError) {
       setError(getErrorMessage(actionError));
@@ -525,7 +641,8 @@ export default function RequirementsPage() {
 
     try {
       await requirementsApi.removeFromShortlist(requirement.id, propertyId);
-
+      await loadShortlistActivity(requirement.id);
+      
       setShortlist((current) =>
         current.filter((item) => item.property.id !== propertyId),
       );
@@ -1612,6 +1729,206 @@ export default function RequirementsPage() {
                           </div>
                         )}
                       </>
+                    )}
+                  </section>
+
+
+                  <h3 className="requirements-form-section-title">
+                    Match run history
+                  </h3>
+
+                  <section className="requirements-card">
+                    <p className="requirements-form-hint">
+                      Review previous matching runs and inspect their saved
+                      results without running matching again.
+                    </p>
+
+                    {matchHistoryLoading ? (
+                      <p className="requirements-muted">
+                        Loading match history…
+                      </p>
+                    ) : matchHistoryError ? (
+                      <div className="requirements-alert requirements-alert-error">
+                        {matchHistoryError}
+                        <button
+                          className="requirements-text-button"
+                          type="button"
+                          onClick={() => void loadMatchHistory(requirement.id)}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : matchRunHistory.length === 0 ? (
+                      <p className="requirements-muted">
+                        No matching runs recorded yet. Select Find matches
+                        to create the first run.
+                      </p>
+                    ) : (
+                      <div className="requirements-list">
+                        {matchRunHistory.map((run) => (
+                          <div className="requirements-list-item" key={run.id}>
+                            <div>
+                              <strong>
+                                Run on{" "}
+                                {new Date(run.created_at).toLocaleString("en-IN")}
+                              </strong>
+                              <span>
+                                Candidates: {run.total_candidates} · Matches:{" "}
+                                {run.matched_candidates}
+                              </span>
+                            </div>
+
+                            <button
+                              className="requirements-text-button"
+                              type="button"
+                              disabled={historicalResultsLoading}
+                              onClick={() =>
+                                void handleViewHistoricalResults(run.id)
+                              }
+                            >
+                              {historicalResultsLoading &&
+                              selectedRunId === run.id
+                                ? "Loading…"
+                                : selectedRunId === run.id
+                                  ? "Reload results"
+                                  : "View saved results"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {historicalResultsError && (
+                      <div
+                        className="requirements-alert requirements-alert-error"
+                        role="alert"
+                      >
+                        {historicalResultsError}
+                      </div>
+                    )}
+
+                    {selectedRunId && !historicalResultsLoading &&
+                      !historicalResultsError && (
+                        <>
+                          <h4>Saved results ({historicalResults.length})</h4>
+
+                          {historicalResults.length === 0 ? (
+                            <p className="requirements-muted">
+                              This run has no saved results.
+                            </p>
+                          ) : (
+                            <div className="requirements-list">
+                              {historicalResults.map((result) => {
+                                const snapshot = result.property_snapshot;
+                                const location = [
+                                  snapshot.locality,
+                                  snapshot.city,
+                                  snapshot.state,
+                                ]
+                                  .filter(
+                                    (value) =>
+                                      typeof value === "string" && value,
+                                  )
+                                  .join(", ");
+
+                                return (
+                                  <div
+                                    className="requirements-list-item"
+                                    key={result.id}
+                                  >
+                                    <div>
+                                      <strong>
+                                        {typeof snapshot.property_type === "string"
+                                          ? formatLabel(snapshot.property_type)
+                                          : "Property"}
+                                      </strong>
+                                      <span>
+                                        {location || "Location not provided"}
+                                      </span>
+                                      <span>
+                                        Result:{" "}
+                                        {result.overall_match
+                                          ? "Matching"
+                                          : "Not a full match"}
+                                      </span>
+                                      <span>
+                                        Property ID: {result.property_id}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
+                  </section>
+
+                  <h3 className="requirements-form-section-title">
+                    Shortlist activity
+                  </h3>
+
+                  <section className="requirements-card">
+                    <p className="requirements-form-hint">
+                      Review the history of properties added to or removed
+                      from this requirement's shortlist.
+                    </p>
+
+                    {shortlistEventsLoading ? (
+                      <p className="requirements-muted">
+                        Loading shortlist activity…
+                      </p>
+                    ) : shortlistEventsError ? (
+                      <div className="requirements-alert requirements-alert-error">
+                        {shortlistEventsError}
+                        <button
+                          className="requirements-text-button"
+                          type="button"
+                          onClick={() =>
+                            void loadShortlistActivity(requirement.id)
+                          }
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : shortlistEvents.length === 0 ? (
+                      <p className="requirements-muted">
+                        No shortlist activity recorded yet.
+                      </p>
+                    ) : (
+                      <div className="requirements-list">
+                        {shortlistEvents.map((event) => {
+                          const snapshot = event.property_snapshot;
+                          const propertyType = snapshot.property_type;
+
+                          return (
+                            <div
+                              className="requirements-list-item"
+                              key={event.id}
+                            >
+                              <div>
+                                <strong>
+                                  {event.event_type === "ADDED"
+                                    ? "Property added"
+                                    : "Property removed"}
+                                </strong>
+                                <span>
+                                  {typeof propertyType === "string"
+                                    ? formatLabel(propertyType)
+                                    : "Property"}
+                                  {" · "}
+                                  {event.property_id}
+                                </span>
+                                <small>
+                                  {new Date(event.created_at).toLocaleString(
+                                    "en-IN",
+                                  )}
+                                </small>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </section>
 
