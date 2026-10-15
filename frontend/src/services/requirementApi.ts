@@ -35,6 +35,10 @@ export interface CustomerRequirement {
   budget_currency: string | null;
   created_at: string;
   updated_at: string;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+
 }
 
 export interface CustomerRequirementListResponse {
@@ -158,6 +162,39 @@ export interface RequirementHistoryEntry {
 export interface RequirementHistoryListResponse {
   items: RequirementHistoryEntry[];
 }
+
+
+export interface RequirementMatchCriterionResult {
+  criterion: "LOCATION" | "PROPERTY_TYPE_AND_BHK" | "BUDGET";
+  status: "MATCH" | "MISMATCH" | "UNKNOWN" | "NOT_CONFIGURED";
+  explanation: string;
+}
+
+export interface RequirementPropertyMatchResult {
+  property: import("./propertyApi").Property;
+  overall_match: boolean;
+  criteria: RequirementMatchCriterionResult[];
+}
+
+export interface RequirementMatchResultsResponse {
+  requirement_id: string;
+  items: RequirementPropertyMatchResult[];
+  total: number;
+}
+
+
+export interface RequirementShortlistItem {
+  property: import("./propertyApi").Property;
+  created_at: string;
+  created_by_user_id: string;
+}
+
+export interface RequirementShortlistResponse {
+  requirement_id: string;
+  items: RequirementShortlistItem[];
+  total: number;
+}
+
 
 function requirementPath(requirementId: string): string {
   return `/customer-requirements/${encodeURIComponent(requirementId)}`;
@@ -317,6 +354,45 @@ export const requirementsApi = {
     return api.patch<RequirementAssociation>(
       `${requirementPath(requirementId)}/association`,
       input,
+    );
+  },
+
+  listMatches(requirementId: string) {
+    return api.get<
+      import("./propertyApi").Property[]
+    >(`${requirementPath(requirementId)}/matches`);
+  },
+
+  getMatchResults(requirementId: string) {
+    return api.get<RequirementMatchResultsResponse>(
+      `${requirementPath(requirementId)}/match-results`,
+    );
+  },
+
+  listShortlist(
+    requirementId: string,
+  ): Promise<RequirementShortlistResponse> {
+    return api.get<RequirementShortlistResponse>(
+      `${requirementPath(requirementId)}/shortlist`,
+    );
+  },
+
+  addToShortlist(
+    requirementId: string,
+    propertyId: string,
+  ): Promise<RequirementShortlistItem> {
+    return api.post<RequirementShortlistItem>(
+      `${requirementPath(requirementId)}/shortlist`,
+      { property_id: propertyId },
+    );
+  },
+
+  removeFromShortlist(
+    requirementId: string,
+    propertyId: string,
+  ): Promise<void> {
+    return api.delete<void>(
+      `${requirementPath(requirementId)}/shortlist/${encodeURIComponent(propertyId)}`,
     );
   },
 

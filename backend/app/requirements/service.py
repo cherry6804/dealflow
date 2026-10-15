@@ -6,7 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_location import (
@@ -734,13 +734,21 @@ def list_customer_requirements(
     )
     total = db.scalar(count_statement) or 0
 
+
     statement = (
         select(CustomerRequirement)
+        .options(
+            selectinload(CustomerRequirement.customer_profile)
+            .selectinload(CustomerProfile.contact),
+            selectinload(CustomerRequirement.lead)
+            .selectinload(Lead.contact),
+        )
         .where(*filters)
         .order_by(CustomerRequirement.updated_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+
 
     items = list(db.scalars(statement).all())
     total_pages = ceil(total / page_size) if total else 0
