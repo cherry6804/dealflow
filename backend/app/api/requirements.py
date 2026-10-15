@@ -1,9 +1,9 @@
 """Customer requirement API endpoints for DealFlow."""
 
 from __future__ import annotations
-
+from app.properties.schemas import PropertyResponse
 from uuid import UUID
-
+from app.properties.matching_service import get_matching_properties
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, select
@@ -841,3 +841,33 @@ def list_requirements(
         total=total,
         total_pages=total_pages,
     )
+
+@router.get(
+    "/{requirement_id}/matches",
+    response_model=list[PropertyResponse],
+    status_code=status.HTTP_200_OK,
+)
+def match_requirement_properties(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+):
+    """Find available properties matching a customer requirement."""
+    try:
+        properties = get_matching_properties(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return [
+        PropertyResponse.model_validate(property_record)
+        for property_record in properties
+    ]
