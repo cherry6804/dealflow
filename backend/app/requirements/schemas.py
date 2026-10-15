@@ -441,3 +441,73 @@ class CustomerRequirementResponse(BaseModel):
     customer_name: str | None = None
     customer_email: str | None = None
     customer_phone: str | None = None
+
+# ---------------------------------------------------------------------------
+# DF-109: Requirement matching history and shortlist event schemas
+# ---------------------------------------------------------------------------
+
+class RequirementMatchRunResultResponse(BaseModel):
+    """Immutable property result captured during a matching run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    match_run_id: UUID
+    property_id: UUID
+    overall_match: bool
+    property_snapshot: dict
+    criteria_results_snapshot: list[dict]
+
+
+class RequirementMatchRunSummaryResponse(BaseModel):
+    """Summary of a recorded matching execution."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    customer_requirement_id: UUID
+    actor_id: UUID
+    created_at: datetime
+    criteria_snapshot: dict
+    total_candidates: int
+    matched_candidates: int
+
+
+class RequirementMatchRunDetailResponse(
+    RequirementMatchRunSummaryResponse
+):
+    """Matching execution with its immutable result snapshots."""
+
+    results: list[RequirementMatchRunResultResponse]
+
+
+class RequirementMatchRunListResponse(BaseModel):
+    """Historical matching executions for one requirement."""
+
+    items: list[RequirementMatchRunSummaryResponse]
+    total: int
+
+
+class RequirementShortlistEventResponse(BaseModel):
+    """An immutable shortlist addition or removal event."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    customer_requirement_id: UUID
+    property_id: UUID
+    actor_id: UUID
+    event_type: Literal["ADDED", "REMOVED"]
+    created_at: datetime
+    property_snapshot: dict
+
+
+class RequirementShortlistEventListResponse(BaseModel):
+    """Shortlist activity timeline for one historical requirement ID."""
+
+    requirement_id: UUID
+    items: list[RequirementShortlistEventResponse]
+    total: int
