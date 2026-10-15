@@ -16,6 +16,11 @@ from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
 from app.db.models.property import Property
+from app.properties.schemas import (
+    PropertyMatchCriterionResult,
+    PropertyMatchResult,
+)
+from app.properties.schemas import PropertySearchResult
 
 
 def _normalise(value: str | None) -> str | None:
@@ -199,3 +204,213 @@ def get_matching_properties(
     ]
 
     return matches
+
+def get_property_match_results(
+    db: Session,
+    *,
+    organization_id: UUID,
+    requirement_id: UUID,
+) -> list[PropertyMatchResult]:
+    """Return available property candidates with criterion explanations."""
+
+    requirement_statement = select(CustomerRequirement).where(
+        CustomerRequirement.id == requirement_id,
+        CustomerRequirement.organization_id == organization_id,
+        CustomerRequirement.status == CustomerRequirement.STATUS_ACTIVE,
+        CustomerRequirement.is_active.is_(True),
+    )
+    requirement = db.scalar(requirement_statement)
+
+    if requirement is None:
+        raise ValueError("Active customer requirement not found.")
+
+    locations_statement = select(CustomerRequirementLocation).where(
+        CustomerRequirementLocation.organization_id == organization_id,
+        CustomerRequirementLocation.customer_requirement_id == requirement_id,
+        CustomerRequirementLocation.is_active.is_(True),
+    )
+    locations = list(db.scalars(locations_statement).all())
+
+    preferences_statement = select(
+        CustomerRequirementPropertyPreference
+    ).where(
+        CustomerRequirementPropertyPreference.organization_id
+        == organization_id,
+        CustomerRequirementPropertyPreference.customer_requirement_id
+        == requirement_id,
+        CustomerRequirementPropertyPreference.is_active.is_(True),
+    )
+    preferences = list(db.scalars(preferences_statement).all())
+
+    properties_statement = (
+        select(Property)
+        .where(
+            Property.organization_id == organization_id,
+            Property.status == Property.STATUS_AVAILABLE,
+        )
+        .order_by(
+            Property.created_at.desc(),
+            Property.id.desc(),
+        )
+    )
+    property_records = list(db.scalars(properties_statement).all())
+
+    results: list[PropertyMatchResult] = []
+
+    for property_record in property_records:
+        criteria: list[PropertyMatchCriterionResult] = []
+
+        if locations:
+            location_match = _matches_location(property_record, locations)
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="LOCATION",
+                    status="MATCH" if location_match else "MISMATCH",
+                    explanation=(
+                        f"Property location {property_record.locality or 'unknown'}, "
+                        f"{property_record.city or 'unknown'} matches an active "
+                        "requested location."
+                        if location_match
+                        else (
+                            "Property city and locality do not match any active "
+                            "requested location."
+                        )
+                    ),
+                )
+            )
+        else:
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="LOCATION",
+                    status="NOT_CONFIGURED",
+                    explanation=(
+                        "No active location preferences are configured."
+                    ),
+                )
+            )
+
+        if preferences:
+            preference_match = _matches_property_preference(
+                property_record,
+                preferences,
+            )
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="PROPERTY_TYPE_AND_BHK",
+                    status="MATCH" if preference_match else "MISMATCH",
+                    explanation=(
+                        "Property type and BHK satisfy an active preference."
+                        if preference_match
+                        else (
+                            "Property type or BHK does not satisfy any active "
+                            "property preference."
+                        )
+                    ),
+                )
+            )
+        else:
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="PROPERTY_TYPE_AND_BHK",
+                    status="NOT_CONFIGURED",
+                    explanation=(
+                        "No active property preferences are configured."
+                    ),
+                )
+            )
+
+        budget_configured = (
+            requirement.budget_min is not None
+            or requirement.budget_max is not None
+        )
+
+        if not budget_configured:
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="BUDGET",
+                    status="NOT_CONFIGURED",
+                    explanation="No budget bounds are configured.",
+                )
+            )
+        else:
+            budget_match = _matches_budget(requirement, property_record)
+
+            if budget_match:
+                budget_status = "MATCH"
+                budget_explanation = (
+                    "Property price is within the configured budget bounds "
+                    "and uses the same currency."
+                )
+            elif (
+                requirement.budget_currency is None
+                or property_record.currency is None
+                or _normalise(requirement.budget_currency)
+                != _normalise(property_record.currency)
+            ):
+                budget_status = "UNKNOWN"
+                budget_explanation = (
+                    "Budget compatibility cannot be established because "
+                    "the requirement and property currencies are missing "
+                    "or different."
+                )
+            elif (
+                property_record.transaction_type
+                == Property.TRANSACTION_TYPE_LEASE
+            ):
+                budget_status = "UNKNOWN"
+                budget_explanation = (
+                    "Lease budget compatibility cannot be evaluated because "
+                    "lease pricing semantics are not defined."
+                )
+
+            elif property_record.transaction_type not in (
+                Property.TRANSACTION_TYPE_SALE,
+                Property.TRANSACTION_TYPE_RENT,
+            ):
+                budget_status = "UNKNOWN"
+                budget_explanation = (
+                    "Budget compatibility cannot be evaluated because "
+                    "the property transaction type is missing or unsupported."
+                )
+            elif (
+                property_record.transaction_type
+                == Property.TRANSACTION_TYPE_SALE
+                and property_record.price is None
+            ) or (
+                property_record.transaction_type
+                == Property.TRANSACTION_TYPE_RENT
+                and property_record.rent is None
+            ):
+                budget_status = "UNKNOWN"
+                budget_explanation = (
+                    "The property has no comparable price or rent recorded."
+                )
+            else:
+                budget_status = "MISMATCH"
+                budget_explanation = (
+                    "Property price or rent is outside the configured budget "
+                    "bounds."
+                )
+
+            criteria.append(
+                PropertyMatchCriterionResult(
+                    criterion="BUDGET",
+                    status=budget_status,
+                    explanation=budget_explanation,
+                )
+            )
+
+        overall_match = all(
+            criterion.status in ("MATCH", "NOT_CONFIGURED")
+            for criterion in criteria
+        )
+
+        results.append(
+            PropertyMatchResult(
+                property=PropertySearchResult.model_validate(property_record),
+                overall_match=overall_match,
+                criteria=criteria,
+            )
+        )
+
+    return results

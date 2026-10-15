@@ -9,6 +9,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, select
 from app.authz.dependencies import require_permission
 from app.db.session import get_db_session
+from app.properties.schemas import (
+    PropertyMatchResultsResponse,
+    PropertyResponse,
+)
+from app.properties.matching_service import (
+    get_matching_properties,
+    get_property_match_results,
+)
 from app.requirements.schemas import (
     CustomerRequirementAssociationRequest,
     CustomerRequirementAssociationResponse,
@@ -871,3 +879,34 @@ def match_requirement_properties(
         PropertyResponse.model_validate(property_record)
         for property_record in properties
     ]
+
+@router.get(
+    "/{requirement_id}/match-results",
+    response_model=PropertyMatchResultsResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_match_results(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> PropertyMatchResultsResponse:
+    """Return available property candidates with matching explanations."""
+    try:
+        results = get_property_match_results(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return PropertyMatchResultsResponse(
+        requirement_id=requirement_id,
+        items=results,
+        total=len(results),
+    )
