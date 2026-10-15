@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
+from app.properties.schemas import PropertySearchResult
 
 RequirementStatus = Literal["ACTIVE", "INACTIVE"]
 
@@ -51,7 +51,9 @@ class CustomerRequirementResponse(BaseModel):
     budget_min: Decimal | None
     budget_max: Decimal | None
     budget_currency: str | None
-
+    customer_name: str | None = None
+    customer_email: str | None = None
+    customer_phone: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -395,3 +397,47 @@ class CustomerRequirementListResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class RequirementPropertyShortlistCreateRequest(BaseModel):
+    """Request to manually shortlist a property for a requirement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    property_id: UUID
+
+
+class RequirementPropertyShortlistItemResponse(BaseModel):
+    """A shortlisted property with its shortlist audit metadata."""
+
+    property: PropertySearchResult
+    created_at: datetime
+    created_by_user_id: UUID
+
+
+class RequirementPropertyShortlistListResponse(BaseModel):
+    """Shortlisted properties belonging to one customer requirement."""
+
+    requirement_id: UUID
+    items: list[RequirementPropertyShortlistItemResponse]
+    total: int
+
+
+class CustomerRequirementResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    status: RequirementStatus
+    is_active: bool
+
+    budget_min: Decimal | None
+    budget_max: Decimal | None
+    budget_currency: str | None
+
+    created_at: datetime
+    updated_at: datetime
+
+    customer_name: str | None = None
+    customer_email: str | None = None
+    customer_phone: str | None = None

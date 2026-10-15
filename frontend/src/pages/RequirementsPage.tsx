@@ -20,8 +20,14 @@ import {
   type PropertyType,
   type PossessionPreference,
   type ParkingPreference,
+  type RequirementPropertyMatchResult,
+  type RequirementShortlistItem,
 } from "../services/requirementApi";
 import "./RequirementsPage.css";
+import {
+  propertiesApi,
+  type Property,
+} from "../services/propertyApi";
 import {
   customerProfilesApi,
   type CustomerProfile,
@@ -161,6 +167,23 @@ export default function RequirementsPage() {
   const [customerProfiles, setCustomerProfiles] = useState<CustomerProfile[]>(
     [],
   );
+
+  const [shortlist, setShortlist] = useState<RequirementShortlistItem[]>([]);
+  const [shortlistLoading, setShortlistLoading] = useState(false);
+
+  const [propertySearch, setPropertySearch] = useState("");
+  const [propertyResults, setPropertyResults] = useState<Property[]>([]);
+  const [propertySearchLoading, setPropertySearchLoading] = useState(false);
+  const [propertySearchError, setPropertySearchError] = useState("");
+  const [shortlistActionId, setShortlistActionId] = useState("");
+
+  const [matchingProperties, setMatchingProperties] = useState<Property[]>([]);
+  const [matchResults, setMatchResults] = useState<
+    RequirementPropertyMatchResult[]
+  >([]);
+  const [matchingLoading, setMatchingLoading] = useState(false);
+  const [matchingError, setMatchingError] = useState("");
+  const [matchingLoaded, setMatchingLoaded] = useState(false);
 
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -330,10 +353,12 @@ export default function RequirementsPage() {
     };
   }, [modalOpen, saving, busy]);
 
+
   const loadRequirement = useCallback(async (id: string): Promise<boolean> => {
     setBusy(true);
     setError("");
     setNotice("");
+    setShortlistLoading(true);
 
     try {
       const record = await requirementsApi.get(id);
@@ -347,22 +372,33 @@ export default function RequirementsPage() {
         preferenceResult,
         possessionResult,
         associationResult,
+        shortlistResult,
       ] = await Promise.allSettled([
         requirementsApi.listLocations(id),
         requirementsApi.listPropertyPreferences(id),
         requirementsApi.getPossessionParking(id),
         requirementsApi.getAssociation(id),
+        requirementsApi.listShortlist(id),
       ]);
 
       setLocations(
         locationResult.status === "fulfilled" ? locationResult.value : [],
       );
+
       setPreferences(
         preferenceResult.status === "fulfilled" ? preferenceResult.value : [],
       );
 
+      if (shortlistResult.status === "fulfilled") {
+        setShortlist(shortlistResult.value.items);
+      } else {
+        setShortlist([]);
+      }
+
       const possessionRecord =
-        possessionResult.status === "fulfilled" ? possessionResult.value : null;
+        possessionResult.status === "fulfilled"
+          ? possessionResult.value
+          : null;
 
       setPossession(possessionRecord);
       setPossessionValue(possessionRecord?.possession_preference ?? "ANY");
@@ -389,14 +425,119 @@ export default function RequirementsPage() {
       setBhkMin("");
       setBhkMax("");
 
+      setPropertySearch("");
+      setPropertyResults([]);
+      setPropertySearchError("");
+      setMatchingProperties([]);
+      setMatchResults([]);
+      setMatchingError("");
+      setMatchingLoaded(false);
+
       return true;
     } catch (loadError) {
       setError(getErrorMessage(loadError));
       return false;
     } finally {
       setBusy(false);
+      setShortlistLoading(false);
     }
   }, []);
+
+
+  async function handleSearchProperties(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPropertySearchLoading(true);
+    setPropertySearchError("");
+
+    try {
+      const result = await propertiesApi.search({
+        q: propertySearch.trim() || undefined,
+        status: "AVAILABLE",
+        page: 1,
+        page_size: 10,
+      });
+
+      setPropertyResults(result.items);
+    } catch (searchError) {
+      setPropertySearchError(getErrorMessage(searchError));
+      setPropertyResults([]);
+    } finally {
+      setPropertySearchLoading(false);
+    }
+  }
+
+  async function handleFindMatches() {
+    if (!requirement || matchingLoading) return;
+
+    setMatchingLoading(true);
+    setMatchingError("");
+
+    try {
+      const [properties, explanations] = await Promise.all([
+        requirementsApi.listMatches(requirement.id),
+        requirementsApi.getMatchResults(requirement.id),
+      ]);
+
+      setMatchingProperties(properties);
+      setMatchResults(explanations.items);
+      setMatchingLoaded(true);
+    } catch (matchError) {
+      setMatchingError(getErrorMessage(matchError));
+      setMatchingProperties([]);
+      setMatchResults([]);
+      setMatchingLoaded(false);
+    } finally {
+      setMatchingLoading(false);
+    }
+  }
+
+  async function handleAddToShortlist(property: Property) {
+    if (!requirement || shortlistActionId) return;
+
+    if (shortlist.some((item) => item.property.id === property.id)) {
+      setNotice("This property is already shortlisted.");
+      return;
+    }
+
+    setShortlistActionId(property.id);
+    setError("");
+    setNotice("");
+
+    try {
+      await requirementsApi.addToShortlist(requirement.id, property.id);
+
+      const result = await requirementsApi.listShortlist(requirement.id);
+      setShortlist(result.items);
+      setNotice("Property added to the shortlist.");
+    } catch (actionError) {
+      setError(getErrorMessage(actionError));
+    } finally {
+      setShortlistActionId("");
+    }
+  }
+
+  async function handleRemoveFromShortlist(propertyId: string) {
+    if (!requirement || shortlistActionId) return;
+
+    setShortlistActionId(propertyId);
+    setError("");
+    setNotice("");
+
+    try {
+      await requirementsApi.removeFromShortlist(requirement.id, propertyId);
+
+      setShortlist((current) =>
+        current.filter((item) => item.property.id !== propertyId),
+      );
+
+      setNotice("Property removed from the shortlist.");
+    } catch (actionError) {
+      setError(getErrorMessage(actionError));
+    } finally {
+      setShortlistActionId("");
+    }
+  }
+
 
   async function openCreateModal() {
     setBusy(true);
@@ -505,6 +646,7 @@ export default function RequirementsPage() {
 
       setAssociation(updated);
       setNotice("Customer assignment saved.");
+      await loadRequirements();
     } catch (saveError) {
       setError(getErrorMessage(saveError));
     } finally {
@@ -792,7 +934,7 @@ export default function RequirementsPage() {
           <table className="requirements-table">
             <thead>
               <tr>
-                <th>Requirement</th>
+                <th>Customer / Requirement</th>
                 <th>Budget range</th>
                 <th>Status</th>
                 <th>Last updated</th>
@@ -848,9 +990,23 @@ export default function RequirementsPage() {
                         >
                           ⌂
                         </span>
+
                         <div>
-                          <strong>Requirement #{item.id.slice(0, 8)}</strong>
-                          <span title={item.id}>{item.id}</span>
+                          <strong>
+                            {item.customer_name?.trim() || "Customer not assigned"}
+                          </strong>
+
+                          {item.customer_email && (
+                            <span>{item.customer_email}</span>
+                          )}
+
+                          {item.customer_phone && (
+                            <span>{item.customer_phone}</span>
+                          )}
+
+                          <span title={item.id}>
+                            REQ-{item.id.replace(/-/g, "").slice(0, 8).toUpperCase()}
+                          </span>
                         </div>
                       </div>
                     </td>
@@ -1319,6 +1475,352 @@ export default function RequirementsPage() {
                       )}
                     </div>
                   </section>
+
+                  <h3 className="requirements-form-section-title">
+                    Property matching
+                  </h3>
+
+                  <section className="requirements-card">
+                    <p className="requirements-form-hint">
+                      Find properties that match this customer's saved location,
+                      property type, BHK, and budget requirements. Review the
+                      criterion explanations before proposing a property.
+                    </p>
+
+                    <div className="requirements-card-actions">
+                      <button
+                        className="requirements-primary-button"
+                        type="button"
+                        disabled={saving || busy || matchingLoading}
+                        onClick={() => void handleFindMatches()}
+                      >
+                        {matchingLoading ? "Finding matches…" : "Find matches"}
+                      </button>
+                    </div>
+
+                    {matchingError && (
+                      <div
+                        className="requirements-alert requirements-alert-error"
+                        role="alert"
+                      >
+                        {matchingError}
+                      </div>
+                    )}
+
+                    {matchingLoaded && (
+                      <>
+                        <h4>
+                          Matching properties ({matchingProperties.length})
+                        </h4>
+
+                        {matchingProperties.length === 0 ? (
+                          <p className="requirements-muted">
+                            No qualifying properties were found. Review the
+                            saved requirement criteria and available properties.
+                          </p>
+                        ) : (
+                          <div className="requirements-list">
+                            {matchingProperties.map((property) => {
+                              const location = [
+                                property.locality,
+                                property.city,
+                                property.state,
+                              ]
+                                .filter(Boolean)
+                                .join(", ");
+
+                              const price =
+                                property.transaction_type === "RENT" ||
+                                property.transaction_type === "LEASE"
+                                  ? property.rent ?? property.price
+                                  : property.price;
+
+                              return (
+                                <div
+                                  className="requirements-list-item"
+                                  key={property.id}
+                                >
+                                  <div>
+                                    <strong>
+                                      {property.bhk ? `${property.bhk} BHK ` : ""}
+                                      {property.property_type
+                                        ? formatLabel(property.property_type)
+                                        : "Property"}
+                                    </strong>
+
+                                    <span>
+                                      {location || "Location not provided"}
+                                    </span>
+
+                                    <span>
+                                      {property.transaction_type
+                                        ? formatLabel(property.transaction_type)
+                                        : "Transaction unspecified"}
+                                      {" · "}
+                                      {formatCurrency(price)}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <h4>Criterion explanations</h4>
+
+                        {matchResults.length === 0 ? (
+                          <p className="requirements-muted">
+                            No criterion explanations were returned by the matching API.
+                          </p>
+                        ) : (
+                          <div className="requirements-list">
+                            {matchResults.map((result) => (
+                              <div
+                                className="requirements-list-item"
+                                key={result.property.id}
+                              >
+                                <div>
+                                  <strong>
+                                    {result.property.bhk
+                                      ? `${result.property.bhk} BHK `
+                                      : ""}
+                                    {result.property.property_type
+                                      ? formatLabel(result.property.property_type)
+                                      : "Property"}
+                                  </strong>
+
+                                  <span>
+                                    Overall result:{" "}
+                                    {result.overall_match
+                                      ? "Matching"
+                                      : "Does not qualify as a full match"}
+                                  </span>
+
+                                  {result.criteria.map((criterion) => (
+                                    <span key={criterion.criterion}>
+                                      <strong>
+                                        {formatLabel(criterion.criterion)}:{" "}
+                                        {formatLabel(criterion.status)}
+                                      </strong>
+                                      {" — "}
+                                      {criterion.explanation}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+
+
+                  <h3 className="requirements-form-section-title">
+                    Manual property shortlist
+                  </h3>
+
+                  <section className="requirements-card">
+                    <p className="requirements-form-hint">
+                      Search available properties and select the listings
+                      you want to propose for this customer requirement.
+                    </p>
+
+                    <form onSubmit={(event) => void handleSearchProperties(event)}>
+                      <div className="requirements-form-grid">
+                        <label className="requirements-form-field requirements-field-full">
+                          <span>Search properties</span>
+                          <input
+                            type="search"
+                            value={propertySearch}
+                            disabled={saving || busy || propertySearchLoading}
+                            onChange={(event) =>
+                              setPropertySearch(event.target.value)
+                            }
+                            placeholder="Address, locality, city or postal code"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="requirements-card-actions">
+                        <button
+                          className="requirements-secondary-button"
+                          type="submit"
+                          disabled={saving || busy || propertySearchLoading}
+                        >
+                          {propertySearchLoading
+                            ? "Searching…"
+                            : "Search available properties"}
+                        </button>
+                      </div>
+                    </form>
+
+                    {propertySearchError && (
+                      <div
+                        className="requirements-alert requirements-alert-error"
+                        role="alert"
+                      >
+                        {propertySearchError}
+                      </div>
+                    )}
+
+                    {propertyResults.length > 0 && (
+                      <div className="requirements-list">
+                        {propertyResults.map((property) => {
+                          const alreadyShortlisted = shortlist.some(
+                            (item) => item.property.id === property.id,
+                          );
+
+                          const location = [
+                            property.locality,
+                            property.city,
+                            property.state,
+                          ]
+                            .filter(Boolean)
+                            .join(", ");
+
+                          const price =
+                            property.transaction_type === "RENT" ||
+                            property.transaction_type === "LEASE"
+                              ? property.rent ?? property.price
+                              : property.price;
+
+                          return (
+                            <div
+                              className="requirements-list-item"
+                              key={property.id}
+                            >
+                              <div>
+                                <strong>
+                                  {property.bhk ? `${property.bhk} BHK ` : ""}
+                                  {property.property_type
+                                    ? formatLabel(property.property_type)
+                                    : "Property"}
+                                </strong>
+                                <span>
+                                  {location || "Location not provided"}
+                                </span>
+                                <span>
+                                  {property.transaction_type
+                                    ? formatLabel(property.transaction_type)
+                                    : "Transaction unspecified"}
+                                  {" · "}
+                                  {formatCurrency(price)}
+                                </span>
+                              </div>
+
+                              <button
+                                className="requirements-text-button"
+                                type="button"
+                                disabled={
+                                  saving ||
+                                  busy ||
+                                  shortlistActionId === property.id ||
+                                  alreadyShortlisted
+                                }
+                                onClick={() =>
+                                  void handleAddToShortlist(property)
+                                }
+                              >
+                                {alreadyShortlisted
+                                  ? "Shortlisted"
+                                  : shortlistActionId === property.id
+                                    ? "Adding…"
+                                    : "Add to shortlist"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {!propertySearchLoading &&
+                      propertyResults.length === 0 &&
+                      !propertySearchError && (
+                        <p className="requirements-muted">
+                          Search to find available properties. Results will
+                          appear here.
+                        </p>
+                      )}
+
+                    <h4>Shortlisted properties ({shortlist.length})</h4>
+
+                    {shortlistLoading ? (
+                      <p className="requirements-muted">
+                        Loading shortlisted properties…
+                      </p>
+                    ) : shortlist.length === 0 ? (
+                      <p className="requirements-muted">
+                        No properties have been shortlisted for this requirement.
+                      </p>
+                    ) : (
+                      <div className="requirements-list">
+                        {shortlist.map((item) => {
+                          const property = item.property;
+                          const location = [
+                            property.locality,
+                            property.city,
+                            property.state,
+                          ]
+                            .filter(Boolean)
+                            .join(", ");
+
+                          const price =
+                            property.transaction_type === "RENT" ||
+                            property.transaction_type === "LEASE"
+                              ? property.rent ?? property.price
+                              : property.price;
+
+                          return (
+                            <div
+                              className="requirements-list-item"
+                              key={property.id}
+                            >
+                              <div>
+                                <strong>
+                                  {property.bhk ? `${property.bhk} BHK ` : ""}
+                                  {property.property_type
+                                    ? formatLabel(property.property_type)
+                                    : "Property"}
+                                </strong>
+                                <span>
+                                  {location || "Location not provided"}
+                                </span>
+                                <span>
+                                  {property.transaction_type
+                                    ? formatLabel(property.transaction_type)
+                                    : "Transaction unspecified"}
+                                  {" · "}
+                                  {formatCurrency(price)}
+                                </span>
+                                <small>
+                                  Added {formatDate(item.created_at)}
+                                </small>
+                              </div>
+
+                              <button
+                                className="requirements-text-button"
+                                type="button"
+                                disabled={
+                                  saving ||
+                                  busy ||
+                                  shortlistActionId === property.id
+                                }
+                                onClick={() =>
+                                  void handleRemoveFromShortlist(property.id)
+                                }
+                              >
+                                {shortlistActionId === property.id
+                                  ? "Removing…"
+                                  : "Remove"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
 
                   <h3 className="requirements-form-section-title">
                     Possession and parking

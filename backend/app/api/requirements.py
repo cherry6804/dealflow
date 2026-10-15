@@ -34,12 +34,16 @@ from app.requirements.schemas import (
     CustomerRequirementPropertyPreferenceUpdateRequest,
     CustomerRequirementResponse,
     CustomerRequirementUpdateRequest,
-    CustomerRequirementListResponse
+    CustomerRequirementListResponse,
+    RequirementPropertyShortlistCreateRequest,
+    RequirementPropertyShortlistItemResponse,
+    RequirementPropertyShortlistListResponse,
 )
 from app.requirements.history_service import (
     get_customer_requirement_history_version,
     list_customer_requirement_history,
 )
+from app.properties.schemas import PropertySearchResult
 from app.requirements.service import (
     create_customer_requirement,
     get_customer_requirement_association,
@@ -57,7 +61,12 @@ from app.requirements.service import (
     update_customer_requirement_location,
     update_customer_requirement_possession_parking_preference,
     update_customer_requirement_property_preference,
-    list_customer_requirements
+    list_customer_requirements,
+)
+from app.requirements.shortlist_service import (
+    create_requirement_property_shortlist,
+    list_requirement_property_shortlists,
+    remove_requirement_property_shortlist,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -840,10 +849,7 @@ def list_requirements(
     )
 
     return CustomerRequirementListResponse(
-        items=[
-            CustomerRequirementResponse.model_validate(item)
-            for item in items
-        ],
+        items=[_requirement_response(item) for item in items],
         page=page,
         page_size=page_size,
         total=total,
@@ -910,3 +916,160 @@ def get_requirement_match_results(
         items=results,
         total=len(results),
     )
+
+
+@router.post(
+    "/{requirement_id}/shortlist",
+    response_model=RequirementPropertyShortlistItemResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_requirement_property_shortlist(
+    requirement_id: UUID,
+    payload: RequirementPropertyShortlistCreateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> RequirementPropertyShortlistItemResponse:
+    """Manually shortlist a property for a tenant-owned requirement."""
+
+    try:
+        shortlist, property_record = create_requirement_property_shortlist(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+            property_id=payload.property_id,
+            actor_id=tenant_context.membership.user_id,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        error_status = (
+            status.HTTP_409_CONFLICT
+            if "already shortlisted" in message.lower()
+            else status.HTTP_404_NOT_FOUND
+        )
+        raise HTTPException(
+            status_code=error_status,
+            detail=message,
+        ) from exc
+
+    db.commit()
+    db.refresh(shortlist)
+
+    return RequirementPropertyShortlistItemResponse(
+        property=PropertySearchResult.model_validate(property_record),
+        created_at=shortlist.created_at,
+        created_by_user_id=shortlist.created_by_user_id,
+    )
+
+
+@router.get(
+    "/{requirement_id}/shortlist",
+    response_model=RequirementPropertyShortlistListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_requirement_property_shortlist(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> RequirementPropertyShortlistListResponse:
+    """List shortlisted properties for a tenant-owned requirement."""
+
+    try:
+        rows = list_requirement_property_shortlists(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    items = [
+        RequirementPropertyShortlistItemResponse(
+            property=PropertySearchResult.model_validate(property_record),
+            created_at=shortlist.created_at,
+            created_by_user_id=shortlist.created_by_user_id,
+        )
+        for shortlist, property_record in rows
+    ]
+
+    return RequirementPropertyShortlistListResponse(
+        requirement_id=requirement_id,
+        items=items,
+        total=len(items),
+    )
+
+
+@router.delete(
+    "/{requirement_id}/shortlist/{property_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_requirement_property_shortlist(
+    requirement_id: UUID,
+    property_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> None:
+    """Remove a property from a requirement's manual shortlist."""
+
+    try:
+        remove_requirement_property_shortlist(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+            property_id=property_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
+    return None
+
+
+
+def _requirement_response(
+    requirement,
+) -> CustomerRequirementResponse:
+    """Build a requirement response with its assigned customer summary."""
+    profile = requirement.customer_profile
+    lead = requirement.lead
+
+    # Prefer the registered customer profile; fall back to the lead.
+    contact = (
+        profile.contact
+        if profile is not None
+        else lead.contact if lead is not None else None
+    )
+
+    customer_name = None
+    customer_email = None
+    customer_phone = None
+
+    if contact is not None:
+        customer_name = (
+            " ".join(
+                part
+                for part in (contact.first_name, contact.last_name)
+                if part
+            )
+            or contact.email
+            or contact.phone
+        )
+        customer_email = contact.email
+        customer_phone = contact.phone
+
+    response = CustomerRequirementResponse.model_validate(requirement)
+    response.customer_name = customer_name
+    response.customer_email = customer_email
+    response.customer_phone = customer_phone
+    return response
