@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     UniqueConstraint,
     Uuid,
     func,
@@ -46,6 +47,17 @@ class RequirementPropertyShortlist(Base):
             "customer_requirement_id",
             "property_id",
             name="uq_requirement_property_shortlists_requirement_property",
+        ),
+        Index(
+            "ix_requirement_property_shortlists_org_property",
+            "organization_id",
+            "property_id",
+        ),
+        Index(
+            "ix_requirement_property_shortlists_org_requirement_created",
+            "organization_id",
+            "customer_requirement_id",
+            "created_at",
         ),
     )
 

@@ -31,6 +31,9 @@ from app.db.models.customer_requirement_possession_parking_preference import (
 from app.db.models.import_batch import ImportBatch
 from app.db.models.activity import Activity
 from app.db.models.follow_up import FollowUp
+from app.db.models.requirement_match_run import RequirementMatchRun
+from app.db.models.requirement_match_run_result import RequirementMatchRunResult
+from app.db.models.requirement_shortlist_event import RequirementShortlistEvent
 
 config = context.config
 

@@ -17,6 +17,22 @@ from app.properties.matching_service import (
     get_matching_properties,
     get_property_match_results,
 )
+from app.requirements.match_history_service import (
+    create_requirement_match_run,
+    list_requirement_match_runs,
+    list_requirement_match_run_results,
+)
+from app.requirements.shortlist_service import (
+    list_requirement_shortlist_events,
+)
+from app.requirements.schemas import (
+    RequirementMatchRunDetailResponse,
+    RequirementMatchRunListResponse,
+    RequirementMatchRunResultResponse,
+    RequirementMatchRunSummaryResponse,
+    RequirementShortlistEventListResponse,
+    RequirementShortlistEventResponse,
+)
 from app.requirements.schemas import (
     CustomerRequirementAssociationRequest,
     CustomerRequirementAssociationResponse,
@@ -1025,6 +1041,7 @@ def delete_requirement_property_shortlist(
             organization_id=tenant_context.organization_id,
             requirement_id=requirement_id,
             property_id=property_id,
+            actor_id=tenant_context.membership.user_id,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -1035,7 +1052,149 @@ def delete_requirement_property_shortlist(
     db.commit()
     return None
 
+# ---------------------------------------------------------------------------
+# DF-109: Immutable matching history
+# ---------------------------------------------------------------------------
 
+@router.post(
+    "/{requirement_id}/match-runs",
+    response_model=RequirementMatchRunDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_requirement_match_run(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> RequirementMatchRunDetailResponse:
+    """Execute matching and atomically persist the complete run history."""
+
+
+    try:
+        run, results = create_requirement_match_run(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+            actor_id=tenant_context.membership.user_id,
+        )
+
+        response = RequirementMatchRunDetailResponse(
+            **RequirementMatchRunSummaryResponse.model_validate(
+                run
+            ).model_dump(),
+            results=[
+                RequirementMatchRunResultResponse.model_validate(result)
+                for result in results
+            ],
+        )
+
+        db.commit()
+        return response
+
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get(
+    "/{requirement_id}/match-runs",
+    response_model=RequirementMatchRunListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_match_runs(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> RequirementMatchRunListResponse:
+    """List saved matching runs, including runs for deleted requirements."""
+
+    runs = list_requirement_match_runs(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        requirement_id=requirement_id,
+    )
+
+    return RequirementMatchRunListResponse(
+        items=[
+            RequirementMatchRunSummaryResponse.model_validate(run)
+            for run in runs
+        ],
+        total=len(runs),
+    )
+
+
+@router.get(
+    "/{requirement_id}/match-runs/{run_id}/results",
+    response_model=list[RequirementMatchRunResultResponse],
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_match_run_results(
+    requirement_id: UUID,
+    run_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> list[RequirementMatchRunResultResponse]:
+    """Retrieve immutable results for a tenant-owned historical run."""
+
+    try:
+        results = list_requirement_match_run_results(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            requirement_id=requirement_id,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return [
+        RequirementMatchRunResultResponse.model_validate(result)
+        for result in results
+    ]
+
+
+@router.get(
+    "/{requirement_id}/shortlist-events",
+    response_model=RequirementShortlistEventListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_requirement_shortlist_events(
+    requirement_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("requirements.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> RequirementShortlistEventListResponse:
+    """Retrieve historical shortlist additions and removals."""
+
+    events = list_requirement_shortlist_events(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        requirement_id=requirement_id,
+    )
+
+    return RequirementShortlistEventListResponse(
+        requirement_id=requirement_id,
+        items=[
+            RequirementShortlistEventResponse.model_validate(event)
+            for event in events
+        ],
+        total=len(events),
+    )
 
 def _requirement_response(
     requirement,

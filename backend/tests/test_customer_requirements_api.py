@@ -363,13 +363,15 @@ def create_test_app(
 @contextmanager
 def make_test_client(
     *,
-    user: User,
+    user,
+    raise_server_exceptions: bool = True,
 ):
-    """Create a Customer Requirement API test client."""
-
     app = create_test_app(user=user)
 
-    with TestClient(app) as client:
+    with TestClient(
+        app,
+        raise_server_exceptions=raise_server_exceptions,
+    ) as client:
         yield client
 
 
