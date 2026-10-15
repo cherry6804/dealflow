@@ -239,3 +239,30 @@ class PropertySearchResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+class PropertyMatchCriterionResult(BaseModel):
+    """Explain how one requirement criterion evaluates against a property."""
+
+    criterion: Literal[
+        "LOCATION",
+        "PROPERTY_TYPE_AND_BHK",
+        "BUDGET",
+    ]
+    status: Literal["MATCH", "MISMATCH", "UNKNOWN", "NOT_CONFIGURED"]
+    explanation: str
+
+
+class PropertyMatchResult(BaseModel):
+    """A candidate property with transparent matching explanations."""
+
+    property: PropertySearchResult
+    overall_match: bool
+    criteria: list[PropertyMatchCriterionResult]
+
+
+class PropertyMatchResultsResponse(BaseModel):
+    """Matching results for one customer requirement."""
+
+    requirement_id: UUID
+    items: list[PropertyMatchResult]
+    total: int
