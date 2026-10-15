@@ -340,3 +340,88 @@ def test_match_run_failure_rolls_back_persisted_run():
 
         assert runs == []
         assert results == []
+
+def test_match_and_shortlist_history_survive_property_deletion():
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+        grant_read_permission(db, user, organization)
+
+        requirement = create_customer_requirement(
+            db,
+            organization=organization,
+        )
+        property_record = create_property(db, organization.id)
+
+        shortlist_url = (
+            f"{BASE_URL}/{requirement.id}/shortlist"
+        )
+
+        # Create a match run containing a snapshot of the property.
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            match_response = client.post(
+                f"{BASE_URL}/{requirement.id}/match-runs",
+            )
+            assert match_response.status_code == 201, match_response.text
+
+            run_id = match_response.json()["id"]
+
+            # Record shortlist addition and removal events.
+            add_response = client.post(
+                shortlist_url,
+                json={"property_id": str(property_record.id)},
+            )
+            assert add_response.status_code == 201, add_response.text
+
+            remove_response = client.delete(
+                f"{shortlist_url}/{property_record.id}",
+            )
+            assert remove_response.status_code == 204, remove_response.text
+
+        property_id = property_record.id
+
+        # Delete the live property after its shortlist entry is removed.
+        with TestingSessionLocal() as delete_db:
+            live_property = delete_db.get(Property, property_id)
+            assert live_property is not None
+
+            delete_db.delete(live_property)
+            delete_db.commit()
+
+        # Historical endpoints must still return the saved snapshots.
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            results_response = client.get(
+                f"{BASE_URL}/{requirement.id}/match-runs/"
+                f"{run_id}/results",
+            )
+            events_response = client.get(
+                f"{BASE_URL}/{requirement.id}/shortlist-events",
+            )
+
+        assert results_response.status_code == 200, results_response.text
+        results = results_response.json()
+
+        assert any(
+            result["property_id"] == str(property_id)
+            and result["property_snapshot"]["id"] == str(property_id)
+            for result in results
+        )
+
+        assert events_response.status_code == 200, events_response.text
+        events = events_response.json()["items"]
+
+        assert [
+            event["event_type"] for event in events
+        ] == ["ADDED", "REMOVED"]
+
+        assert all(
+            event["property_id"] == str(property_id)
+            and event["property_snapshot"]["id"] == str(property_id)
+            for event in events
+        )
