@@ -425,3 +425,135 @@ def test_match_and_shortlist_history_survive_property_deletion():
             and event["property_snapshot"]["id"] == str(property_id)
             for event in events
         )
+
+def test_match_run_history_returns_empty_for_another_tenants_requirement():
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        user_b, organization_b = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        # Create a match run under Organization B.
+        with make_test_client(user=user_b) as client_b:
+            add_tenant_header(client_b, organization_b)
+            create_response = client_b.post(
+                f"{BASE_URL}/{requirement_b.id}/match-runs",
+            )
+            assert create_response.status_code == 201, create_response.text
+
+        # Organization A must not see Organization B's history.
+        with make_test_client(user=user_a) as client_a:
+            add_tenant_header(client_a, organization_a)
+            response = client_a.get(
+                f"{BASE_URL}/{requirement_b.id}/match-runs",
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == []
+
+
+def test_match_run_results_return_404_for_another_tenants_run():
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        user_b, organization_b = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+        create_property(db, organization_b.id)
+
+        # Create a run and results under Organization B.
+        with make_test_client(user=user_b) as client_b:
+            add_tenant_header(client_b, organization_b)
+            create_response = client_b.post(
+                f"{BASE_URL}/{requirement_b.id}/match-runs",
+            )
+            assert create_response.status_code == 201, create_response.text
+            run_id = create_response.json()["id"]
+
+        # Organization A must not retrieve those results.
+        with make_test_client(user=user_a) as client_a:
+            add_tenant_header(client_a, organization_a)
+            response = client_a.get(
+                f"{BASE_URL}/{requirement_b.id}/match-runs/{run_id}/results",
+            )
+
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Match run not found."
+
+
+def test_shortlist_listing_returns_404_for_another_tenants_requirement():
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        _, organization_b = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+
+        with make_test_client(user=user_a) as client_a:
+            add_tenant_header(client_a, organization_a)
+            response = client_a.get(
+                f"{BASE_URL}/{requirement_b.id}/shortlist",
+            )
+
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Customer requirement not found."
+
+
+def test_shortlist_events_return_empty_for_another_tenants_requirement():
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_key="requirements.read",
+        )
+        user_b, organization_b = create_authorized_user(
+            db,
+            permission_key="requirements.update",
+        )
+        grant_read_permission(db, user_b, organization_b)
+
+        requirement_b = create_customer_requirement(
+            db,
+            organization=organization_b,
+        )
+        property_b = create_property(db, organization_b.id)
+
+        # Create shortlist events under Organization B.
+        with make_test_client(user=user_b) as client_b:
+            add_tenant_header(client_b, organization_b)
+            add_response = client_b.post(
+                f"{BASE_URL}/{requirement_b.id}/shortlist",
+                json={"property_id": str(property_b.id)},
+            )
+            assert add_response.status_code == 201, add_response.text
+
+        # Organization A must not see Organization B's events.
+        with make_test_client(user=user_a) as client_a:
+            add_tenant_header(client_a, organization_a)
+            response = client_a.get(
+                f"{BASE_URL}/{requirement_b.id}/shortlist-events",
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == []
