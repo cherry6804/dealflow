@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -74,17 +75,16 @@ class Property(Base):
     )
 
     __table_args__ = (
-        # ------------------------------------------------------------------
-        # DF-156: Tenant-safe source association
-        # ------------------------------------------------------------------
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_properties_id_organization_id",
+        ),
         ForeignKeyConstraint(
             ["source_contact_id", "organization_id"],
             ["contacts.id", "contacts.organization_id"],
             name="fk_properties_source_contact_tenant",
         ),
-        # ------------------------------------------------------------------
-        # DF-156: Tenant-safe owner association
-        # ------------------------------------------------------------------
         ForeignKeyConstraint(
             ["owner_contact_id", "organization_id"],
             ["contacts.id", "contacts.organization_id"],

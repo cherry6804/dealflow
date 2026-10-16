@@ -28,6 +28,7 @@ from app.db.models.follow_up import FollowUp
 from app.db.models.requirement_property_shortlist import (
     RequirementPropertyShortlist,
 )
+from app.db.models.site_visit import SiteVisit
 from app.db.models.requirement_match_run import RequirementMatchRun
 from app.db.models.requirement_match_run_result import RequirementMatchRunResult
 from app.db.models.requirement_shortlist_event import RequirementShortlistEvent
@@ -58,4 +59,5 @@ __all__ = [
     "RequirementMatchRun",
     "RequirementMatchRunResult",
     "RequirementShortlistEvent",
+    "SiteVisit",
 ]
