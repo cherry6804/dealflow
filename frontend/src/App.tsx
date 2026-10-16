@@ -13,6 +13,7 @@ import NotFoundPage from "./pages/NotFoundPage";
 import PropertiesPage from "./pages/PropertiesPage";
 import RequirementsPage from "./pages/RequirementsPage";
 import TodayPage from "./pages/TodayPage";
+import SiteVisitsPage from "./pages/SiteVisitsPage";
 
 import PipelinePage from "./pages/PipelinePage";
 function ApplicationRoutes() {
@@ -79,6 +80,7 @@ function ApplicationRoutes() {
         <Route path="/leads" element={<LeadsPage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/properties" element={<PropertiesPage />} />
+        <Route path="/site-visits" element={<SiteVisitsPage />} />
         <Route path="/requirements" element={<RequirementsPage />} />
         <Route path="/imports" element={<ImportsPage />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
