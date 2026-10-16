@@ -20,6 +20,7 @@ import {
 import {
   siteVisitsApi,
   type SiteVisit,
+  type SiteVisitOutcome,
   type SiteVisitStatus,
 } from "../services/siteVisitApi";
 
@@ -38,6 +39,17 @@ const STATUSES: Array<{
   { value: "COMPLETED", label: "Completed" },
   { value: "CANCELLED", label: "Cancelled" },
   { value: "NO_SHOW", label: "No show" },
+];
+
+const OUTCOMES: Array<{
+  value: SiteVisitOutcome;
+  label: string;
+}> = [
+  { value: "INTERESTED", label: "Interested" },
+  { value: "NOT_INTERESTED", label: "Not interested" },
+  { value: "NEGOTIATION", label: "Negotiation" },
+  { value: "FOLLOW_UP_REQUIRED", label: "Follow-up required" },
+  { value: "OTHER", label: "Other" },
 ];
 
 function localDateTimeValue(date: Date): string {
@@ -155,6 +167,17 @@ export default function SiteVisitsPage() {
   const [leadId, setLeadId] = useState("");
   const [customerProfileId, setCustomerProfileId] =
     useState("");
+
+  // Attendance form state.
+const [attendanceVisit, setAttendanceVisit] =
+  useState<SiteVisit | null>(null);
+const [attendanceStatus, setAttendanceStatus] =
+  useState<"COMPLETED" | "CANCELLED" | "NO_SHOW">("COMPLETED");
+const [attendanceOutcome, setAttendanceOutcome] =
+  useState<SiteVisitOutcome | "">("");
+const [attendanceFeedback, setAttendanceFeedback] = useState("");
+const [attendanceError, setAttendanceError] = useState("");
+const [attendanceSubmitting, setAttendanceSubmitting] = useState(false);
 
   const [scheduledAt, setScheduledAt] = useState(() => {
     const date = new Date();
@@ -293,6 +316,65 @@ export default function SiteVisitsPage() {
     setScheduledAt(localDateTimeValue(date));
     setIsFormOpen(true);
   }
+
+  function openAttendanceForm(visit: SiteVisit) {
+  setAttendanceVisit(visit);
+  setAttendanceStatus("COMPLETED");
+  setAttendanceOutcome(visit.outcome ?? "");
+  setAttendanceFeedback(visit.feedback ?? "");
+  setAttendanceError("");
+  setMessage("");
+}
+
+function closeAttendanceForm() {
+  if (attendanceSubmitting) {
+    return;
+  }
+
+  setAttendanceVisit(null);
+  setAttendanceError("");
+}
+
+async function handleAttendanceSubmit(
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+  setAttendanceError("");
+  setMessage("");
+
+  if (!attendanceVisit) {
+    return;
+  }
+
+  if (attendanceStatus !== "COMPLETED" && attendanceOutcome) {
+    setAttendanceError(
+      "An outcome can only be recorded when the visit is completed.",
+    );
+    return;
+  }
+
+  setAttendanceSubmitting(true);
+
+  try {
+    await siteVisitsApi.recordAttendance(attendanceVisit.id, {
+      status: attendanceStatus,
+      outcome:
+        attendanceStatus === "COMPLETED"
+          ? attendanceOutcome || null
+          : null,
+      feedback: attendanceFeedback.trim() || null,
+    });
+
+    setAttendanceVisit(null);
+    setMessage("Site visit attendance recorded successfully.");
+
+    await loadVisits();
+  } catch (error) {
+    setAttendanceError(errorMessage(error));
+  } finally {
+    setAttendanceSubmitting(false);
+  }
+}
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -629,6 +711,7 @@ export default function SiteVisitsPage() {
                     <th scope="col">Date &amp; time</th>
                     <th scope="col">Status</th>
                     <th scope="col">Notes</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
 
@@ -703,6 +786,23 @@ export default function SiteVisitsPage() {
 
                         <td className="site-visits-notes">
                           {visit.notes || "—"}
+                        </td>
+
+                        <td>
+                          {visit.status === "SCHEDULED" ? (
+                            <button
+                              type="button"
+                              className="site-visits-secondary-button"
+                              onClick={() => openAttendanceForm(visit)}
+                              disabled={attendanceSubmitting}
+                            >
+                              Record attendance
+                            </button>
+                          ) : (
+                            <span className="site-visits-visually-hidden">
+                              Attendance already recorded
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1116,6 +1216,170 @@ export default function SiteVisitsPage() {
           </div>,
           document.body,
         )}
+        {attendanceVisit &&
+          createPortal(
+            <div
+              className="site-visits-modal-backdrop"
+              onMouseDown={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  !attendanceSubmitting
+                ) {
+                  closeAttendanceForm();
+                }
+              }}
+            >
+              <section
+                className="site-visits-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="attendance-modal-title"
+              >
+                <header className="site-visits-modal-header">
+                  <div>
+                    <span className="site-visits-eyebrow">
+                      VISIT OUTCOME
+                    </span>
+                    <h2 id="attendance-modal-title">
+                      Record attendance
+                    </h2>
+                    <p>
+                      Record whether the appointment occurred and
+                      capture the customer&apos;s feedback.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="site-visits-modal-close"
+                    aria-label="Close attendance form"
+                    disabled={attendanceSubmitting}
+                    onClick={closeAttendanceForm}
+                  >
+                    ×
+                  </button>
+                </header>
+
+                <form
+                  className="site-visits-modal-form"
+                  onSubmit={handleAttendanceSubmit}
+                >
+                  <div className="site-visits-modal-body">
+                    {attendanceError && (
+                      <div
+                        className="site-visits-alert site-visits-alert-error"
+                        role="alert"
+                      >
+                        {attendanceError}
+                      </div>
+                    )}
+
+                    <h3 className="site-visits-form-section-title">
+                      Attendance
+                    </h3>
+
+                    <label className="site-visits-field">
+                      <span>Visit status <b>*</b></span>
+                      <select
+                        value={attendanceStatus}
+                        onChange={(event) => {
+                          const nextStatus = event.target.value as
+                            | "COMPLETED"
+                            | "CANCELLED"
+                            | "NO_SHOW";
+
+                          setAttendanceStatus(nextStatus);
+
+                          if (nextStatus !== "COMPLETED") {
+                            setAttendanceOutcome("");
+                          }
+                        }}
+                        required
+                        disabled={attendanceSubmitting}
+                      >
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELLED">Cancelled</option>
+                        <option value="NO_SHOW">No show</option>
+                      </select>
+                    </label>
+
+                    {attendanceStatus === "COMPLETED" && (
+                      <label className="site-visits-field">
+                        <span>Customer outcome</span>
+                        <select
+                          value={attendanceOutcome}
+                          onChange={(event) =>
+                            setAttendanceOutcome(
+                              event.target.value as SiteVisitOutcome | "",
+                            )
+                          }
+                          disabled={attendanceSubmitting}
+                        >
+                          <option value="">Select an outcome</option>
+                          {OUTCOMES.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+
+                    <h3 className="site-visits-form-section-title">
+                      Customer feedback
+                    </h3>
+
+                    <label className="site-visits-field">
+                      <span>Feedback and observations</span>
+                      <textarea
+                        rows={5}
+                        maxLength={10000}
+                        value={attendanceFeedback}
+                        onChange={(event) =>
+                          setAttendanceFeedback(event.target.value)
+                        }
+                        placeholder="Record customer comments, interest, concerns, or reasons for cancellation…"
+                        disabled={attendanceSubmitting}
+                      />
+                      <small>
+                        {attendanceFeedback.length}/10000 characters
+                      </small>
+                    </label>
+
+                    <p>
+                      Existing scheduling notes will be preserved.
+                    </p>
+                  </div>
+
+                  <footer className="site-visits-modal-footer">
+                    <p>Review the details before saving.</p>
+                    <div>
+                      <button
+                        type="button"
+                        className="site-visits-secondary-button"
+                        onClick={closeAttendanceForm}
+                        disabled={attendanceSubmitting}
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="submit"
+                        className="site-visits-primary-button"
+                        disabled={attendanceSubmitting}
+                      >
+                        {attendanceSubmitting
+                          ? "Saving…"
+                          : "Save attendance"}
+                      </button>
+                    </div>
+                  </footer>
+                </form>
+              </section>
+            </div>,
+            document.body,
+          )}
+
     </main>
   );
 }

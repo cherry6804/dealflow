@@ -13,7 +13,10 @@ from app.db.models.membership import Membership
 from app.db.models.property import Property
 from app.db.models.site_visit import SiteVisit
 from app.site_visits.schemas import SiteVisitCreateRequest
-
+from app.site_visits.schemas import (
+    SiteVisitAttendanceRequest,
+    SiteVisitCreateRequest,
+)
 
 def create_site_visit(
     db: Session,
@@ -106,3 +109,39 @@ def list_site_visits(
         .limit(page_size)
     )
     return list(db.scalars(statement).all()), int(total)
+
+
+def record_site_visit_attendance(
+    db: Session,
+    *,
+    organization_id: UUID,
+    site_visit_id: UUID,
+    payload: SiteVisitAttendanceRequest,
+) -> SiteVisit | None:
+    """Record attendance and outcome for a scheduled visit in one organization."""
+    statement = select(SiteVisit).where(
+        SiteVisit.id == site_visit_id,
+        SiteVisit.organization_id == organization_id,
+    )
+    site_visit = db.scalar(statement)
+
+    if site_visit is None:
+        return None
+
+    if site_visit.status != SiteVisit.STATUS_SCHEDULED:
+        raise ValueError(
+            "Attendance can only be recorded for a scheduled site visit."
+        )
+
+    if payload.status != SiteVisit.STATUS_COMPLETED and payload.outcome is not None:
+        raise ValueError(
+            "An outcome can only be recorded when the visit is completed."
+        )
+
+    site_visit.status = payload.status
+    site_visit.outcome = payload.outcome
+    site_visit.feedback = payload.feedback
+
+    db.flush()
+    db.refresh(site_visit)
+    return site_visit

@@ -599,3 +599,357 @@ def test_schedule_site_visit_requires_tenant_context() -> None:
         assert response.json()["detail"] == (
             "Organization context is required."
         )
+
+def create_scheduled_site_visit(
+    db: Session,
+    *,
+    user: User,
+    organization: Organization,
+) -> SiteVisit:
+    """Create a scheduled site visit for attendance API tests."""
+    property_record = create_property(
+        db,
+        organization=organization,
+    )
+    lead = create_lead(
+        db,
+        organization=organization,
+    )
+
+    site_visit = SiteVisit(
+        organization_id=organization.id,
+        property_id=property_record.id,
+        lead_id=lead.id,
+        owner_user_id=user.id,
+        scheduled_at=datetime.now(timezone.utc) + timedelta(days=2),
+        ends_at=datetime.now(timezone.utc) + timedelta(days=2, hours=1),
+        status=SiteVisit.STATUS_SCHEDULED,
+        outcome=None,
+        notes="Original scheduling notes.",
+    )
+
+    db.add(site_visit)
+    db.commit()
+    db.refresh(site_visit)
+    return site_visit
+
+def test_record_site_visit_attendance_successfully() -> None:
+    """Record completion, outcome, and customer feedback."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "INTERESTED",
+                    "feedback": "Customer liked the property.",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+
+        assert result["id"] == str(site_visit.id)
+        assert result["status"] == "COMPLETED"
+        assert result["outcome"] == "INTERESTED"
+        assert result["feedback"] == "Customer liked the property."
+        assert result["notes"] == "Original scheduling notes."
+
+        db.refresh(site_visit)
+        assert site_visit.status == "COMPLETED"
+        assert site_visit.outcome == "INTERESTED"
+        assert site_visit.feedback == "Customer liked the property."
+        assert site_visit.notes == "Original scheduling notes."
+
+def test_record_cancelled_site_visit_without_outcome() -> None:
+    """Allow a scheduled visit to be cancelled without an outcome."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "CANCELLED",
+                    "feedback": "Customer requested cancellation.",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "CANCELLED"
+        assert response.json()["outcome"] is None
+        assert response.json()["feedback"] == (
+            "Customer requested cancellation."
+        )
+
+
+def test_record_no_show_site_visit_without_outcome() -> None:
+    """Allow a no-show record without an outcome."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "NO_SHOW",
+                    "feedback": "Customer did not attend.",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "NO_SHOW"
+        assert response.json()["outcome"] is None
+
+def test_record_site_visit_attendance_rejects_invalid_status() -> None:
+    """Reject an unsupported attendance status."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={"status": "SCHEDULED"},
+            )
+
+        assert response.status_code == 422
+
+
+def test_record_site_visit_attendance_rejects_invalid_outcome() -> None:
+    """Reject an unsupported customer outcome."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "INVALID_OUTCOME",
+                },
+            )
+
+        assert response.status_code == 422
+
+
+def test_record_site_visit_attendance_rejects_outcome_for_no_show() -> None:
+    """Require completed status when an outcome is supplied."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "NO_SHOW",
+                    "outcome": "INTERESTED",
+                },
+            )
+
+        assert response.status_code == 422
+
+        db.refresh(site_visit)
+        assert site_visit.status == SiteVisit.STATUS_SCHEDULED
+
+
+def test_record_site_visit_attendance_rejects_missing_status() -> None:
+    """Require the attendance status in the request."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={"feedback": "Customer feedback."},
+            )
+
+        assert response.status_code == 422
+
+def test_record_site_visit_attendance_returns_not_found_for_unknown_visit() -> None:
+    """Return 404 when the visit does not exist."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{uuid4()}/attendance",
+                json={"status": "COMPLETED"},
+            )
+
+        assert response.status_code == 404
+
+def test_record_site_visit_attendance_rejects_cross_tenant_visit() -> None:
+    """Prevent updating a visit owned by another organization."""
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(db)
+        organization_b = create_organization(db)
+
+        # Create a separate user who is a valid member of organization B.
+        owner_b = create_user(db)
+        create_membership(
+            db,
+            user=owner_b,
+            organization=organization_b,
+        )
+        db.commit()
+
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=owner_b,
+            organization=organization_b,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization_a)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "INTERESTED",
+                },
+            )
+
+        assert response.status_code == 404
+
+        db.refresh(site_visit)
+        assert site_visit.organization_id == organization_b.id
+        assert site_visit.status == SiteVisit.STATUS_SCHEDULED
+        assert site_visit.outcome is None
+        assert site_visit.feedback is None
+
+def test_record_site_visit_attendance_rejects_already_completed_visit() -> None:
+    """Prevent recording attendance twice for a finalized visit."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            first_response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "INTERESTED",
+                    "feedback": "Initial feedback.",
+                },
+            )
+
+            assert first_response.status_code == 200, first_response.text
+
+            second_response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "NOT_INTERESTED",
+                    "feedback": "Changed feedback.",
+                },
+            )
+
+        assert second_response.status_code == 422
+
+        db.refresh(site_visit)
+        assert site_visit.status == "COMPLETED"
+        assert site_visit.outcome == "INTERESTED"
+        assert site_visit.feedback == "Initial feedback."
+
+
+def test_record_site_visit_attendance_requires_permission() -> None:
+    """Reject attendance updates without leads.update permission."""
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        organization = create_organization(db)
+
+        create_membership(
+            db,
+            user=user,
+            organization=organization,
+        )
+        db.commit()
+
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={"status": "COMPLETED"},
+            )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Permission denied."
+
+
+def test_record_site_visit_attendance_requires_tenant_context() -> None:
+    """Reject attendance updates without an organization context."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        with make_test_client(user=user) as client:
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit.id}/attendance",
+                json={"status": "COMPLETED"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Organization context is required."
+        )

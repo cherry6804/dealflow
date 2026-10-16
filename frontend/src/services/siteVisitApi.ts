@@ -1,6 +1,18 @@
+
 import { api } from "../lib/api";
 
-export type SiteVisitStatus = "SCHEDULED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+export type SiteVisitStatus =
+  | "SCHEDULED"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "NO_SHOW";
+
+export type SiteVisitOutcome =
+  | "INTERESTED"
+  | "NOT_INTERESTED"
+  | "NEGOTIATION"
+  | "FOLLOW_UP_REQUIRED"
+  | "OTHER";
 
 export interface SiteVisitCreateInput {
   property_id: string;
@@ -10,6 +22,12 @@ export interface SiteVisitCreateInput {
   scheduled_at: string;
   ends_at?: string | null;
   notes?: string | null;
+}
+
+export interface SiteVisitAttendanceInput {
+  status: Exclude<SiteVisitStatus, "SCHEDULED">;
+  outcome?: SiteVisitOutcome | null;
+  feedback?: string | null;
 }
 
 export interface SiteVisit {
@@ -22,8 +40,9 @@ export interface SiteVisit {
   scheduled_at: string;
   ends_at: string | null;
   status: SiteVisitStatus;
-  outcome: string | null;
+  outcome: SiteVisitOutcome | null;
   notes: string | null;
+  feedback: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -41,11 +60,33 @@ export const siteVisitsApi = {
     return api.post<SiteVisit>("/site-visits", input);
   },
 
-  list(params: { page?: number; page_size?: number; status?: SiteVisitStatus | "" } = {}): Promise<SiteVisitListResponse> {
+  list(
+    params: {
+      page?: number;
+      page_size?: number;
+      status?: SiteVisitStatus | "";
+    } = {},
+  ): Promise<SiteVisitListResponse> {
     const query = new URLSearchParams();
     query.set("page", String(params.page ?? 1));
     query.set("page_size", String(params.page_size ?? 10));
-    if (params.status) query.set("status", params.status);
-    return api.get<SiteVisitListResponse>(`/site-visits?${query.toString()}`);
+
+    if (params.status) {
+      query.set("status", params.status);
+    }
+
+    return api.get<SiteVisitListResponse>(
+      `/site-visits?${query.toString()}`,
+    );
+  },
+
+  recordAttendance(
+    siteVisitId: string,
+    input: SiteVisitAttendanceInput,
+  ): Promise<SiteVisit> {
+    return api.patch<SiteVisit>(
+      `/site-visits/${siteVisitId}/attendance`,
+      input,
+    );
   },
 };
