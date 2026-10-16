@@ -79,6 +79,7 @@ class FollowUpResponse(BaseModel):
     id: UUID
     organization_id: UUID
     lead_id: UUID
+    site_visit_id: UUID | None = None
     owner_user_id: UUID
     follow_up_type: FollowUpType
     title: str

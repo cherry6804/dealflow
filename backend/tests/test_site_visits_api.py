@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.db.models.follow_up import FollowUp
 from app.api.site_visits import router as site_visits_router
 from app.auth.dependencies import (
     CurrentUserContext,
@@ -953,3 +953,172 @@ def test_record_site_visit_attendance_requires_tenant_context() -> None:
         assert response.json()["detail"] == (
             "Organization context is required."
         )
+
+
+def test_create_site_visit_follow_up_successfully() -> None:
+    """Create and persist a follow-up linked to an eligible visit."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+        site_visit.status = SiteVisit.STATUS_COMPLETED
+        site_visit.outcome = "FOLLOW_UP_REQUIRED"
+        db.commit()
+
+        payload = {
+            "follow_up_type": "CALL",
+            "title": "Call after property visit",
+            "description": "Discuss the customer's questions.",
+            "due_at": (
+                datetime.now(timezone.utc) + timedelta(days=1)
+            ).isoformat(),
+        }
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.post(
+                f"/api/v1/site-visits/{site_visit.id}/follow-up",
+                json=payload,
+            )
+
+        assert response.status_code == 201, response.text
+        result = response.json()
+        assert result["organization_id"] == str(organization.id)
+        assert result["lead_id"] == str(site_visit.lead_id)
+        assert result["site_visit_id"] == str(site_visit.id)
+        assert result["follow_up_type"] == "CALL"
+        assert result["title"] == payload["title"]
+        assert result["status"] == "PENDING"
+
+        persisted = db.scalar(
+            select(FollowUp).where(
+                FollowUp.id == UUID(result["id"])
+            )
+        )
+        assert persisted is not None
+        assert persisted.site_visit_id == site_visit.id
+        assert persisted.organization_id == organization.id
+        assert persisted.lead_id == site_visit.lead_id
+
+
+def test_create_site_visit_follow_up_rejects_ineligible_visit() -> None:
+    """Reject follow-up creation when the visit outcome is ineligible."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+        site_visit.status = SiteVisit.STATUS_COMPLETED
+        site_visit.outcome = "INTERESTED"
+        db.commit()
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.post(
+                f"/api/v1/site-visits/{site_visit.id}/follow-up",
+                json={
+                    "follow_up_type": "CALL",
+                    "title": "Follow up",
+                    "due_at": (
+                        datetime.now(timezone.utc) + timedelta(days=1)
+                    ).isoformat(),
+                },
+            )
+
+        assert response.status_code == 422, response.text
+
+
+def test_create_site_visit_follow_up_rejects_duplicate() -> None:
+    """Prevent creating multiple follow-ups for one site visit."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+        site_visit.status = SiteVisit.STATUS_COMPLETED
+        site_visit.outcome = "FOLLOW_UP_REQUIRED"
+        db.commit()
+
+        payload = {
+            "follow_up_type": "CALL",
+            "title": "Follow up after visit",
+            "due_at": (
+                datetime.now(timezone.utc) + timedelta(days=1)
+            ).isoformat(),
+        }
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+
+            first = client.post(
+                f"/api/v1/site-visits/{site_visit.id}/follow-up",
+                json=payload,
+            )
+            assert first.status_code == 201, first.text
+
+            second = client.post(
+                f"/api/v1/site-visits/{site_visit.id}/follow-up",
+                json=payload,
+            )
+
+        assert second.status_code == 422, second.text
+
+        linked_follow_ups = db.scalars(
+            select(FollowUp).where(
+                FollowUp.organization_id == organization.id,
+                FollowUp.site_visit_id == site_visit.id,
+            )
+        ).all()
+        assert len(linked_follow_ups) == 1
+
+
+def test_create_site_visit_follow_up_rejects_cross_tenant_visit() -> None:
+    """Do not expose another organization's site visits."""
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(db)
+        user_b = create_user(db)
+        organization_b = create_organization(db)
+        create_membership(
+            db,
+            user=user_b,
+            organization=organization_b,
+        )
+        db.commit()
+
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user_b,
+            organization=organization_b,
+        )
+        site_visit.status = SiteVisit.STATUS_COMPLETED
+        site_visit.outcome = "FOLLOW_UP_REQUIRED"
+        db.commit()
+
+        with make_test_client(user=user_a) as client:
+            add_tenant_header(client, organization_a)
+            response = client.post(
+                f"/api/v1/site-visits/{site_visit.id}/follow-up",
+                json={
+                    "follow_up_type": "CALL",
+                    "title": "Follow up",
+                    "due_at": (
+                        datetime.now(timezone.utc) + timedelta(days=1)
+                    ).isoformat(),
+                },
+            )
+
+        assert response.status_code == 404, response.text
+
+        linked_follow_up = db.scalar(
+            select(FollowUp).where(
+                FollowUp.site_visit_id == site_visit.id
+            )
+        )
+        assert linked_follow_up is None
