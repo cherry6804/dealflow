@@ -23,6 +23,7 @@ def test_site_visit_model_has_expected_columns() -> None:
         "status",
         "outcome",
         "notes",
+        "feedback",
         "created_at",
         "updated_at",
     }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from math import ceil
-
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -13,8 +13,16 @@ from app.site_visits.schemas import (
     SiteVisitCreateRequest,
     SiteVisitListResponse,
     SiteVisitResponse,
+    SiteVisitAttendanceRequest,
+    SiteVisitCreateRequest,
+    SiteVisitListResponse,
+    SiteVisitResponse,
 )
-from app.site_visits.service import create_site_visit, list_site_visits
+from app.site_visits.service import (
+    create_site_visit,
+    list_site_visits,
+    record_site_visit_attendance,
+)
 from app.tenant.dependencies import TenantContext
 
 router = APIRouter(prefix="/api/v1/site-visits", tags=["site-visits"])
@@ -72,6 +80,50 @@ def schedule_site_visit_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Property or customer reference not found.",
+        )
+
+    try:
+        db.commit()
+        db.refresh(site_visit)
+    except Exception:
+        db.rollback()
+        raise
+
+    return SiteVisitResponse.model_validate(site_visit)
+
+
+@router.patch(
+    "/{site_visit_id}/attendance",
+    response_model=SiteVisitResponse,
+)
+def record_site_visit_attendance_endpoint(
+    site_visit_id: UUID,
+    payload: SiteVisitAttendanceRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update")
+    ),
+    db: Session = Depends(get_db_session),
+) -> SiteVisitResponse:
+    """Record visit attendance and customer outcome within the active tenant."""
+    try:
+        site_visit = record_site_visit_attendance(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            site_visit_id=site_visit_id,
+            payload=payload,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if site_visit is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Site visit not found.",
         )
 
     try:

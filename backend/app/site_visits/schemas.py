@@ -49,6 +49,48 @@ class SiteVisitCreateRequest(BaseModel):
         return normalized or None
 
 
+class SiteVisitAttendanceRequest(BaseModel):
+    """Record attendance, customer outcome, and feedback for a site visit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    outcome: str | None = None
+    feedback: str | None = Field(default=None, max_length=10000)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        allowed = {"COMPLETED", "CANCELLED", "NO_SHOW"}
+        if value not in allowed:
+            raise ValueError(
+                "Status must be COMPLETED, CANCELLED, or NO_SHOW."
+            )
+        return value
+
+    @field_validator("outcome")
+    @classmethod
+    def validate_outcome(cls, value: str | None) -> str | None:
+        allowed = {
+            "INTERESTED",
+            "NOT_INTERESTED",
+            "NEGOTIATION",
+            "FOLLOW_UP_REQUIRED",
+            "OTHER",
+        }
+        if value is not None and value not in allowed:
+            raise ValueError("Invalid site visit outcome.")
+        return value
+
+    @field_validator("feedback")
+    @classmethod
+    def normalize_feedback(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
 class SiteVisitResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,6 +105,7 @@ class SiteVisitResponse(BaseModel):
     status: str
     outcome: str | None
     notes: str | None
+    feedback: str | None
     created_at: datetime
     updated_at: datetime
 
