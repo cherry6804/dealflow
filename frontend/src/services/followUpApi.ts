@@ -14,6 +14,7 @@ export interface FollowUp {
   id: string;
   organization_id: string;
   lead_id: string;
+  site_visit_id: string | null;
   owner_user_id: string;
   follow_up_type: FollowUpType;
   title: string;
@@ -129,6 +130,16 @@ export const followUpsApi = {
   ): Promise<BulkFollowUpResponse> {
     return api.post<BulkFollowUpResponse>(
       "/follow-ups/bulk-reschedule",
+      input,
+    );
+  },
+
+  createFromSiteVisit(
+    siteVisitId: string,
+    input: FollowUpCreateInput,
+  ): Promise<FollowUp> {
+    return api.post<FollowUp>(
+      `/site-visits/${encodeURIComponent(siteVisitId)}/follow-up`,
       input,
     );
   },

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-
+from app.db.models.site_visit import SiteVisit
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
@@ -70,6 +70,64 @@ def create_follow_up(
 
     return follow_up
 
+def create_site_visit_follow_up(
+    db: Session,
+    *,
+    organization_id: UUID,
+    current_user_id: UUID,
+    site_visit_id: UUID,
+    payload: FollowUpCreateRequest,
+) -> FollowUp | None:
+    """Create one follow-up from an eligible completed site visit."""
+    statement = select(SiteVisit).where(
+        SiteVisit.id == site_visit_id,
+        SiteVisit.organization_id == organization_id,
+    )
+    site_visit = db.scalar(statement)
+
+    if site_visit is None:
+        return None
+
+    if (
+        site_visit.status != SiteVisit.STATUS_COMPLETED
+        or site_visit.outcome != "FOLLOW_UP_REQUIRED"
+    ):
+        raise ValueError(
+            "A follow-up can only be created for a completed visit "
+            "with the FOLLOW_UP_REQUIRED outcome."
+        )
+
+    if site_visit.lead_id is None:
+        raise ValueError(
+            "This site visit has no linked lead. "
+            "A follow-up requires a lead."
+        )
+
+    existing_statement = select(FollowUp.id).where(
+        FollowUp.organization_id == organization_id,
+        FollowUp.site_visit_id == site_visit_id,
+    )
+    if db.scalar(existing_statement) is not None:
+        raise ValueError(
+            "A follow-up already exists for this site visit."
+        )
+
+    follow_up = create_follow_up(
+        db,
+        organization_id=organization_id,
+        current_user_id=current_user_id,
+        lead_id=site_visit.lead_id,
+        payload=payload,
+    )
+
+    if follow_up is None:
+        return None
+
+    follow_up.site_visit_id = site_visit.id
+    db.flush()
+    db.refresh(follow_up)
+
+    return follow_up
 
 def complete_follow_up(
     db: Session,

@@ -23,7 +23,11 @@ import {
   type SiteVisitOutcome,
   type SiteVisitStatus,
 } from "../services/siteVisitApi";
-
+import {
+  followUpsApi,
+  type FollowUpCreateInput,
+  type FollowUpType,
+} from "../services/followUpApi";
 import "./SiteVisitsPage.css";
 
 type CustomerType = "lead" | "customer";
@@ -178,6 +182,23 @@ const [attendanceOutcome, setAttendanceOutcome] =
 const [attendanceFeedback, setAttendanceFeedback] = useState("");
 const [attendanceError, setAttendanceError] = useState("");
 const [attendanceSubmitting, setAttendanceSubmitting] = useState(false);
+
+const [followUpVisit, setFollowUpVisit] =
+  useState<SiteVisit | null>(null);
+const [followUpType, setFollowUpType] =
+  useState<FollowUpType>("CALL");
+const [followUpTitle, setFollowUpTitle] =
+  useState("Follow up after site visit");
+const [followUpDescription, setFollowUpDescription] =
+  useState("");
+const [followUpDueAt, setFollowUpDueAt] = useState(() => {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  date.setHours(10, 0, 0, 0);
+  return localDateTimeValue(date);
+});
+const [followUpError, setFollowUpError] = useState("");
+const [followUpSubmitting, setFollowUpSubmitting] = useState(false);
 
   const [scheduledAt, setScheduledAt] = useState(() => {
     const date = new Date();
@@ -373,6 +394,83 @@ async function handleAttendanceSubmit(
     setAttendanceError(errorMessage(error));
   } finally {
     setAttendanceSubmitting(false);
+  }
+}
+
+function openFollowUpForm(visit: SiteVisit) {
+  setFollowUpVisit(visit);
+  setFollowUpType("CALL");
+  setFollowUpTitle("Follow up after site visit");
+  setFollowUpDescription("");
+
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  date.setHours(10, 0, 0, 0);
+
+  setFollowUpDueAt(localDateTimeValue(date));
+  setFollowUpError("");
+  setMessage("");
+}
+
+function closeFollowUpForm() {
+  if (followUpSubmitting) return;
+  setFollowUpVisit(null);
+  setFollowUpError("");
+}
+
+async function handleFollowUpSubmit(
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+  setFollowUpError("");
+  setMessage("");
+
+  if (!followUpVisit?.lead_id) {
+    setFollowUpError(
+      "A linked lead is required to create this follow-up.",
+    );
+    return;
+  }
+
+  const dueAt = new Date(followUpDueAt);
+
+  if (Number.isNaN(dueAt.getTime())) {
+    setFollowUpError("Enter a valid follow-up date and time.");
+    return;
+  }
+
+  if (dueAt.getTime() <= Date.now()) {
+    setFollowUpError("The follow-up must be scheduled in the future.");
+    return;
+  }
+
+  const payload: FollowUpCreateInput = {
+    follow_up_type: followUpType,
+    title: followUpTitle.trim(),
+    description: followUpDescription.trim() || null,
+    due_at: dueAt.toISOString(),
+  };
+
+  if (!payload.title) {
+    setFollowUpError("Enter a follow-up title.");
+    return;
+  }
+
+  setFollowUpSubmitting(true);
+
+  try {
+    const created = await followUpsApi.createFromSiteVisit(
+      followUpVisit.id,
+      payload,
+    );
+
+    setFollowUpVisit(null);
+    setMessage(`Follow-up created: ${created.title}`);
+    await loadVisits();
+  } catch (error) {
+    setFollowUpError(errorMessage(error));
+  } finally {
+    setFollowUpSubmitting(false);
   }
 }
 
@@ -789,7 +887,7 @@ async function handleAttendanceSubmit(
                         </td>
 
                         <td>
-                          {visit.status === "SCHEDULED" ? (
+                          {visit.status === "SCHEDULED" && (
                             <button
                               type="button"
                               className="site-visits-secondary-button"
@@ -798,11 +896,21 @@ async function handleAttendanceSubmit(
                             >
                               Record attendance
                             </button>
-                          ) : (
-                            <span className="site-visits-visually-hidden">
-                              Attendance already recorded
-                            </span>
                           )}
+
+                          {visit.status === "COMPLETED" &&
+                            visit.outcome === "FOLLOW_UP_REQUIRED" &&
+                            visit.lead_id &&
+                            !visit.has_follow_up && (
+                              <button
+                                type="button"
+                                className="site-visits-primary-button"
+                                onClick={() => openFollowUpForm(visit)}
+                                disabled={followUpSubmitting}
+                              >
+                                Create follow-up
+                              </button>
+                            )}
                         </td>
                       </tr>
                     );
@@ -1379,6 +1487,155 @@ async function handleAttendanceSubmit(
             </div>,
             document.body,
           )}
+
+          {followUpVisit &&
+            createPortal(
+              <div
+                className="site-visits-modal-backdrop"
+                onMouseDown={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    !followUpSubmitting
+                  ) {
+                    closeFollowUpForm();
+                  }
+                }}
+              >
+                <section
+                  className="site-visits-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="follow-up-modal-title"
+                >
+                  <header className="site-visits-modal-header">
+                    <div>
+                      <span className="site-visits-eyebrow">
+                        POST-VISIT ACTION
+                      </span>
+                      <h2 id="follow-up-modal-title">
+                        Create follow-up
+                      </h2>
+                      <p>
+                        Schedule the next action for this lead.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="site-visits-modal-close"
+                      aria-label="Close follow-up form"
+                      disabled={followUpSubmitting}
+                      onClick={closeFollowUpForm}
+                    >
+                      ×
+                    </button>
+                  </header>
+
+                  <form
+                    className="site-visits-modal-form"
+                    onSubmit={handleFollowUpSubmit}
+                  >
+                    <div className="site-visits-modal-body">
+                      {followUpError && (
+                        <div
+                          className="site-visits-alert site-visits-alert-error"
+                          role="alert"
+                        >
+                          {followUpError}
+                        </div>
+                      )}
+
+                      <label className="site-visits-field">
+                        <span>Follow-up type *</span>
+                        <select
+                          value={followUpType}
+                          onChange={(event) =>
+                            setFollowUpType(event.target.value as FollowUpType)
+                          }
+                          required
+                          disabled={followUpSubmitting}
+                        >
+                          <option value="CALL">Call</option>
+                          <option value="EMAIL">Email</option>
+                          <option value="MEETING">Meeting</option>
+                          <option value="VISIT">Visit</option>
+                          <option value="TASK">Task</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </label>
+
+                      <label className="site-visits-field">
+                        <span>Title *</span>
+                        <input
+                          value={followUpTitle}
+                          onChange={(event) =>
+                            setFollowUpTitle(event.target.value)
+                          }
+                          maxLength={200}
+                          required
+                          disabled={followUpSubmitting}
+                        />
+                      </label>
+
+                      <label className="site-visits-field">
+                        <span>Description</span>
+                        <textarea
+                          rows={4}
+                          maxLength={10000}
+                          value={followUpDescription}
+                          onChange={(event) =>
+                            setFollowUpDescription(event.target.value)
+                          }
+                          placeholder="Next steps, customer questions, or commitments…"
+                          disabled={followUpSubmitting}
+                        />
+                      </label>
+
+                      <label className="site-visits-field">
+                        <span>Due date and time *</span>
+                        <input
+                          type="datetime-local"
+                          value={followUpDueAt}
+                          onChange={(event) =>
+                            setFollowUpDueAt(event.target.value)
+                          }
+                          required
+                          disabled={followUpSubmitting}
+                        />
+                        <small>
+                          Uses your device's local timezone. Assigned to your
+                          current account by default.
+                        </small>
+                      </label>
+                    </div>
+
+                    <footer className="site-visits-modal-footer">
+                      <p>The follow-up will be linked to this site visit.</p>
+                      <div>
+                        <button
+                          type="button"
+                          className="site-visits-secondary-button"
+                          disabled={followUpSubmitting}
+                          onClick={closeFollowUpForm}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="site-visits-primary-button"
+                          disabled={followUpSubmitting}
+                        >
+                          {followUpSubmitting
+                            ? "Creating…"
+                            : "Create follow-up"}
+                        </button>
+                      </div>
+                    </footer>
+                  </form>
+                </section>
+              </div>,
+              document.body,
+            )}
 
     </main>
   );

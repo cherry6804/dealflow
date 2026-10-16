@@ -39,6 +39,16 @@ class FollowUp(Base):
             "organization_id",
             name="uq_follow_ups_id_organization_id",
         ),
+        UniqueConstraint(
+            "site_visit_id",
+            name="uq_follow_ups_site_visit_id",
+        ),
+        ForeignKeyConstraint(
+            ["site_visit_id", "organization_id"],
+            ["site_visits.id", "site_visits.organization_id"],
+            name="fk_follow_ups_site_visit_tenant",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["lead_id", "organization_id"],
             ["leads.id", "leads.organization_id"],
@@ -139,6 +149,11 @@ class FollowUp(Base):
     lead_id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         nullable=False,
+    )
+
+    site_visit_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
     )
 
     owner_user_id: Mapped[uuid.UUID] = mapped_column(

@@ -45,6 +45,7 @@ export interface SiteVisit {
   feedback: string | null;
   created_at: string;
   updated_at: string;
+  has_follow_up: boolean;
 }
 
 export interface SiteVisitListResponse {

@@ -99,6 +99,7 @@ class SiteVisitResponse(BaseModel):
     property_id: UUID
     lead_id: UUID | None
     customer_profile_id: UUID | None
+    has_follow_up: bool = False
     owner_user_id: UUID
     scheduled_at: datetime
     ends_at: datetime | None
