@@ -1,3 +1,4 @@
+
 """FastAPI routes for DealFlow site visits."""
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from app.site_visits.service import (
     record_site_visit_attendance,
 )
 from app.tenant.dependencies import TenantContext
+
 router = APIRouter(prefix="/api/v1/site-visits", tags=["site-visits"])
 
 
@@ -35,10 +37,27 @@ def list_site_visits_endpoint(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
     status_filter: str | None = Query(default=None, alias="status"),
-    tenant_context: TenantContext = Depends(require_permission("leads.update")),
+    lead_id: UUID | None = Query(default=None),
+    customer_profile_id: UUID | None = Query(default=None),
+    property_id: UUID | None = Query(default=None),
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update")
+    ),
     db: Session = Depends(get_db_session),
 ) -> SiteVisitListResponse:
-    """List site visits belonging only to the verified organization."""
+    """List tenant-scoped visits, optionally filtered by their related record."""
+    if sum(
+        value is not None
+        for value in (lead_id, customer_profile_id, property_id)
+    ) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Provide only one of lead_id, customer_profile_id, "
+                "or property_id."
+            ),
+        )
+
     try:
         items, total = list_site_visits(
             db,
@@ -46,12 +65,17 @@ def list_site_visits_endpoint(
             page=page,
             page_size=page_size,
             status_filter=status_filter,
+            lead_id=lead_id,
+            customer_profile_id=customer_profile_id,
+            property_id=property_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     visit_ids = [item.id for item in items]
-
     linked_visit_ids: set[UUID] = set()
 
     if visit_ids:
@@ -59,7 +83,6 @@ def list_site_visits_endpoint(
             FollowUp.organization_id == tenant_context.organization_id,
             FollowUp.site_visit_id.in_(visit_ids),
         )
-
         linked_visit_ids = {
             visit_id
             for visit_id in db.scalars(statement).all()
@@ -67,7 +90,6 @@ def list_site_visits_endpoint(
         }
 
     response_items = []
-
     for item in items:
         response = SiteVisitResponse.model_validate(item)
         response.has_follow_up = item.id in linked_visit_ids
@@ -82,10 +104,16 @@ def list_site_visits_endpoint(
     )
 
 
-@router.post("", response_model=SiteVisitResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=SiteVisitResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def schedule_site_visit_endpoint(
     payload: SiteVisitCreateRequest,
-    tenant_context: TenantContext = Depends(require_permission("leads.update")),
+    tenant_context: TenantContext = Depends(
+        require_permission("leads.update")
+    ),
     db: Session = Depends(get_db_session),
 ) -> SiteVisitResponse:
     """Schedule a site visit within the verified organization."""
@@ -98,7 +126,10 @@ def schedule_site_visit_endpoint(
         )
     except ValueError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     if site_visit is None:
         db.rollback()
@@ -129,7 +160,7 @@ def record_site_visit_attendance_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> SiteVisitResponse:
-    """Record visit attendance and customer outcome within the active tenant."""
+    """Record visit attendance and outcome within the active tenant."""
     try:
         site_visit = record_site_visit_attendance(
             db=db,
@@ -159,6 +190,7 @@ def record_site_visit_attendance_endpoint(
         raise
 
     return SiteVisitResponse.model_validate(site_visit)
+
 
 @router.post(
     "/{site_visit_id}/follow-up",

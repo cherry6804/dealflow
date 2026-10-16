@@ -7,6 +7,7 @@ import {
 } from "../services/customerProfileApi";
 import "./CustomersPage.css";
 import { createPortal } from "react-dom";
+import SiteVisitHistory from "../components/SiteVisitHistory";
 
 const PAGE_SIZE = 10;
 
@@ -113,7 +114,8 @@ export default function CustomersPage() {
   const [contactsLoading, setContactsLoading] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState("");
   const [registrationNotes, setRegistrationNotes] = useState("");
-
+  const [historyCustomer, setHistoryCustomer] =
+  useState<CustomerProfile | null>(null);
   const [editingCustomer, setEditingCustomer] =
     useState<CustomerProfile | null>(null);
   const [editingNotes, setEditingNotes] = useState("");
@@ -551,6 +553,13 @@ export default function CustomersPage() {
                             <button
                               type="button"
                               className="customers-text-button"
+                              onClick={() => setHistoryCustomer(customer)}
+                            >
+                              View visit history
+                            </button>
+                            <button
+                              type="button"
+                              className="customers-text-button"
                               onClick={() => openEditDialog(customer)}
                               disabled={saving}
                             >
@@ -821,6 +830,60 @@ export default function CustomersPage() {
           </div>,
           document.body,
         )}
+
+        {historyCustomer &&
+          createPortal(
+            <div
+              className="customers-modal-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setHistoryCustomer(null);
+                }
+              }}
+            >
+              <section
+                className="customers-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="customer-visit-history-title"
+              >
+                <header className="customers-modal-header">
+                  <div>
+                    <p className="customers-eyebrow">CUSTOMER PROFILE</p>
+                    <h2 id="customer-visit-history-title">Visit history</h2>
+                    <p>{displayName(historyCustomer.contact)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="customers-modal-close"
+                    aria-label="Close visit history"
+                    onClick={() => setHistoryCustomer(null)}
+                  >
+                    ×
+                  </button>
+                </header>
+
+                <div className="customers-modal-body">
+                  <SiteVisitHistory
+                    customerProfileId={historyCustomer.id}
+                    title="Customer site visits"
+                  />
+                </div>
+
+                <footer className="customers-modal-footer">
+                  <button
+                    type="button"
+                    className="customers-button customers-button-secondary"
+                    onClick={() => setHistoryCustomer(null)}
+                  >
+                    Close
+                  </button>
+                </footer>
+              </section>
+            </div>,
+            document.body,
+          )}
     </section>
   );
 }

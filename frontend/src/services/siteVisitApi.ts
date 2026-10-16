@@ -56,24 +56,42 @@ export interface SiteVisitListResponse {
   total_pages: number;
 }
 
+export interface SiteVisitListParams {
+  page?: number;
+  page_size?: number;
+  status?: SiteVisitStatus | "";
+  lead_id?: string;
+  customer_profile_id?: string;
+  property_id?: string;
+}
+
 export const siteVisitsApi = {
   schedule(input: SiteVisitCreateInput): Promise<SiteVisit> {
     return api.post<SiteVisit>("/site-visits", input);
   },
 
   list(
-    params: {
-      page?: number;
-      page_size?: number;
-      status?: SiteVisitStatus | "";
-    } = {},
+    params: SiteVisitListParams = {},
   ): Promise<SiteVisitListResponse> {
     const query = new URLSearchParams();
+
     query.set("page", String(params.page ?? 1));
     query.set("page_size", String(params.page_size ?? 10));
 
     if (params.status) {
       query.set("status", params.status);
+    }
+
+    if (params.lead_id) {
+      query.set("lead_id", params.lead_id);
+    }
+
+    if (params.customer_profile_id) {
+      query.set("customer_profile_id", params.customer_profile_id);
+    }
+
+    if (params.property_id) {
+      query.set("property_id", params.property_id);
     }
 
     return api.get<SiteVisitListResponse>(
