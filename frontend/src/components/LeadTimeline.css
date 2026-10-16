@@ -288,3 +288,117 @@
   font-size: 0.9rem;
   line-height: 1.5;
 }
+
+.lead-timeline-visits {
+  min-width: 0;
+  margin-top: 1.5rem;
+}
+
+/* Modal layout with a persistent footer */
+.lead-timeline-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 2rem);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lead-timeline-header {
+  flex: 0 0 auto;
+}
+
+.lead-timeline-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lead-timeline-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+  background: var(--surface-color, #fff);
+}
+
+.lead-timeline-footer p {
+  margin: 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.85rem;
+}
+
+.lead-timeline-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+@media (max-width: 480px) {
+  .lead-timeline-dialog {
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .lead-timeline-footer {
+    padding: 0.75rem 1rem;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lead-timeline-footer-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+
+.lead-timeline-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+}
+
+.lead-timeline-dialog > .leads-modal-header {
+  flex: 0 0 auto;
+}
+
+.lead-timeline-body.leads-form-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lead-timeline-footer {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface-color, #fff);
+}
+
+.lead-timeline-footer p {
+  margin: 0;
+  color: var(--text-secondary, #64748b);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 480px) {
+  .lead-timeline-dialog {
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .lead-timeline-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lead-timeline-footer > button {
+    align-self: flex-end;
+  }
+}

@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "../lib/api";
@@ -5,6 +6,7 @@ import {
   activityApi,
   type LeadActivity,
 } from "../services/activityApi";
+import SiteVisitHistory from "./SiteVisitHistory";
 import "./LeadTimeline.css";
 
 interface LeadTimelineProps {
@@ -100,6 +102,7 @@ function ActivityChangeDetails({
           <span>Previous action</span>
           <p>{formatActionValue(details.old_next_action)}</p>
         </div>
+
         <div className="lead-timeline-change-row">
           <span>Updated action</span>
           <p>{formatActionValue(details.new_next_action)}</p>
@@ -118,6 +121,7 @@ function ActivityChangeDetails({
           <span>Previous follow-up</span>
           <p>{formatDateTimeValue(details.old_next_action_at)}</p>
         </div>
+
         <div className="lead-timeline-change-row">
           <span>Updated follow-up</span>
           <p>{formatDateTimeValue(details.new_next_action_at)}</p>
@@ -217,12 +221,13 @@ export default function LeadTimeline({
         aria-modal="true"
         aria-labelledby="lead-timeline-title"
       >
-        <header className="lead-timeline-header">
-          <div className="lead-timeline-heading-copy">
+        <header className="leads-modal-header">
+          <div>
             <span className="leads-eyebrow">LEAD ACTIVITY</span>
             <h2 id="lead-timeline-title">{contactName}</h2>
             <p>
-              Review interactions and changes recorded for this lead.
+              Review interactions, changes, and site visits recorded for this
+              lead.
             </p>
           </div>
 
@@ -236,7 +241,7 @@ export default function LeadTimeline({
           </button>
         </header>
 
-        <div className="lead-timeline-body">
+        <div className="lead-timeline-body leads-form-body">
           {loading ? (
             <div
               className="lead-timeline-state"
@@ -249,6 +254,7 @@ export default function LeadTimeline({
           ) : error ? (
             <div className="lead-timeline-state" role="alert">
               <p>{error}</p>
+
               <button
                 className="leads-secondary-button"
                 type="button"
@@ -262,10 +268,12 @@ export default function LeadTimeline({
               <div className="lead-timeline-empty-icon" aria-hidden="true">
                 ◷
               </div>
+
               <h3>No activity recorded yet</h3>
+
               <p>
-                Activities and changes will appear here when they
-                are recorded for this lead.
+                Activities and changes will appear here when they are recorded
+                for this lead.
               </p>
             </div>
           ) : (
@@ -282,6 +290,7 @@ export default function LeadTimeline({
                       <span className="lead-timeline-type">
                         {formatActivityType(activity.activity_type)}
                       </span>
+
                       <time dateTime={activity.occurred_at}>
                         {formatTimestamp(activity.occurred_at)}
                       </time>
@@ -308,7 +317,26 @@ export default function LeadTimeline({
               ))}
             </ol>
           )}
+
+          <div className="lead-timeline-visits">
+            <SiteVisitHistory
+              leadId={leadId}
+              title="Lead site-visit history"
+            />
+          </div>
         </div>
+
+        <footer className="leads-form-actions lead-timeline-footer">
+          <p>Activity and site-visit history</p>
+
+          <button
+            className="leads-secondary-button"
+            type="button"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </footer>
       </section>
     </div>,
     document.body,

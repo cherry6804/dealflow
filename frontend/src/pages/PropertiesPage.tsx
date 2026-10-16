@@ -17,7 +17,7 @@ import {
   type PropertyTransactionType,
   type PropertyType,
 } from "../services/propertyApi";
-
+import SiteVisitHistory from "../components/SiteVisitHistory";
 import "./PropertiesPage.css";
 
 const PAGE_SIZE = 10;
@@ -206,7 +206,7 @@ export default function PropertiesPage() {
   const [success, setSuccess] = useState("");
   const [formError, setFormError] = useState("");
   const [partialCreation, setPartialCreation] = useState(false);
-
+  const [historyProperty, setHistoryProperty] = useState<Property | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [form, setForm] = useState<PropertyForm>(EMPTY_FORM);
 
@@ -702,6 +702,7 @@ export default function PropertiesPage() {
                     <th scope="col">Area</th>
                     <th scope="col">Status</th>
                     <th scope="col">Listed</th>
+                    <th scope="col">Visit History</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -770,6 +771,15 @@ export default function PropertiesPage() {
                           month: "short",
                           year: "numeric",
                         }).format(new Date(property.created_at))}
+                      </td>
+                      <td>
+                      <button
+                        type="button"
+                        className="properties-secondary-button"
+                        onClick={() => setHistoryProperty(property)}
+                      >
+                        View visit history
+                      </button>
                       </td>
                     </tr>
                   ))}
@@ -1233,6 +1243,65 @@ export default function PropertiesPage() {
             </button>
           </footer>
         </form>
+      </section>
+    </div>,
+    document.body,
+  )}
+
+  {historyProperty &&
+  createPortal(
+    <div
+      className="properties-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          setHistoryProperty(null);
+        }
+      }}
+    >
+      <section
+        className="properties-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="property-visit-history-title"
+      >
+        <header className="properties-modal-header">
+          <div>
+            <span className="properties-eyebrow">PROPERTY DETAILS</span>
+            <h2 id="property-visit-history-title">Visit history</h2>
+            <p>
+              {propertyTitle(historyProperty)}
+              {propertyAddress(historyProperty)
+                ? ` · ${propertyAddress(historyProperty)}`
+                : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="properties-modal-close"
+            aria-label="Close visit history"
+            onClick={() => setHistoryProperty(null)}
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="properties-form-body">
+          <SiteVisitHistory
+            propertyId={historyProperty.id}
+            title="Property site visits"
+          />
+        </div>
+
+        <footer className="properties-form-actions">
+          <button
+            type="button"
+            className="properties-secondary-button"
+            onClick={() => setHistoryProperty(null)}
+          >
+            Close
+          </button>
+        </footer>
       </section>
     </div>,
     document.body,

@@ -1,0 +1,166 @@
+
+.site-visit-history {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 16px;
+  background: var(--surface-color, #fff);
+  color: var(--text-color, #111827);
+}
+
+.site-visit-history-header,
+.site-visit-history-card-top,
+.site-visit-history-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.site-visit-history-header {
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.site-visit-history-eyebrow {
+  margin: 0 0 0.35rem;
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.site-visit-history-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.site-visit-history-total,
+.site-visit-history-section-heading span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.site-visit-history-section + .site-visit-history-section {
+  margin-top: 1.5rem;
+}
+
+.site-visit-history-section-heading {
+  justify-content: flex-start;
+  margin-bottom: 0.8rem;
+}
+
+.site-visit-history-section-heading h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.site-visit-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: 0.8rem;
+}
+
+.site-visit-history-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.site-visit-history-date {
+  margin: 0 0 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.site-visit-history-status,
+.site-visit-history-follow-up {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.site-visit-history-status {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.site-visit-history-status.status-scheduled {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.site-visit-history-status.status-completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.site-visit-history-status.status-cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.site-visit-history-status.status-no_show {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.site-visit-history-follow-up {
+  background: #f3e8ff;
+  color: #6b21a8;
+  text-align: center;
+}
+
+.site-visit-history-detail {
+  margin: 0.8rem 0 0;
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.site-visit-history-detail strong {
+  color: #1e293b;
+}
+
+.site-visit-history-empty,
+.site-visit-history-state {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.site-visit-history-error {
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
+
+@media (max-width: 480px) {
+  .site-visit-history {
+    padding: 0.9rem;
+  }
+
+  .site-visit-history-card-top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
