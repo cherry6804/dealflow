@@ -112,6 +112,98 @@ export interface NegotiationUpdateInput {
   note?: string | null;
 }
 
+
+export type PaymentMilestoneStatus = "PENDING" | "PAID" | "CANCELLED";
+
+export interface PaymentMilestone {
+  id: string;
+  organization_id: string;
+  deal_id: string;
+  name: string;
+  amount: number | string;
+  currency: string;
+  due_at: string;
+  notes: string | null;
+  status: PaymentMilestoneStatus;
+  paid_at: string | null;
+  payment_reference: string | null;
+  paid_by_user_id: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  is_overdue: boolean;
+}
+
+export interface PaymentMilestoneListResponse {
+  items: PaymentMilestone[];
+  total: number;
+}
+
+export interface PaymentMilestoneCreateInput {
+  name: string;
+  amount: number;
+  currency: string;
+  due_at: string;
+  notes?: string | null;
+}
+
+export interface PaymentMilestoneUpdateInput {
+  name?: string;
+  amount?: number;
+  currency?: string;
+  due_at?: string;
+  notes?: string | null;
+}
+
+export interface PaymentMilestoneMarkPaidInput {
+  payment_reference?: string | null;
+}
+
+export const paymentMilestonesApi = {
+  list(dealId: string): Promise<PaymentMilestoneListResponse> {
+    return api.get<PaymentMilestoneListResponse>(
+      `/deals/${encodeURIComponent(dealId)}/payment-milestones`,
+    );
+  },
+
+  create(
+    dealId: string,
+    input: PaymentMilestoneCreateInput,
+  ): Promise<PaymentMilestone> {
+    return api.post<PaymentMilestone>(
+      `/deals/${encodeURIComponent(dealId)}/payment-milestones`,
+      input,
+    );
+  },
+
+  update(
+    milestoneId: string,
+    input: PaymentMilestoneUpdateInput,
+  ): Promise<PaymentMilestone> {
+    return api.patch<PaymentMilestone>(
+      `/payment-milestones/${encodeURIComponent(milestoneId)}`,
+      input,
+    );
+  },
+
+  markPaid(
+    milestoneId: string,
+    input: PaymentMilestoneMarkPaidInput = {},
+  ): Promise<PaymentMilestone> {
+    return api.post<PaymentMilestone>(
+      `/payment-milestones/${encodeURIComponent(milestoneId)}/mark-paid`,
+      input,
+    );
+  },
+
+  cancel(milestoneId: string): Promise<PaymentMilestone> {
+    return api.post<PaymentMilestone>(
+      `/payment-milestones/${encodeURIComponent(milestoneId)}/cancel`,
+    );
+  },
+};
+
+
 function buildQuery(params: DealListParams = {}): string {
   const query = new URLSearchParams();
 

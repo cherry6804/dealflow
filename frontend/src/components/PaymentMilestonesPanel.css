@@ -1,0 +1,934 @@
+
+.payment-milestones-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+  background: rgb(15 23 42 / 58%);
+  backdrop-filter: blur(5px);
+}
+
+.payment-milestones-modal {
+  width: min(100%, 960px);
+  max-height: min(92vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
+}
+
+.payment-milestones-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  border-bottom: 1px solid #e8edf4;
+  background: linear-gradient(135deg, #fff 0%, #f7f9ff 100%);
+}
+
+.payment-milestones-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #5969c4;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.payment-milestones-header h2 {
+  margin: 0;
+  color: #172033;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+.payment-milestones-header p {
+  margin: 7px 0 0;
+  color: #657189;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestones-close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid #e0e6ef;
+  border-radius: 12px;
+  background: #fff;
+  color: #475569;
+  font-size: 1.55rem;
+  cursor: pointer;
+}
+
+.payment-milestones-close:hover {
+  background: #f1f5f9;
+}
+
+.payment-milestones-body {
+  min-height: 180px;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+
+.payment-milestones-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.payment-milestones-summary article {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e6ebf3;
+  border-radius: 14px;
+  background: #f8faff;
+}
+
+.payment-milestones-summary article span {
+  display: block;
+  margin-bottom: 8px;
+  color: #657189;
+  font-size: 0.77rem;
+  font-weight: 650;
+}
+
+.payment-milestones-summary article strong {
+  display: block;
+  color: #172033;
+  font-size: clamp(1.1rem, 2vw, 1.45rem);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestones-summary article.has-overdue {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.payment-milestones-summary article.has-overdue strong {
+  color: #b42318;
+}
+
+.payment-milestones-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.payment-milestones-toolbar h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 1.05rem;
+}
+
+.payment-milestones-toolbar p {
+  margin: 5px 0 0;
+  color: #758096;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.payment-milestones-primary,
+.payment-milestones-secondary,
+.payment-milestones-paid,
+.payment-milestones-cancel {
+  display: inline-flex;
+  min-height: 39px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.payment-milestones-primary {
+  border-color: #4f5fcb;
+  background: #4f5fcb;
+  color: #fff;
+}
+
+.payment-milestones-primary:hover:not(:disabled) {
+  border-color: #3d4cad;
+  background: #3d4cad;
+}
+
+.payment-milestones-secondary {
+  border-color: #dce3ed;
+  background: #fff;
+  color: #364152;
+}
+
+.payment-milestones-secondary:hover:not(:disabled) {
+  background: #f5f7fb;
+}
+
+.payment-milestones-paid {
+  border-color: #a7e5c0;
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.payment-milestones-paid:hover:not(:disabled) {
+  background: #d7f8e4;
+}
+
+.payment-milestones-cancel {
+  border-color: #f2d2d2;
+  background: #fff;
+  color: #b42318;
+}
+
+.payment-milestones-cancel:hover:not(:disabled) {
+  background: #fff1f1;
+}
+
+.payment-milestones-primary:disabled,
+.payment-milestones-secondary:disabled,
+.payment-milestones-paid:disabled,
+.payment-milestones-cancel:disabled,
+.payment-milestones-close:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.payment-milestones-alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 11px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestones-alert.error {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #a52222;
+}
+
+.payment-milestones-alert.success {
+  border-color: #a7e5c0;
+  background: #effdf4;
+  color: #067647;
+}
+
+.payment-milestones-alert button {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 750;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.payment-milestones-state {
+  padding: 48px 16px;
+  color: #64748b;
+  text-align: center;
+}
+
+.payment-milestones-empty {
+  padding: 48px 20px;
+  border: 1px dashed #d5deeb;
+  border-radius: 16px;
+  background: #fafbfe;
+  text-align: center;
+}
+
+.payment-milestones-empty > div {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 14px;
+  place-items: center;
+  border-radius: 16px;
+  background: #eef0ff;
+  color: #4f5fcb;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.payment-milestones-empty h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 1.05rem;
+}
+
+.payment-milestones-empty p {
+  max-width: 440px;
+  margin: 9px auto 18px;
+  color: #758096;
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.payment-milestones-list {
+  display: grid;
+  gap: 14px;
+}
+
+.payment-milestone-card {
+  min-width: 0;
+  padding: 19px;
+  border: 1px solid #e4e9f1;
+  border-radius: 15px;
+  background: #fff;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.payment-milestone-card:hover {
+  border-color: #cbd5e8;
+  box-shadow: 0 6px 20px rgb(15 23 42 / 4%);
+}
+
+.payment-milestone-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.payment-milestone-card-heading h4 {
+  margin: 0;
+  color: #172033;
+  font-size: 1rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestone-amount {
+  margin: 7px 0 0;
+  color: #344054;
+  font-size: 1.1rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestone-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.payment-milestone-status-pending {
+  border-color: #f4d79a;
+  background: #fff8e8;
+  color: #946200;
+}
+
+.payment-milestone-status-overdue {
+  border-color: #fecaca;
+  background: #fff1f1;
+  color: #b42318;
+}
+
+.payment-milestone-status-paid {
+  border-color: #a7e5c0;
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.payment-milestone-status-cancelled {
+  border-color: #dce3ed;
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.payment-milestone-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 26px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #edf0f5;
+}
+
+.payment-milestone-meta span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #475467;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestone-meta strong {
+  color: #8992a3;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.payment-milestone-notes {
+  margin: 14px 0 0;
+  color: #667085;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.payment-milestone-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 17px;
+  padding-top: 16px;
+  border-top: 1px solid #edf0f5;
+}
+
+.payment-milestone-actions > label,
+.payment-milestone-form-grid > label {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: #344054;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.payment-milestone-actions input,
+.payment-milestone-form-grid input,
+.payment-milestone-form-grid select,
+.payment-milestone-form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #dce3ed;
+  border-radius: 9px;
+  outline: none;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.payment-milestone-actions input:focus,
+.payment-milestone-form-grid input:focus,
+.payment-milestone-form-grid select:focus,
+.payment-milestone-form-grid textarea:focus {
+  border-color: #6978d8;
+  box-shadow: 0 0 0 3px rgb(79 95 203 / 12%);
+}
+
+.payment-milestone-form-grid input:disabled,
+.payment-milestone-form-grid select:disabled,
+.payment-milestone-form-grid textarea:disabled,
+.payment-milestone-actions input:disabled {
+  background: #f5f7fa;
+  cursor: not-allowed;
+}
+
+.payment-milestone-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.payment-milestone-form-wrap {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid #dfe5f3;
+  border-radius: 15px;
+  background: #f8faff;
+}
+
+.payment-milestone-form-wrap h3 {
+  margin: 0 0 18px;
+  color: #172033;
+  font-size: 1.05rem;
+}
+
+.payment-milestone-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.payment-milestone-form-grid > label.full {
+  grid-column: 1 / -1;
+}
+
+.payment-milestone-form-grid textarea {
+  resize: vertical;
+}
+
+.payment-milestone-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 20px;
+}
+
+.payment-milestones-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 15px 28px;
+  border-top: 1px solid #e8edf4;
+  background: #fbfcfe;
+}
+
+@media (max-width: 640px) {
+  .payment-milestones-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .payment-milestones-modal {
+    max-height: calc(100dvh - 16px);
+    border-radius: 15px;
+  }
+
+  .payment-milestones-header {
+    padding: 18px;
+  }
+
+  .payment-milestones-body {
+    padding: 18px;
+  }
+
+  .payment-milestones-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 23px;
+  }
+
+  .payment-milestones-summary article {
+    padding: 12px;
+  }
+
+  .payment-milestones-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .payment-milestones-toolbar > button {
+    width: 100%;
+  }
+
+  .payment-milestone-card {
+    padding: 15px;
+  }
+
+  .payment-milestone-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .payment-milestone-meta {
+    gap: 12px;
+  }
+
+  .payment-milestone-meta span {
+    flex: 1 1 120px;
+  }
+
+  .payment-milestone-form-wrap {
+    padding: 15px;
+  }
+
+  .payment-milestone-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payment-milestone-form-grid > label.full {
+    grid-column: auto;
+  }
+
+  .payment-milestone-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .payment-milestone-form-actions button,
+  .payment-milestones-footer button {
+    width: 100%;
+  }
+
+  .payment-milestones-footer {
+    padding: 12px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payment-milestone-card,
+  .payment-milestones-primary,
+  .payment-milestones-secondary,
+  .payment-milestones-paid,
+  .payment-milestones-cancel {
+    transition: none;
+  }
+}
+
+
+.payment-milestone-form-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.payment-milestone-form-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dce4f0;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
+}
+
+.payment-milestone-form-modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e5eaf2;
+}
+
+.payment-milestone-form-modal-header h2 {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+
+.payment-milestone-form-close {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #dce4f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.payment-milestone-form-modal .payment-milestone-form-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+@media (max-width: 600px) {
+  .payment-milestone-form-backdrop {
+    padding: 12px;
+  }
+
+  .payment-milestone-form-modal {
+    max-height: calc(100vh - 24px);
+    border-radius: 14px;
+  }
+
+  .payment-milestone-form-modal-header {
+    padding: 16px;
+  }
+}
+
+.payment-milestone-form-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10001 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  padding: 24px !important;
+  background: rgb(17 29 49 / 60%) !important;
+  backdrop-filter: blur(3px);
+}
+
+.payment-milestone-form-modal {
+  display: flex !important;
+  flex-direction: column !important;
+  width: min(1120px, 100%) !important;
+  height: min(780px, calc(100dvh - 48px)) !important;
+  max-height: calc(100dvh - 48px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid var(--color-border, #dce4f0) !important;
+  border-radius: 22px !important;
+  background: var(--color-surface, #fff) !important;
+  box-shadow: 0 24px 80px rgb(10 25 50 / 25%) !important;
+  animation: payment-milestone-modal-in 200ms ease both;
+}
+
+.payment-milestone-form-modal-header {
+  position: relative !important;
+  z-index: 2 !important;
+  display: flex !important;
+  flex: 0 0 auto !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 20px !important;
+  padding: 24px 36px !important;
+  border-bottom: 1px solid var(--color-border, #e5eaf2) !important;
+  background: var(--color-surface, #fff) !important;
+}
+
+.payment-milestone-form-modal-header h2 { margin: 8px 0 0; }
+
+.payment-milestone-form-close {
+  display: grid !important;
+  width: 42px !important;
+  height: 42px !important;
+  flex: 0 0 auto !important;
+  place-items: center !important;
+  border: 1px solid var(--color-border, #dce4f0) !important;
+  border-radius: 12px !important;
+  background: var(--color-surface, #fff) !important;
+  color: var(--color-text, #1f2937) !important;
+  font-size: 1.5rem !important;
+  cursor: pointer;
+}
+
+.payment-milestone-form-wrap {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.payment-milestone-form {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  gap: 0 !important;
+  padding: 0 !important;
+}
+
+.payment-milestone-form-body {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain;
+  padding: 24px 36px !important;
+  scrollbar-gutter: stable;
+}
+
+.payment-milestone-form-actions {
+  position: relative !important;
+  z-index: 2 !important;
+  display: flex !important;
+  flex: 0 0 auto !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+  margin: 0 !important;
+  padding: 18px 36px !important;
+  border-top: 1px solid var(--color-border, #e5eaf2) !important;
+  background: var(--color-surface, #fff) !important;
+}
+
+@keyframes payment-milestone-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 700px) {
+  .payment-milestone-form-backdrop { padding: 8px !important; }
+  .payment-milestone-form-modal {
+    width: 100% !important;
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+    border-radius: 16px !important;
+  }
+  .payment-milestone-form-modal-header { padding: 20px 16px !important; }
+  .payment-milestone-form-body { padding: 18px 16px !important; }
+  .payment-milestone-form-actions { gap: 10px !important; padding: 14px 16px !important; }
+  .payment-milestone-form-actions > button { flex: 1; min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payment-milestone-form-modal { animation: none; }
+}
+
+/* Nested payment-milestone form modal: fixed header/footer, only body scrolls. */
+.payment-milestone-form-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10001 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  padding: 24px !important;
+  background: rgb(17 29 49 / 60%) !important;
+  backdrop-filter: blur(3px);
+}
+
+.payment-milestone-form-modal {
+  display: flex !important;
+  flex-direction: column !important;
+  width: min(1120px, 100%) !important;
+  height: min(780px, calc(100dvh - 48px)) !important;
+  max-height: calc(100dvh - 48px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid var(--color-border, #dce4f0) !important;
+  border-radius: 22px !important;
+  background: var(--color-surface, #fff) !important;
+  box-shadow: 0 24px 80px rgb(10 25 50 / 25%) !important;
+  animation: payment-milestone-modal-in 200ms ease both;
+}
+
+.payment-milestone-form-modal-header {
+  position: relative !important;
+  z-index: 2 !important;
+  display: flex !important;
+  flex: 0 0 auto !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 20px !important;
+  padding: 24px 36px !important;
+  border-bottom: 1px solid var(--color-border, #e5eaf2) !important;
+  background: var(--color-surface, #fff) !important;
+}
+
+.payment-milestone-form-modal-header h2 { margin: 8px 0 0; }
+
+.payment-milestone-form-close {
+  display: grid !important;
+  width: 42px !important;
+  height: 42px !important;
+  flex: 0 0 auto !important;
+  place-items: center !important;
+  border: 1px solid var(--color-border, #dce4f0) !important;
+  border-radius: 12px !important;
+  background: var(--color-surface, #fff) !important;
+  color: var(--color-text, #1f2937) !important;
+  font-size: 1.5rem !important;
+  cursor: pointer;
+}
+
+.payment-milestone-form-wrap {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.payment-milestone-form {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  gap: 0 !important;
+  padding: 0 !important;
+}
+
+.payment-milestone-form-body {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain;
+  padding: 24px 36px !important;
+  scrollbar-gutter: stable;
+}
+
+.payment-milestone-form-actions {
+  position: relative !important;
+  z-index: 2 !important;
+  display: flex !important;
+  flex: 0 0 auto !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+  margin: 0 !important;
+  padding: 18px 36px !important;
+  border-top: 1px solid var(--color-border, #e5eaf2) !important;
+  background: var(--color-surface, #fff) !important;
+}
+
+@keyframes payment-milestone-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 700px) {
+  .payment-milestone-form-backdrop { padding: 8px !important; }
+  .payment-milestone-form-modal {
+    width: 100% !important;
+    height: calc(100dvh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+    border-radius: 16px !important;
+  }
+  .payment-milestone-form-modal-header { padding: 20px 16px !important; }
+  .payment-milestone-form-body { padding: 18px 16px !important; }
+  .payment-milestone-form-actions { gap: 10px !important; padding: 14px 16px !important; }
+  .payment-milestone-form-actions > button { flex: 1; min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payment-milestone-form-modal { animation: none; }
+}
