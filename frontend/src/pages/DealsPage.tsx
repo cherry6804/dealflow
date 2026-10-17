@@ -285,6 +285,11 @@ const [customNegotiationNote, setCustomNegotiationNote] =
 );
 const [transitionReason, setTransitionReason] = useState("");
 const [transitionError, setTransitionError] = useState("");
+  const [closingDeal, setClosingDeal] = useState<Deal | null>(null);
+  const [closureOutcome, setClosureOutcome] = useState<"CLOSED_WON" | "CLOSED_LOST">("CLOSED_WON");
+  const [closureReason, setClosureReason] = useState("");
+  const [closureError, setClosureError] = useState("");
+  const [closureSaving, setClosureSaving] = useState(false);
   const [supportDataLoading, setSupportDataLoading] = useState(true);
 
   const [error, setError] = useState("");
@@ -658,6 +663,65 @@ async function handleStageTransition(deal: Deal) {
   }
 }
 
+  function openClosureDialog(deal: Deal) {
+    if (deal.stage !== "BOOKING" || transitioningDealId || closureSaving) return;
+    setClosingDeal(deal);
+    setClosureOutcome("CLOSED_WON");
+    setClosureReason("");
+    setClosureError("");
+    setTransitionError("");
+    setSuccess("");
+  }
+
+  async function handleCloseDeal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!closingDeal || closureSaving) return;
+
+    const reason = closureReason.trim();
+    if (!reason) {
+      setClosureError("Enter a reason for closing this deal.");
+      return;
+    }
+
+    if (reason.length > 2000) {
+      setClosureError("The closure reason must be 2,000 characters or fewer.");
+      return;
+    }
+
+    setClosureSaving(true);
+    setClosureError("");
+    setTransitionError("");
+    setSuccess("");
+
+    try {
+      const updatedDeal = await dealsApi.transitionStage(closingDeal.id, {
+        stage: closureOutcome,
+        reason,
+      });
+
+      setDeals((current) =>
+        current.map((item) =>
+          item.id === updatedDeal.id ? updatedDeal : item,
+        ),
+      );
+
+      setClosingDeal(null);
+      setClosureReason("");
+      setSuccess(
+        `Deal closed as ${label(updatedDeal.stage)}. The closure reason was recorded in deal history.`,
+      );
+
+      // Refresh server-backed counts and pagination without changing payments
+      // or commission records associated with the deal.
+      await loadDeals();
+    } catch (closeFailure) {
+      setClosureError(errorMessage(closeFailure));
+    } finally {
+      setClosureSaving(false);
+    }
+  }
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError("");
@@ -1023,16 +1087,29 @@ async function handleStageTransition(deal: Deal) {
                           <button
                             className="deals-secondary-button"
                             type="button"
-                            disabled={transitioningDealId !== null}
+                            disabled={transitioningDealId !== null || closureSaving}
                             onClick={() => void handleStageTransition(deal)}
                           >
                             {transitioningDealId === deal.id
                               ? "Updating..."
                               : `Move to ${label(NEXT_DEAL_STAGE[deal.stage as DealStage]!)}`}
                           </button>
+                        ) : deal.stage === "BOOKING" ? (
+                          <button
+                            className="deals-primary-button deals-close-deal-button"
+                            type="button"
+                            disabled={transitioningDealId !== null || closureSaving}
+                            onClick={() => openClosureDialog(deal)}
+                          >
+                            Close deal
+                          </button>
                         ) : (
                           <span className="deals-secondary-text">
-                            {deal.stage === "BOOKING" ? "Booking reached" : "No transition"}
+                            {deal.stage === "CLOSED_WON"
+                              ? "Deal won"
+                              : deal.stage === "CLOSED_LOST"
+                                ? "Deal lost"
+                                : "No transition"}
                           </span>
                         )}
                       </td>
@@ -1115,7 +1192,7 @@ async function handleStageTransition(deal: Deal) {
     <button
       className="deals-secondary-button"
       type="button"
-      disabled={transitioningDealId !== null}
+      disabled={transitioningDealId !== null || closureSaving}
       onClick={() => void handleStageTransition(deal)}
     >
       {transitioningDealId === deal.id
@@ -1123,6 +1200,17 @@ async function handleStageTransition(deal: Deal) {
         : `Move to ${label(
             NEXT_DEAL_STAGE[deal.stage as DealStage]!
           )}`}
+    </button>
+  )}
+
+  {deal.stage === "BOOKING" && (
+    <button
+      className="deals-primary-button deals-close-deal-button"
+      type="button"
+      disabled={transitioningDealId !== null || closureSaving}
+      onClick={() => openClosureDialog(deal)}
+    >
+      Close deal
     </button>
   )}
 
@@ -1190,6 +1278,141 @@ async function handleStageTransition(deal: Deal) {
           </>
         ) : null}
       </section>
+
+      {closingDeal &&
+        createPortal(
+          <div
+            className="deals-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !closureSaving) {
+                setClosingDeal(null);
+                setClosureError("");
+              }
+            }}
+          >
+            <section
+              className="deals-modal deals-closure-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="deal-closure-modal-title"
+            >
+              <header className="deals-modal-header">
+                <div>
+                  <span className="deals-eyebrow">DEAL WORKSPACE</span>
+                  <h2 id="deal-closure-modal-title">Close deal</h2>
+                  <p>
+                    Confirm the outcome for{" "}
+                    {customerName(
+                      customerById.get(closingDeal.customer_profile_id),
+                    )}{" "}
+                    · {propertyAddress(propertyById.get(closingDeal.property_id))}
+                  </p>
+                </div>
+                <button
+                  className="deals-modal-close"
+                  type="button"
+                  aria-label="Close deal closure dialog"
+                  disabled={closureSaving}
+                  onClick={() => {
+                    setClosingDeal(null);
+                    setClosureError("");
+                  }}
+                >
+                  ×
+                </button>
+              </header>
+
+              <form className="deals-form" onSubmit={handleCloseDeal}>
+                <div className="deals-form-body">
+                  {closureError && (
+                    <div
+                      className="deals-alert deals-alert-error deals-form-error"
+                      role="alert"
+                    >
+                      <p>{closureError}</p>
+                    </div>
+                  )}
+
+                  <div className="deals-closure-notice">
+                    <strong>This action records a final deal outcome.</strong>
+                    <p>
+                      A closed deal cannot be reopened through the stage workflow.
+                      Existing payment milestones and commission records will not
+                      be changed by closing the deal.
+                    </p>
+                  </div>
+
+                  <label className="deals-form-field">
+                    <span>Outcome *</span>
+                    <select
+                      required
+                      value={closureOutcome}
+                      disabled={closureSaving}
+                      onChange={(event) =>
+                        setClosureOutcome(
+                          event.target.value as "CLOSED_WON" | "CLOSED_LOST",
+                        )
+                      }
+                    >
+                      <option value="CLOSED_WON">Won — deal completed successfully</option>
+                      <option value="CLOSED_LOST">Lost — deal did not proceed</option>
+                    </select>
+                  </label>
+
+                  <label className="deals-form-field deals-closure-reason">
+                    <span>Closure reason *</span>
+                    <textarea
+                      required
+                      maxLength={2000}
+                      rows={4}
+                      value={closureReason}
+                      disabled={closureSaving}
+                      onChange={(event) => {
+                        setClosureReason(event.target.value);
+                        setClosureError("");
+                      }}
+                      placeholder={
+                        closureOutcome === "CLOSED_WON"
+                          ? "For example: Agreement signed and booking confirmed."
+                          : "For example: Customer selected another property."
+                      }
+                      aria-describedby="deal-closure-reason-help"
+                    />
+                    <small id="deal-closure-reason-help">
+                      {closureReason.length}/2000 characters. This reason is
+                      saved to the deal's audit history.
+                    </small>
+                  </label>
+                </div>
+
+                <footer className="deals-form-actions">
+                  <button
+                    className="deals-secondary-button"
+                    type="button"
+                    disabled={closureSaving}
+                    onClick={() => {
+                      setClosingDeal(null);
+                      setClosureError("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="deals-primary-button"
+                    type="submit"
+                    disabled={closureSaving || !closureReason.trim()}
+                  >
+                    {closureSaving
+                      ? "Closing deal..."
+                      : `Confirm ${closureOutcome === "CLOSED_WON" ? "Won" : "Lost"}`}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>,
+          document.body,
+        )}
 
       {negotiationDeal &&
   createPortal(

@@ -9,11 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.customer_profile import CustomerProfile
+from app.db.models.deal import Deal
+from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.property import Property
-from app.db.models.deal import Deal
-from app.db.models.deal_stage_history import DealStageHistory
 from app.deals.schemas import DealCreateRequest, DealStage
 
 
@@ -21,6 +21,11 @@ NEXT_STAGE: dict[str, str] = {
     DealStage.NEW.value: DealStage.QUALIFICATION.value,
     DealStage.QUALIFICATION.value: DealStage.NEGOTIATION.value,
     DealStage.NEGOTIATION.value: DealStage.BOOKING.value,
+}
+
+CLOSED_STAGES = {
+    DealStage.CLOSED_WON.value,
+    DealStage.CLOSED_LOST.value,
 }
 
 
@@ -72,7 +77,9 @@ def create_deal(
         )
     )
     if owner_membership is None:
-        raise ValueError("Deal owner must be an active member of the organization.")
+        raise ValueError(
+            "Deal owner must be an active member of the organization."
+        )
 
     deal = Deal(
         organization_id=organization_id,
@@ -116,20 +123,26 @@ def list_deals(
     owner_user_id: UUID | None = None,
 ) -> tuple[list[Deal], int]:
     """List organization-scoped deals with optional filters."""
+
     statement = select(Deal).where(
         Deal.organization_id == organization_id
     )
-
-    count_statement = select(func.count()).select_from(Deal).where(
-        Deal.organization_id == organization_id
+    count_statement = (
+        select(func.count())
+        .select_from(Deal)
+        .where(Deal.organization_id == organization_id)
     )
 
     if stage is not None:
         statement = statement.where(Deal.stage == stage.value)
-        count_statement = count_statement.where(Deal.stage == stage.value)
+        count_statement = count_statement.where(
+            Deal.stage == stage.value
+        )
 
     if owner_user_id is not None:
-        statement = statement.where(Deal.owner_user_id == owner_user_id)
+        statement = statement.where(
+            Deal.owner_user_id == owner_user_id
+        )
         count_statement = count_statement.where(
             Deal.owner_user_id == owner_user_id
         )
@@ -156,12 +169,17 @@ def transition_deal_stage(
     target_stage: DealStage,
     reason: str | None = None,
 ) -> Deal | None:
-    """Progress a deal and record its stage history atomically.
+    """Transition a deal and record its stage history atomically.
 
-    Returns None if the deal is not in the active organization.
-    Raises ValueError for a disallowed or unnecessary transition.
+    Ordinary progression follows NEXT_STAGE. Closing is permitted only
+    from BOOKING, requires a meaningful reason, and is recorded in the
+    same stage-history table.
+
+    Returns None if the deal is outside the active organization.
+    Raises ValueError for an invalid or unnecessary transition.
     The caller owns the transaction and must commit or roll back.
     """
+
     deal = db.scalar(
         select(Deal)
         .where(
@@ -175,33 +193,57 @@ def transition_deal_stage(
         return None
 
     current_stage = deal.stage
-    expected_next_stage = NEXT_STAGE.get(current_stage)
+    requested_stage = target_stage.value
 
-    if expected_next_stage is None:
-        raise ValueError(
-            f"Stage transitions are not supported from {current_stage} in DF-118."
-        )
-
-    if target_stage.value == current_stage:
+    if requested_stage == current_stage:
         raise ValueError("The deal is already in the requested stage.")
 
-    if target_stage.value != expected_next_stage:
+    # A closed deal is terminal in the ordinary stage-transition API.
+    if current_stage in CLOSED_STAGES:
         raise ValueError(
-            f"Invalid stage transition from {current_stage} to "
-            f"{target_stage.value}. The next permitted stage is "
-            f"{expected_next_stage}."
+            "Closed deals cannot be transitioned again."
         )
+
+    # Explicit close outcomes are allowed only after booking.
+    if requested_stage in CLOSED_STAGES:
+        if current_stage != DealStage.BOOKING.value:
+            raise ValueError(
+                "A deal can only be closed from BOOKING."
+            )
+
+        normalized_reason = (reason or "").strip()
+        if not normalized_reason:
+            raise ValueError(
+                "A closure reason is required to close a deal."
+            )
+
+        reason = normalized_reason
+    else:
+        expected_next_stage = NEXT_STAGE.get(current_stage)
+
+        if expected_next_stage is None:
+            raise ValueError(
+                f"Stage transitions are not supported from "
+                f"{current_stage}."
+            )
+
+        if requested_stage != expected_next_stage:
+            raise ValueError(
+                f"Invalid stage transition from {current_stage} to "
+                f"{requested_stage}. The next permitted stage is "
+                f"{expected_next_stage}."
+            )
 
     history = DealStageHistory(
         organization_id=organization_id,
         deal_id=deal.id,
         from_stage=current_stage,
-        to_stage=target_stage.value,
+        to_stage=requested_stage,
         actor_user_id=actor_user_id,
         reason=reason,
     )
 
-    deal.stage = target_stage.value
+    deal.stage = requested_stage
     db.add(history)
     db.flush()
     db.refresh(deal)
