@@ -18,6 +18,7 @@ from app.api.site_visits import router as site_visits_router
 from app.api.deals import router as deals_router
 from app.api.deal_negotiations import router as deal_negotiations_router
 from app.api.payment_milestones import router as payment_milestones_router
+from app.api.deal_commissions import router as deal_commissions_router
 from app.logging import configure_logging
 
 def create_app() -> FastAPI:
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(deals_router)
     app.include_router(deal_negotiations_router)
     app.include_router(payment_milestones_router)
+    app.include_router(deal_commissions_router)
     logger = logging.getLogger(__name__)
     logger.info("DealFlow API application initialized")
 

@@ -39,6 +39,7 @@ from app.db.models.requirement_match_run_result import RequirementMatchRunResult
 from app.db.models.requirement_shortlist_event import RequirementShortlistEvent
 from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.payment_milestone import PaymentMilestone
+from app.db.models.deal_commission import DealCommission
 
 __all__ = [
     "AuditEvent",
@@ -72,4 +73,5 @@ __all__ = [
     "DealNegotiationHistory",
     "DealStageHistory",
     "PaymentMilestone",
+    "DealCommission",
 ]

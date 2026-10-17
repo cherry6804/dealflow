@@ -39,7 +39,8 @@ from app.db.models.deal_negotiation import (
     DealNegotiation,
     DealNegotiationHistory,
 )
-
+from app.db.models.payment_milestone import PaymentMilestone
+from app.db.models.deal_commission import DealCommission
 
 config = context.config
 
