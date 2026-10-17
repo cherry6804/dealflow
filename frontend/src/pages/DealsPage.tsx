@@ -41,6 +41,12 @@ const DEAL_STAGES: DealStage[] = [
   "CLOSED_LOST",
 ];
 
+const NEXT_DEAL_STAGE: Partial<Record<DealStage, DealStage>> = {
+  NEW: "QUALIFICATION",
+  QUALIFICATION: "NEGOTIATION",
+  NEGOTIATION: "BOOKING",
+};
+
 const NEGOTIATION_TRANSITIONS: Record<
   NegotiationState,
   NegotiationState[]
@@ -268,6 +274,12 @@ const [customNegotiationNote, setCustomNegotiationNote] =
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [transitioningDealId, setTransitioningDealId] = useState<string | null>(
+  null,
+);
+const [transitionReason, setTransitionReason] = useState("");
+const [transitionError, setTransitionError] = useState("");
   const [supportDataLoading, setSupportDataLoading] = useState(true);
 
   const [error, setError] = useState("");
@@ -605,6 +617,42 @@ async function saveNegotiationState() {
   }
 }
 
+async function handleStageTransition(deal: Deal) {
+  const nextStage = NEXT_DEAL_STAGE[deal.stage as DealStage];
+
+  if (!nextStage || transitioningDealId) return;
+
+  setTransitioningDealId(deal.id);
+  setTransitionError("");
+  setSuccess("");
+  setError("");
+
+  try {
+    const updatedDeal = await dealsApi.transitionStage(deal.id, {
+      stage: nextStage,
+      reason: transitionReason.trim() || undefined,
+    });
+
+    setDeals((current) =>
+      current.map((item) =>
+        item.id === updatedDeal.id ? updatedDeal : item,
+      ),
+    );
+
+    setTransitionReason("");
+    setSuccess(
+      `Deal moved from ${label(deal.stage)} to ${label(updatedDeal.stage)}.`,
+    );
+
+    // Refresh server-backed counts and pagination.
+    await loadDeals();
+  } catch (transitionFailure) {
+    setTransitionError(errorMessage(transitionFailure));
+  } finally {
+    setTransitioningDealId(null);
+  }
+}
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError("");
@@ -757,6 +805,12 @@ async function saveNegotiationState() {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {transitionError && (
+        <div className="deals-error" role="alert">
+          {transitionError}
         </div>
       )}
 
@@ -929,6 +983,7 @@ async function saveNegotiationState() {
                   <tr>
                     <th scope="col">Customer / property</th>
                     <th scope="col">Stage</th>
+                    <th scope="col">Workflow</th>
                     <th scope="col">Negotiation</th>
                     <th scope="col">Expected value</th>
                     <th scope="col">Owner</th>
@@ -955,6 +1010,24 @@ async function saveNegotiationState() {
                         <span className={stageClass(deal.stage)}>
                           {label(deal.stage)}
                         </span>
+                      </td>
+                      <td>
+                        {NEXT_DEAL_STAGE[deal.stage as DealStage] ? (
+                          <button
+                            className="deals-secondary-button"
+                            type="button"
+                            disabled={transitioningDealId !== null}
+                            onClick={() => void handleStageTransition(deal)}
+                          >
+                            {transitioningDealId === deal.id
+                              ? "Updating..."
+                              : `Move to ${label(NEXT_DEAL_STAGE[deal.stage as DealStage]!)}`}
+                          </button>
+                        ) : (
+                          <span className="deals-secondary-text">
+                            {deal.stage === "BOOKING" ? "Booking reached" : "No transition"}
+                          </span>
+                        )}
                       </td>
                       <td>
                         <button
@@ -1002,14 +1075,32 @@ async function saveNegotiationState() {
                     {propertyAddress(propertyById.get(deal.property_id))}
                   </p>
 
+
 <footer>
   <span>{formatDate(deal.created_at)}</span>
+
   <span>
     Owner{" "}
     {deal.owner_user_id
       ? `${deal.owner_user_id.slice(0, 8)}…`
       : "—"}
   </span>
+
+  {NEXT_DEAL_STAGE[deal.stage as DealStage] && (
+    <button
+      className="deals-secondary-button"
+      type="button"
+      disabled={transitioningDealId !== null}
+      onClick={() => void handleStageTransition(deal)}
+    >
+      {transitioningDealId === deal.id
+        ? "Updating..."
+        : `Move to ${label(
+            NEXT_DEAL_STAGE[deal.stage as DealStage]!
+          )}`}
+    </button>
+  )}
+
   <button
     className="deals-secondary-button"
     type="button"
@@ -1018,6 +1109,7 @@ async function saveNegotiationState() {
     Manage negotiation
   </button>
 </footer>
+
 
                 </article>
               ))}

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.db.models.deal_stage_history import DealStageHistory
 from app.api.deals import router as deals_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.db.models.contact import Contact
@@ -493,3 +493,252 @@ def test_list_deals_requires_read_permission() -> None:
             response = client.get("/api/v1/deals")
 
         assert response.status_code == 403, response.text
+
+
+def _create_test_deal(
+    db: Session,
+    *,
+    user: User,
+    organization: Organization,
+) -> Deal:
+    """Create and persist a deal for stage-transition tests."""
+    customer = create_customer_profile(db, organization=organization)
+    property_record = create_property(db, organization=organization)
+    db.flush()
+
+    deal = Deal(
+        organization_id=organization.id,
+        customer_profile_id=customer.id,
+        property_id=property_record.id,
+        owner_user_id=user.id,
+        stage=Deal.STAGE_NEW,
+        expected_value=7500000,
+        currency="INR",
+        notes="Stage transition test",
+    )
+    db.add(deal)
+    db.commit()
+    db.refresh(deal)
+    return deal
+
+
+def test_transition_deal_stage_successfully_records_history() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+        deal_id = deal.id
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal_id}/stage",
+                json={
+                    "stage": "QUALIFICATION",
+                    "reason": "Customer requirements qualified",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["stage"] == "QUALIFICATION"
+
+        db.expire_all()
+        persisted_deal = db.get(Deal, deal_id)
+        assert persisted_deal is not None
+        assert persisted_deal.stage == "QUALIFICATION"
+
+        history = db.scalars(
+            select(DealStageHistory).where(
+                DealStageHistory.deal_id == deal_id,
+                DealStageHistory.organization_id == organization.id,
+            )
+        ).all()
+
+        assert len(history) == 1
+        assert history[0].from_stage == "NEW"
+        assert history[0].to_stage == "QUALIFICATION"
+        assert history[0].actor_user_id == user.id
+        assert history[0].reason == "Customer requirements qualified"
+
+
+def test_transition_deal_stage_through_booking() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+        deal_id = deal.id
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+
+            for stage in ("QUALIFICATION", "NEGOTIATION", "BOOKING"):
+                response = client.patch(
+                    f"/api/v1/deals/{deal_id}/stage",
+                    json={"stage": stage},
+                )
+                assert response.status_code == 200, response.text
+                assert response.json()["stage"] == stage
+
+        history = db.scalars(
+            select(DealStageHistory)
+            .where(DealStageHistory.deal_id == deal_id)
+            .order_by(DealStageHistory.created_at, DealStageHistory.id)
+        ).all()
+
+        assert len(history) == 3
+        assert [(item.from_stage, item.to_stage) for item in history] == [
+            ("NEW", "QUALIFICATION"),
+            ("QUALIFICATION", "NEGOTIATION"),
+            ("NEGOTIATION", "BOOKING"),
+        ]
+
+
+def test_transition_deal_stage_rejects_skipping_a_stage() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal.id}/stage",
+                json={"stage": "BOOKING"},
+            )
+
+        assert response.status_code == 409, response.text
+
+        db.expire_all()
+        persisted_deal = db.get(Deal, deal.id)
+        assert persisted_deal is not None
+        assert persisted_deal.stage == "NEW"
+
+        history = db.scalars(
+            select(DealStageHistory).where(
+                DealStageHistory.deal_id == deal.id
+            )
+        ).all()
+        assert history == []
+
+
+def test_transition_deal_stage_rejects_repeating_current_stage() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal.id}/stage",
+                json={"stage": "NEW"},
+            )
+
+        assert response.status_code == 409, response.text
+
+
+def test_transition_deal_stage_requires_update_permission() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal.id}/stage",
+                json={"stage": "QUALIFICATION"},
+            )
+
+        assert response.status_code == 403, response.text
+
+        db.expire_all()
+        persisted_deal = db.get(Deal, deal.id)
+        assert persisted_deal is not None
+        assert persisted_deal.stage == "NEW"
+
+
+def test_transition_deal_stage_rejects_another_tenant() -> None:
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        user_b, organization_b = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal_b = _create_test_deal(
+            db,
+            user=user_b,
+            organization=organization_b,
+        )
+
+        app = create_test_app(user=user_a)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_a.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal_b.id}/stage",
+                json={"stage": "QUALIFICATION"},
+            )
+
+        assert response.status_code == 404, response.text
+
+        db.expire_all()
+        persisted_deal = db.get(Deal, deal_b.id)
+        assert persisted_deal is not None
+        assert persisted_deal.stage == "NEW"
+
+        history = db.scalars(
+            select(DealStageHistory).where(
+                DealStageHistory.deal_id == deal_b.id
+            )
+        ).all()
+        assert history == []

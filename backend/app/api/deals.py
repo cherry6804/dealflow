@@ -17,8 +17,15 @@ from app.deals.schemas import (
     DealListResponse,
     DealResponse,
     DealStage,
+    DealStageHistoryResponse,
+    DealStageTransitionRequest,
 )
-from app.deals.service import create_deal, get_deal, list_deals
+from app.deals.service import (
+    create_deal,
+    get_deal,
+    list_deals,
+    transition_deal_stage,
+)
 from app.tenant.dependencies import TenantContext
 
 router = APIRouter(prefix="/api/v1/deals", tags=["deals"])
@@ -127,3 +134,56 @@ def get_deal_endpoint(
             detail="Deal not found.",
         )
     return DealResponse.model_validate(deal)
+
+
+@router.patch(
+    "/{deal_id}/stage",
+    response_model=DealResponse,
+)
+def transition_deal_stage_endpoint(
+    deal_id: UUID,
+    payload: DealStageTransitionRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("deals.update")
+    ),
+    db: Session = Depends(get_db_session),
+) -> DealResponse:
+    """Progress a deal and record its stage history."""
+    try:
+        deal = transition_deal_stage(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            deal_id=deal_id,
+            actor_user_id=tenant_context.membership.user_id,
+            target_stage=payload.stage,
+            reason=payload.reason,
+        )
+
+        if deal is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Deal not found.",
+            )
+
+        db.commit()
+        db.refresh(deal)
+        return DealResponse.model_validate(deal)
+
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stage transition could not be saved.",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise

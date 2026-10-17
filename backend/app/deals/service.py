@@ -13,7 +13,15 @@ from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.property import Property
 from app.db.models.deal import Deal
+from app.db.models.deal_stage_history import DealStageHistory
 from app.deals.schemas import DealCreateRequest, DealStage
+
+
+NEXT_STAGE: dict[str, str] = {
+    DealStage.NEW.value: DealStage.QUALIFICATION.value,
+    DealStage.QUALIFICATION.value: DealStage.NEGOTIATION.value,
+    DealStage.NEGOTIATION.value: DealStage.BOOKING.value,
+}
 
 
 def create_deal(
@@ -137,3 +145,65 @@ def list_deals(
         ).all()
     )
     return items, total
+
+
+def transition_deal_stage(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+    actor_user_id: UUID,
+    target_stage: DealStage,
+    reason: str | None = None,
+) -> Deal | None:
+    """Progress a deal and record its stage history atomically.
+
+    Returns None if the deal is not in the active organization.
+    Raises ValueError for a disallowed or unnecessary transition.
+    The caller owns the transaction and must commit or roll back.
+    """
+    deal = db.scalar(
+        select(Deal)
+        .where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+    if deal is None:
+        return None
+
+    current_stage = deal.stage
+    expected_next_stage = NEXT_STAGE.get(current_stage)
+
+    if expected_next_stage is None:
+        raise ValueError(
+            f"Stage transitions are not supported from {current_stage} in DF-118."
+        )
+
+    if target_stage.value == current_stage:
+        raise ValueError("The deal is already in the requested stage.")
+
+    if target_stage.value != expected_next_stage:
+        raise ValueError(
+            f"Invalid stage transition from {current_stage} to "
+            f"{target_stage.value}. The next permitted stage is "
+            f"{expected_next_stage}."
+        )
+
+    history = DealStageHistory(
+        organization_id=organization_id,
+        deal_id=deal.id,
+        from_stage=current_stage,
+        to_stage=target_stage.value,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    )
+
+    deal.stage = target_stage.value
+    db.add(history)
+    db.flush()
+    db.refresh(deal)
+
+    return deal

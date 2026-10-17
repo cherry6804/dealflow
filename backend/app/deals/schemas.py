@@ -48,6 +48,34 @@ class DealCreateRequest(BaseModel):
         return value.strip() or None
 
 
+class DealStageTransitionRequest(BaseModel):
+    """Request to progress a deal to its next permitted workflow stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: DealStage
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class DealStageHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    deal_id: UUID
+    from_stage: str
+    to_stage: str
+    actor_user_id: UUID | None
+    reason: str | None
+    created_at: datetime
+
 
 class DealResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -65,7 +93,6 @@ class DealResponse(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
-
 
 
 class DealListResponse(BaseModel):

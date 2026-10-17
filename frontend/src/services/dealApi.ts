@@ -51,6 +51,22 @@ export interface DealCreateInput {
   notes?: string | null;
 }
 
+export interface DealStageTransitionInput {
+  stage: DealStage;
+  reason?: string | null;
+}
+
+export interface DealStageHistoryItem {
+  id: string;
+  organization_id: string;
+  deal_id: string;
+  from_stage: string;
+  to_stage: string;
+  actor_user_id: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
 export type NegotiationState =
   | "IN_PROGRESS"
   | "WAITING_ON_CUSTOMER"
@@ -124,6 +140,16 @@ export const dealsApi = {
 
   create(input: DealCreateInput): Promise<Deal> {
     return api.post<Deal>("/deals", input);
+  },
+
+  transitionStage(
+    dealId: string,
+    input: DealStageTransitionInput,
+  ): Promise<Deal> {
+    return api.patch<Deal>(
+      `/deals/${encodeURIComponent(dealId)}/stage`,
+      input,
+    );
   },
 };
 
