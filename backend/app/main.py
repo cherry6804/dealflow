@@ -15,7 +15,9 @@ from app.api.properties import router as properties_router
 from app.api.requirements import router as requirements_router
 from app.errors import register_error_handlers
 from app.api.site_visits import router as site_visits_router
+from app.api.deals import router as deals_router
 from app.logging import configure_logging
+
 def create_app() -> FastAPI:
     """Create and configure the DealFlow API application."""
     configure_logging()
@@ -40,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(activities_router)
     app.include_router(follow_ups_router)
     app.include_router(site_visits_router)
+    app.include_router(deals_router)
     logger = logging.getLogger(__name__)
     logger.info("DealFlow API application initialized")
 
