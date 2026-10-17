@@ -1,3 +1,5 @@
+"""Application configuration for DealFlow."""
+
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,7 +15,9 @@ class Settings(BaseSettings):
 
     app_name: str = "DealFlow API"
     app_version: str = "0.1.0"
-    database_url: str = "postgresql+psycopg://postgres@localhost:5432/dealflow"
+    database_url: str = (
+        "postgresql+psycopg://postgres@localhost:5432/dealflow"
+    )
 
     auth_session_lifetime_hours: int = 12
     auth_cookie_name: str = "dealflow_session"
@@ -29,6 +33,11 @@ class Settings(BaseSettings):
         default=10 * 1024 * 1024,
         gt=0,
     )
+
+    # Private object storage for business documents.
+    # This is separate from import-source storage.
+    object_storage_backend: str = "local"
+    object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

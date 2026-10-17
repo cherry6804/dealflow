@@ -87,5 +87,6 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Private runtime upload storage
+# Private runtime uploads and object storage
+/var/private_objects/
 /var/private_uploads/
