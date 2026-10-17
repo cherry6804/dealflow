@@ -16,6 +16,7 @@ import TodayPage from "./pages/TodayPage";
 import SiteVisitsPage from "./pages/SiteVisitsPage";
 import DealsPage from "./pages/DealsPage";
 import ReferralsPage from "./pages/ReferralsPage";
+import DocumentsPage from "./pages/DocumentsPage";
 
 import PipelinePage from "./pages/PipelinePage";
 function ApplicationRoutes() {
@@ -87,6 +88,7 @@ function ApplicationRoutes() {
         <Route path="/site-visits" element={<SiteVisitsPage />} />
         <Route path="/requirements" element={<RequirementsPage />} />
         <Route path="/imports" element={<ImportsPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

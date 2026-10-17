@@ -12,6 +12,7 @@ const navigation = [
   { label: "Site Visits", path: "/site-visits", end: false },
   { label: "Requirements", path: "/requirements", end: false },
   { label: "Imports", path: "/imports", end: false },
+  { label: "Documents", path: "/documents", end: false },
 ];
 
 export default function AppLayout() {
