@@ -40,6 +40,7 @@ from app.db.models.deal_negotiation import (
     DealNegotiationHistory,
 )
 
+
 config = context.config
 
 if config.config_file_name is not None:
