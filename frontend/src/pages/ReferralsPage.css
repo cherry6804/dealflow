@@ -1,0 +1,841 @@
+
+.referrals-page {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 26px;
+  color: var(--color-text);
+}
+
+.referrals-page,
+.referrals-page * {
+  box-sizing: border-box;
+}
+
+.referrals-page button,
+.referrals-page input,
+.referrals-page select,
+.referrals-page textarea {
+  font: inherit;
+}
+
+.referrals-header,
+.referrals-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.referrals-header h1 {
+  margin: 0 0 8px;
+  font-size: clamp(1.8rem, 4vw, 2.25rem);
+  letter-spacing: -0.045em;
+}
+
+.referrals-eyebrow {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: var(--color-primary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+}
+
+.referrals-subtitle,
+.referrals-panel-heading p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+}
+
+.referrals-primary-button,
+.referrals-secondary-button,
+.referrals-page-button,
+.referrals-text-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.referrals-primary-button {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.referrals-primary-button:hover:not(:disabled) {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+}
+
+.referrals-secondary-button,
+.referrals-page-button {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.referrals-secondary-button:hover:not(:disabled),
+.referrals-page-button:hover:not(:disabled) {
+  border-color: var(--color-primary-border);
+  background: var(--color-surface-subtle);
+}
+
+.referrals-text-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.referrals-text-button:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+}
+
+.referrals-danger-button {
+  color: var(--color-danger);
+}
+
+.referrals-primary-button:disabled,
+.referrals-secondary-button:disabled,
+.referrals-page-button:disabled,
+.referrals-text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.referrals-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 21px 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.referrals-summary-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-primary-border);
+  border-radius: 11px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.referrals-summary-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.referrals-summary-label {
+  margin: 0 0 4px;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+}
+
+.referrals-summary-value {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1.75rem;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.referrals-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.referrals-panel-heading {
+  align-items: center;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.referrals-panel-heading h2 {
+  margin: 0 0 5px;
+  font-size: 1.12rem;
+  letter-spacing: -0.02em;
+}
+
+.referrals-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px);
+  gap: 10px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.referrals-search {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.referrals-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--color-text-muted);
+  font-size: 1.25rem;
+  transform: translateY(-52%);
+  pointer-events: none;
+}
+
+.referrals-search input,
+.referrals-filter select,
+.referrals-form-field input,
+.referrals-form-field select,
+.referrals-form-field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.referrals-search input {
+  padding-left: 36px;
+}
+
+.referrals-search input:focus,
+.referrals-filter select:focus,
+.referrals-form-field input:focus,
+.referrals-form-field select:focus,
+.referrals-form-field textarea:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.referrals-form-field textarea {
+  min-height: 100px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.referrals-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.referrals-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: left;
+  font-size: 0.83rem;
+}
+
+.referrals-table th {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.referrals-table td {
+  max-width: 250px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  vertical-align: middle;
+}
+
+.referrals-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.referrals-table tbody tr:hover {
+  background: var(--color-surface-subtle);
+}
+
+.referrals-person {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 145px;
+}
+
+.referrals-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border: 1px solid var(--color-primary-border);
+  border-radius: 11px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.referrals-person > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.referrals-person strong {
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-weight: 650;
+}
+
+.referrals-secondary-text {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.73rem;
+  overflow-wrap: anywhere;
+}
+
+.referrals-contact-details,
+.referrals-associations {
+  display: flex;
+  min-width: 120px;
+  flex-direction: column;
+  gap: 5px;
+  overflow-wrap: anywhere;
+}
+
+.referrals-contact-details span,
+.referrals-associations span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+.referrals-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.referrals-status-new {
+  border-color: #d7e3f8;
+  background: #eef4ff;
+  color: #315eab;
+}
+
+.referrals-status-contacted {
+  border-color: #f2e3bd;
+  background: #fff7e4;
+  color: #8a5a00;
+}
+
+.referrals-status-converted {
+  border-color: #cce8d7;
+  background: #eaf8ef;
+  color: #207344;
+}
+
+.referrals-status-not-converted {
+  border-color: #f2d4d4;
+  background: #fff0f0;
+  color: #a62d2d;
+}
+
+.referrals-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.referrals-state,
+.referrals-empty {
+  display: flex;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  text-align: center;
+}
+
+.referrals-state p,
+.referrals-empty p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+
+.referrals-empty h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.referrals-empty-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border: 1px solid var(--color-primary-border);
+  border-radius: 12px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 1.6rem;
+}
+
+.referrals-spinner {
+  width: 27px;
+  height: 27px;
+  border: 3px solid var(--color-primary-soft);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: referrals-spin 750ms linear infinite;
+}
+
+@keyframes referrals-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.referrals-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  font-size: 0.84rem;
+}
+
+.referrals-alert-success {
+  border-color: #cce8d7;
+  background: #effaf3;
+  color: #207344;
+}
+
+.referrals-alert-error {
+  border-color: #f2d4d4;
+  background: #fff5f5;
+  color: #9c2e2e;
+}
+
+.referrals-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.referrals-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+}
+
+.referrals-pagination p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.referrals-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.referrals-page-button {
+  min-height: 33px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.referrals-mobile-list {
+  display: none;
+}
+
+.referrals-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+/* Referral modal: fixed header, scrollable form, fixed footer */
+.referrals-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+  background: rgb(17 29 49 / 60%);
+  backdrop-filter: blur(3px);
+}
+
+.referrals-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 860px;
+  height: min(780px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 24px 80px rgb(10 25 50 / 20%);
+  animation: referrals-modal-in 200ms ease both;
+}
+
+.referrals-modal-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.referrals-modal-header h2 {
+  margin: 0 0 6px;
+  color: var(--color-text);
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+}
+
+.referrals-modal-header > div > p:last-child {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.referrals-modal-close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 1.3rem;
+  cursor: pointer;
+}
+
+.referrals-modal-close:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.referrals-modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.referrals-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  gap: 0;
+  padding: 0;
+}
+
+.referrals-form-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 24px 32px;
+  scrollbar-gutter: stable;
+}
+
+.referrals-form-section h3 {
+  margin: 0 0 14px;
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.referrals-form-section + .referrals-form-section {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.referrals-section-hint {
+  margin: -4px 0 14px;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.referrals-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.referrals-form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.referrals-form-field > span:first-child {
+  color: var(--color-text);
+  font-size: 0.83rem;
+  font-weight: 650;
+}
+
+.referrals-form-field > span:first-child i {
+  color: var(--color-danger);
+  font-style: normal;
+}
+
+.referrals-field-full {
+  grid-column: 1 / -1;
+}
+
+.referrals-form-field input,
+.referrals-form-field select,
+.referrals-form-field textarea {
+  min-height: 42px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+}
+
+.referrals-form-field textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.referrals-form-field input::placeholder,
+.referrals-form-field textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.referrals-form-actions {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 0;
+  padding: 18px 32px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.referrals-form-actions > button {
+  min-width: 120px;
+}
+
+@keyframes referrals-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 1050px) {
+  .referrals-table th,
+  .referrals-table td {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@media (max-width: 820px) {
+  .referrals-table-wrapper {
+    display: none;
+  }
+
+  .referrals-mobile-list {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .referrals-mobile-card {
+    padding: 16px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+  }
+
+  .referrals-mobile-card-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .referrals-mobile-card > p {
+    margin: 10px 0;
+    overflow-wrap: anywhere;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+  }
+
+  .referrals-mobile-card .referrals-row-actions {
+    justify-content: flex-start;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+  }
+}
+
+@media (max-width: 700px) {
+  .referrals-page {
+    gap: 20px;
+  }
+
+  .referrals-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .referrals-header > .referrals-primary-button {
+    align-self: flex-start;
+  }
+
+  .referrals-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .referrals-panel-heading > .referrals-secondary-button {
+    align-self: flex-start;
+  }
+
+  .referrals-toolbar {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .referrals-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .referrals-pagination-controls {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .referrals-modal-backdrop {
+    padding: 8px;
+  }
+
+  .referrals-modal {
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 16px;
+  }
+
+  .referrals-modal-header {
+    padding: 20px;
+  }
+
+  .referrals-form-body {
+    padding: 20px;
+  }
+
+  .referrals-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .referrals-field-full {
+    grid-column: auto;
+  }
+
+  .referrals-form-actions {
+    gap: 10px;
+    padding: 14px 20px;
+  }
+
+  .referrals-form-actions > button {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .referrals-spinner,
+  .referrals-modal {
+    animation: none;
+  }
+}

@@ -7,6 +7,7 @@ const navigation = [
   { label: "Leads", path: "/leads", end: false },
   { label: "Pipeline", path: "/pipeline", end: false },
   { label: "Deals", path: "/deals", end: false },
+  { label: "Referrals", path: "/referrals", end: false },
   { label: "Properties", path: "/properties", end: false },
   { label: "Site Visits", path: "/site-visits", end: false },
   { label: "Requirements", path: "/requirements", end: false },
