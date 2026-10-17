@@ -41,6 +41,7 @@ from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.deal_commission import DealCommission
 from app.db.models.referral import Referral
+from app.db.models.document import Document
 
 __all__ = [
     "AuditEvent",
@@ -76,4 +77,5 @@ __all__ = [
     "PaymentMilestone",
     "DealCommission",
     "Referral",
+    "Document",
 ]
