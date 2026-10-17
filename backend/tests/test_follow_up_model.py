@@ -16,6 +16,7 @@ def test_follow_up_model_has_expected_columns() -> None:
         "organization_id",
         "lead_id",
         "owner_user_id",
+        "site_visit_id",
         "follow_up_type",
         "title",
         "description",
