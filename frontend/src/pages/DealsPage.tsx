@@ -28,6 +28,7 @@ import {
   type Property,
 } from "../services/propertyApi";
 import PaymentMilestonesPanel from "../components/PaymentMilestonesPanel";
+import DealCommissionsPanel from "../components/DealCommissionsPanel";
 
 import "./DealsPage.css";
 
@@ -265,7 +266,8 @@ const [nextNegotiationState, setNextNegotiationState] =
 const [customNegotiationNote, setCustomNegotiationNote] =
   useState("");
   const [paymentMilestoneDeal, setPaymentMilestoneDeal] =
-  useState<Deal | null>(null);
+    useState<Deal | null>(null);
+  const [commissionDeal, setCommissionDeal] = useState<Deal | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -989,6 +991,7 @@ async function handleStageTransition(deal: Deal) {
                     <th scope="col">Workflow</th>
                     <th scope="col">Negotiation</th>
                     <th scope="col">Payments</th>
+                    <th scope="col">Commission</th>
                     <th scope="col">Expected value</th>
                     <th scope="col">Owner</th>
                     <th scope="col">Created</th>
@@ -1049,6 +1052,15 @@ async function handleStageTransition(deal: Deal) {
                           onClick={() => setPaymentMilestoneDeal(deal)}
                         >
                           Manage payments
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          className="deals-secondary-button"
+                          type="button"
+                          onClick={() => setCommissionDeal(deal)}
+                        >
+                          Manage commission
                         </button>
                       </td>
                       <td className="deals-value">
@@ -1128,6 +1140,14 @@ async function handleStageTransition(deal: Deal) {
     onClick={() => setPaymentMilestoneDeal(deal)}
   >
     Manage payments
+  </button>
+
+  <button
+    className="deals-secondary-button"
+    type="button"
+    onClick={() => setCommissionDeal(deal)}
+  >
+    Manage commission
   </button>
 
 </footer>
@@ -1458,6 +1478,20 @@ async function handleStageTransition(deal: Deal) {
         propertyById.get(paymentMilestoneDeal.property_id),
       )}`}
       onClose={() => setPaymentMilestoneDeal(null)}
+    />
+  )}
+
+  {commissionDeal && (
+    <DealCommissionsPanel
+      dealId={commissionDeal.id}
+      dealTitle={`${customerName(
+        customerById.get(commissionDeal.customer_profile_id),
+      )} · ${propertyAddress(
+        propertyById.get(commissionDeal.property_id),
+      )}`}
+      dealValue={commissionDeal.expected_value}
+      currency={commissionDeal.currency || "INR"}
+      onClose={() => setCommissionDeal(null)}
     />
   )}
 

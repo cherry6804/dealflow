@@ -112,6 +112,9 @@ export interface NegotiationUpdateInput {
   note?: string | null;
 }
 
+// -----------------------------------------------------------------------------
+// Payment milestones
+// -----------------------------------------------------------------------------
 
 export type PaymentMilestoneStatus = "PENDING" | "PAID" | "CANCELLED";
 
@@ -203,6 +206,130 @@ export const paymentMilestonesApi = {
   },
 };
 
+// -----------------------------------------------------------------------------
+// Deal commissions — DF-120
+// -----------------------------------------------------------------------------
+
+export type DealCommissionType = "FIXED" | "PERCENTAGE";
+
+export type DealCommissionStatus =
+  | "PROPOSED"
+  | "AGREED"
+  | "PAID"
+  | "CANCELLED";
+
+export interface DealCommission {
+  id: string;
+  organization_id: string;
+  deal_id: string;
+  commission_type: DealCommissionType;
+  fixed_amount: number | string | null;
+  rate_percent: number | string | null;
+  currency: string;
+  status: DealCommissionStatus;
+  terms: string | null;
+  agreed_at: string | null;
+  paid_at: string | null;
+  payment_reference: string | null;
+  created_by_user_id: string | null;
+  updated_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  calculated_amount: number | string | null;
+}
+
+export interface DealCommissionListResponse {
+  items: DealCommission[];
+  total: number;
+}
+
+export type DealCommissionCreateInput =
+  | {
+      commission_type: "FIXED";
+      fixed_amount: number;
+      rate_percent?: never;
+      currency: string;
+      terms?: string | null;
+    }
+  | {
+      commission_type: "PERCENTAGE";
+      rate_percent: number;
+      fixed_amount?: never;
+      currency: string;
+      terms?: string | null;
+    };
+
+export interface DealCommissionUpdateInput {
+  commission_type?: DealCommissionType;
+  fixed_amount?: number | null;
+  rate_percent?: number | null;
+  currency?: string;
+  terms?: string | null;
+}
+
+export interface DealCommissionPaymentInput {
+  payment_reference?: string | null;
+}
+
+export const dealCommissionsApi = {
+  list(dealId: string): Promise<DealCommissionListResponse> {
+    return api.get<DealCommissionListResponse>(
+      `/deals/${encodeURIComponent(dealId)}/commissions`,
+    );
+  },
+
+  get(commissionId: string): Promise<DealCommission> {
+    return api.get<DealCommission>(
+      `/commissions/${encodeURIComponent(commissionId)}`,
+    );
+  },
+
+  create(
+    dealId: string,
+    input: DealCommissionCreateInput,
+  ): Promise<DealCommission> {
+    return api.post<DealCommission>(
+      `/deals/${encodeURIComponent(dealId)}/commissions`,
+      input,
+    );
+  },
+
+  update(
+    commissionId: string,
+    input: DealCommissionUpdateInput,
+  ): Promise<DealCommission> {
+    return api.patch<DealCommission>(
+      `/commissions/${encodeURIComponent(commissionId)}`,
+      input,
+    );
+  },
+
+  agree(commissionId: string): Promise<DealCommission> {
+    return api.post<DealCommission>(
+      `/commissions/${encodeURIComponent(commissionId)}/agree`,
+    );
+  },
+
+  markPaid(
+    commissionId: string,
+    input: DealCommissionPaymentInput = {},
+  ): Promise<DealCommission> {
+    return api.post<DealCommission>(
+      `/commissions/${encodeURIComponent(commissionId)}/mark-paid`,
+      input,
+    );
+  },
+
+  cancel(commissionId: string): Promise<DealCommission> {
+    return api.post<DealCommission>(
+      `/commissions/${encodeURIComponent(commissionId)}/cancel`,
+    );
+  },
+};
+
+// -----------------------------------------------------------------------------
+// Deal listing and stage management
+// -----------------------------------------------------------------------------
 
 function buildQuery(params: DealListParams = {}): string {
   const query = new URLSearchParams();
@@ -244,6 +371,10 @@ export const dealsApi = {
     );
   },
 };
+
+// -----------------------------------------------------------------------------
+// Deal negotiations
+// -----------------------------------------------------------------------------
 
 export const dealNegotiationsApi = {
   get(dealId: string): Promise<DealNegotiation> {
