@@ -876,3 +876,205 @@
     animation: none;
   }
 }
+
+
+.deals-negotiation-modal {
+  max-width: 720px;
+}
+
+.deals-negotiation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.deals-negotiation-section h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.deals-negotiation-section > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.deals-negotiation-label {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.deals-negotiation-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deals-negotiation-timeline li {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 0 0 22px;
+}
+
+.deals-negotiation-timeline li:not(:last-child)::before {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--color-border);
+  content: "";
+}
+
+.deals-negotiation-timeline-marker {
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  margin-top: 4px;
+  border: 2px solid var(--color-primary);
+  border-radius: 50%;
+  background: var(--color-surface);
+}
+
+.deals-negotiation-history-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deals-negotiation-history-content strong {
+  color: var(--color-text);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.deals-negotiation-history-content p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.deals-negotiation-history-content small {
+  color: var(--color-text-muted);
+  font-size: 0.73rem;
+  overflow-wrap: anywhere;
+}
+
+.deals-negotiation-state-in_progress,
+.deals-negotiation-state-waiting_on_customer,
+.deals-negotiation-state-waiting_on_seller,
+.deals-negotiation-state-terms_agreed,
+.deals-negotiation-state-stalled,
+.deals-negotiation-state-completed,
+.deals-negotiation-state-cancelled {
+  border-color: var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.deals-negotiation-state-terms_agreed,
+.deals-negotiation-state-completed {
+  border-color: #cce8d7;
+  background: #eaf8ef;
+  color: #207344;
+}
+
+.deals-negotiation-state-stalled,
+.deals-negotiation-state-waiting_on_customer,
+.deals-negotiation-state-waiting_on_seller {
+  border-color: #f2e3bd;
+  background: #fff7e4;
+  color: #8a5a00;
+}
+
+.deals-negotiation-state-cancelled {
+  border-color: #f2d4d4;
+  background: #fff5f5;
+  color: #9c2e2e;
+}
+
+
+/* Negotiation comment controls */
+.deals-negotiation-section select,
+.deals-negotiation-section textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  border: 1px solid var(--deals-border, #d7dfeb);
+  border-radius: 10px;
+  background-color: #fff;
+  color: #24324a;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.deals-negotiation-section select {
+  min-height: 48px;
+  padding: 11px 40px 11px 14px;
+  cursor: pointer;
+}
+
+.deals-negotiation-section textarea {
+  min-height: 100px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.deals-negotiation-section select:focus,
+.deals-negotiation-section textarea:focus {
+  outline: none;
+  border-color: #3563b8;
+  box-shadow: 0 0 0 3px rgb(53 99 184 / 16%);
+}
+
+.deals-negotiation-section select:disabled,
+.deals-negotiation-section textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  background-color: #f3f5f9;
+}
+
+.deals-negotiation-section .deals-negotiation-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #52627a;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.deals-negotiation-section select + small,
+.deals-negotiation-section textarea + small {
+  display: block;
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .deals-negotiation-section select {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  .deals-negotiation-section textarea {
+    font-size: 16px;
+  }
+}
