@@ -1119,7 +1119,7 @@ async function handleStageTransition(deal: Deal) {
                           type="button"
                           onClick={() => void openNegotiation(deal)}
                         >
-                          Manage
+                          Manage Negotiation
                         </button>
                       </td>
                       <td>
@@ -1128,7 +1128,7 @@ async function handleStageTransition(deal: Deal) {
                           type="button"
                           onClick={() => setPaymentMilestoneDeal(deal)}
                         >
-                          Manage payments
+                          Manage Payments
                         </button>
                       </td>
                       <td>
@@ -1137,7 +1137,7 @@ async function handleStageTransition(deal: Deal) {
                           type="button"
                           onClick={() => setCommissionDeal(deal)}
                         >
-                          Manage commission
+                          Manage Commission
                         </button>
                       </td>
                       <td className="deals-value">
@@ -1219,7 +1219,7 @@ async function handleStageTransition(deal: Deal) {
     type="button"
     onClick={() => void openNegotiation(deal)}
   >
-    Manage negotiation
+    Manage Negotiation
   </button>
   
   <button
@@ -1227,7 +1227,7 @@ async function handleStageTransition(deal: Deal) {
     type="button"
     onClick={() => setPaymentMilestoneDeal(deal)}
   >
-    Manage payments
+    Manage Payments
   </button>
 
   <button
@@ -1235,7 +1235,7 @@ async function handleStageTransition(deal: Deal) {
     type="button"
     onClick={() => setCommissionDeal(deal)}
   >
-    Manage commission
+    Manage Commission
   </button>
 
 </footer>

@@ -19,6 +19,7 @@ from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_location import CustomerRequirementLocation
+from app.db.models.referral import Referral
 from app.db.models.customer_requirement_property_preference import (
     CustomerRequirementPropertyPreference,
 )
