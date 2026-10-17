@@ -15,9 +15,13 @@ import {
   type CustomerProfile,
 } from "../services/customerProfileApi";
 import {
+  dealNegotiationsApi,
   dealsApi,
   type Deal,
   type DealStage,
+  type DealNegotiation,
+  type NegotiationHistoryItem,
+  type NegotiationState,
 } from "../services/dealApi";
 import {
   propertiesApi,
@@ -36,6 +40,94 @@ const DEAL_STAGES: DealStage[] = [
   "CLOSED_WON",
   "CLOSED_LOST",
 ];
+
+const NEGOTIATION_TRANSITIONS: Record<
+  NegotiationState,
+  NegotiationState[]
+> = {
+  IN_PROGRESS: [
+    "WAITING_ON_CUSTOMER",
+    "WAITING_ON_SELLER",
+    "TERMS_AGREED",
+    "STALLED",
+    "CANCELLED",
+  ],
+  WAITING_ON_CUSTOMER: [
+    "IN_PROGRESS",
+    "WAITING_ON_SELLER",
+    "TERMS_AGREED",
+    "STALLED",
+    "CANCELLED",
+  ],
+  WAITING_ON_SELLER: [
+    "IN_PROGRESS",
+    "WAITING_ON_CUSTOMER",
+    "TERMS_AGREED",
+    "STALLED",
+    "CANCELLED",
+  ],
+  STALLED: [
+    "IN_PROGRESS",
+    "WAITING_ON_CUSTOMER",
+    "WAITING_ON_SELLER",
+    "TERMS_AGREED",
+    "CANCELLED",
+  ],
+  TERMS_AGREED: ["IN_PROGRESS", "COMPLETED", "CANCELLED"],
+  COMPLETED: ["IN_PROGRESS"],
+  CANCELLED: ["IN_PROGRESS"],
+};
+
+
+const NEGOTIATION_COMMENTS: Record<NegotiationState, string[]> = {
+  IN_PROGRESS: [
+    "Initial discussion started",
+    "Negotiation discussion resumed",
+    "New offer received",
+    "Counteroffer discussed",
+    "Customer requested an alternative property",
+    "Terms under discussion",
+  ],
+  WAITING_ON_CUSTOMER: [
+    "Customer reviewing the offer",
+    "Waiting for customer response",
+    "Customer requested more time",
+    "Waiting for customer documents",
+    "Customer comparing properties",
+  ],
+  WAITING_ON_SELLER: [
+    "Offer shared with seller",
+    "Waiting for seller approval",
+    "Seller reviewing the offer",
+    "Waiting for revised seller price",
+    "Seller requested more time",
+  ],
+  TERMS_AGREED: [
+    "Price agreed",
+    "Commercial terms agreed",
+    "Final terms confirmed",
+    "Documentation pending",
+  ],
+  STALLED: [
+    "Price mismatch",
+    "Customer not responding",
+    "Seller not responding",
+    "Budget or financing concern",
+    "Decision postponed",
+  ],
+  COMPLETED: [
+    "Negotiation successfully concluded",
+    "Terms finalized for handover",
+  ],
+  CANCELLED: [
+    "Customer withdrew interest",
+    "Price expectations could not be aligned",
+    "Seller withdrew the property",
+    "Customer selected another property",
+    "Deal no longer proceeding",
+  ],
+};
+
 
 interface DealForm {
   customer_profile_id: string;
@@ -151,6 +243,20 @@ export default function DealsPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [negotiationDeal, setNegotiationDeal] = useState<Deal | null>(null);
+const [negotiation, setNegotiation] = useState<DealNegotiation | null>(null);
+const [negotiationHistory, setNegotiationHistory] = useState<
+  NegotiationHistoryItem[]
+>([]);
+const [negotiationLoading, setNegotiationLoading] = useState(false);
+const [negotiationSaving, setNegotiationSaving] = useState(false);
+const [negotiationError, setNegotiationError] = useState("");
+const [negotiationNote, setNegotiationNote] = useState("");
+const [nextNegotiationState, setNextNegotiationState] =
+  useState<NegotiationState>("IN_PROGRESS");
+
+const [customNegotiationNote, setCustomNegotiationNote] =
+  useState("");
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -350,6 +456,154 @@ export default function DealsPage() {
       [key]: value,
     }));
   }
+
+
+  async function openNegotiation(deal: Deal) {
+    setNegotiationDeal(deal);
+    setNegotiation(null);
+    setNegotiationHistory([]);
+    setNegotiationError("");
+    setNegotiationNote("");
+    setCustomNegotiationNote("");
+    setNextNegotiationState("IN_PROGRESS");
+    setNegotiationLoading(true);
+
+    try {
+      const current = await dealNegotiationsApi.get(deal.id);
+      setNegotiation(current);
+      setNextNegotiationState(current.state);
+
+      try {
+        const history = await dealNegotiationsApi.history(deal.id);
+        setNegotiationHistory(history.items);
+      } catch {
+        setNegotiationError(
+          "Negotiation loaded, but history could not be loaded. Reopen this panel to retry.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        // No negotiation record yet. Allow the user to start tracking.
+        setNegotiation(null);
+        setNegotiationHistory([]);
+        setNegotiationError("");
+      } else {
+        setNegotiationError(errorMessage(error));
+      }
+    } finally {
+      setNegotiationLoading(false);
+    }
+  }
+
+
+
+async function createNegotiation() {
+  if (!negotiationDeal || negotiationSaving) return;
+
+  const note = (
+    negotiationNote === "CUSTOM"
+      ? customNegotiationNote
+      : negotiationNote
+  ).trim();
+
+  setNegotiationSaving(true);
+  setNegotiationError("");
+  setSuccess("");
+
+  try {
+    const created = await dealNegotiationsApi.create(
+      negotiationDeal.id,
+      {
+        state: "IN_PROGRESS",
+        note: note || undefined,
+      },
+    );
+
+    // Update the UI immediately after successful creation.
+    setNegotiation(created);
+    setNextNegotiationState(created.state);
+    setNegotiationNote("");
+    setCustomNegotiationNote("");
+    setNegotiationHistory([]);
+    setSuccess("Negotiation started successfully.");
+
+    // History loading is separate so a history failure
+    // does not make the successful creation appear to fail.
+    try {
+      const history = await dealNegotiationsApi.history(
+        negotiationDeal.id,
+      );
+      setNegotiationHistory(history.items);
+    } catch {
+      setNegotiationError(
+        "Negotiation was created, but history could not be refreshed. Close and reopen the negotiation panel to retry.",
+      );
+    }
+  } catch (error) {
+    setNegotiationError(errorMessage(error));
+  } finally {
+    setNegotiationSaving(false);
+  }
+}
+
+async function saveNegotiationState() {
+  if (!negotiationDeal || !negotiation) return;
+
+  const note = (
+    negotiationNote === "CUSTOM"
+      ? customNegotiationNote
+      : negotiationNote
+  ).trim();
+    const currentState = negotiation.state;
+  const targetState = nextNegotiationState;
+
+  if (currentState === targetState) {
+    setNegotiationError("Select a different negotiation state.");
+    return;
+  }
+
+  const requiresReason =
+    targetState === "CANCELLED" ||
+    ((currentState === "COMPLETED" ||
+      currentState === "CANCELLED" ||
+      (currentState === "TERMS_AGREED" &&
+        targetState === "IN_PROGRESS")) &&
+      targetState === "IN_PROGRESS");
+
+  if (requiresReason && !note) {
+    setNegotiationError(
+      "Enter a reason for cancelling or reopening the negotiation.",
+    );
+    return;
+  }
+
+  setNegotiationSaving(true);
+  setNegotiationError("");
+
+  try {
+    const updated = await dealNegotiationsApi.update(
+      negotiationDeal.id,
+      {
+        state: targetState,
+        note: note || undefined,
+      },
+    );
+
+    setNegotiation(updated);
+    setNextNegotiationState(updated.state);
+    setNegotiationNote("");
+
+    const history = await dealNegotiationsApi.history(
+      negotiationDeal.id,
+    );
+    setNegotiationHistory(history.items);
+    setSuccess("Negotiation updated successfully.");
+  } catch (error) {
+    setNegotiationError(errorMessage(error));
+  } finally {
+    setNegotiationSaving(false);
+  }
+}
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -675,6 +929,7 @@ export default function DealsPage() {
                   <tr>
                     <th scope="col">Customer / property</th>
                     <th scope="col">Stage</th>
+                    <th scope="col">Negotiation</th>
                     <th scope="col">Expected value</th>
                     <th scope="col">Owner</th>
                     <th scope="col">Created</th>
@@ -700,6 +955,15 @@ export default function DealsPage() {
                         <span className={stageClass(deal.stage)}>
                           {label(deal.stage)}
                         </span>
+                      </td>
+                      <td>
+                        <button
+                          className="deals-secondary-button"
+                          type="button"
+                          onClick={() => void openNegotiation(deal)}
+                        >
+                          Manage
+                        </button>
                       </td>
                       <td className="deals-value">
                         {amount(deal.expected_value, deal.currency || "INR")}
@@ -737,15 +1001,24 @@ export default function DealsPage() {
                   <p>
                     {propertyAddress(propertyById.get(deal.property_id))}
                   </p>
-                  <footer>
-                    <span>{formatDate(deal.created_at)}</span>
-                    <span>
-                      Owner{" "}
-                      {deal.owner_user_id
-                        ? `${deal.owner_user_id.slice(0, 8)}…`
-                        : "—"}
-                    </span>
-                  </footer>
+
+<footer>
+  <span>{formatDate(deal.created_at)}</span>
+  <span>
+    Owner{" "}
+    {deal.owner_user_id
+      ? `${deal.owner_user_id.slice(0, 8)}…`
+      : "—"}
+  </span>
+  <button
+    className="deals-secondary-button"
+    type="button"
+    onClick={() => void openNegotiation(deal)}
+  >
+    Manage negotiation
+  </button>
+</footer>
+
                 </article>
               ))}
             </div>
@@ -783,6 +1056,282 @@ export default function DealsPage() {
           </>
         ) : null}
       </section>
+
+      {negotiationDeal &&
+  createPortal(
+    <div
+      className="deals-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !negotiationSaving) {
+          setNegotiationDeal(null);
+          setNegotiationError("");
+        }
+      }}
+    >
+      <section
+        className="deals-modal deals-negotiation-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="negotiation-modal-title"
+      >
+        <header className="deals-modal-header">
+          <div>
+            <span className="deals-eyebrow">DEAL WORKSPACE</span>
+            <h2 id="negotiation-modal-title">Negotiation</h2>
+            <p>
+              {customerName(
+                customerById.get(negotiationDeal.customer_profile_id),
+              )}{" "}
+              · {propertyAddress(
+                propertyById.get(negotiationDeal.property_id),
+              )}
+            </p>
+          </div>
+
+          <button
+            className="deals-modal-close"
+            type="button"
+            aria-label="Close negotiation"
+            disabled={negotiationSaving}
+            onClick={() => setNegotiationDeal(null)}
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="deals-form-body">
+          {negotiationError && (
+            <div className="deals-alert deals-alert-error" role="alert">
+              {negotiationError}
+            </div>
+          )}
+
+          {negotiationLoading ? (
+            <div className="deals-state" role="status">
+              <span className="deals-spinner" aria-hidden="true" />
+              <p>Loading negotiation...</p>
+            </div>
+          ) : !negotiation ? (
+            <section className="deals-negotiation-section">
+
+              <div className="deals-negotiation-section">
+                <label
+                  className="deals-negotiation-label"
+                  htmlFor="negotiation-opening-comment"
+                >
+                  Opening comment (optional)
+                </label>
+
+                <select
+                  id="negotiation-opening-comment"
+                  value={negotiationNote}
+                  onChange={(event) => {
+                    setNegotiationNote(event.target.value);
+                    setCustomNegotiationNote("");
+                  }}
+                  disabled={negotiationSaving}
+                >
+                  <option value="">Select an opening comment</option>
+                  <option value="Initial discussion started">
+                    Initial discussion started
+                  </option>
+                  <option value="Customer interested in the property">
+                    Customer interested in the property
+                  </option>
+                  <option value="Price negotiation initiated">
+                    Price negotiation initiated
+                  </option>
+                  <option value="Offer received from customer">
+                    Offer received from customer
+                  </option>
+                  <option value="Follow-up required after site visit">
+                    Follow-up required after site visit
+                  </option>
+                  <option value="CUSTOM">Other — enter custom comment</option>
+                </select>
+
+                {negotiationNote === "CUSTOM" && (
+                  <textarea
+                    value={customNegotiationNote}
+                    onChange={(event) =>
+                      setCustomNegotiationNote(event.target.value)
+                    }
+                    placeholder="Enter the opening comment..."
+                    rows={3}
+                    disabled={negotiationSaving}
+                    aria-label="Custom opening comment"
+                  />
+                )}
+              </div>
+              <button
+                className="deals-primary-button"
+                type="button"
+                disabled={negotiationSaving}
+                onClick={() => void createNegotiation()}
+              >
+                {negotiationSaving ? "Creating..." : "Start negotiation"}
+              </button>
+            </section>
+          ) : (
+            <>
+              <section className="deals-negotiation-section">
+                <span className="deals-negotiation-label">
+                  Current negotiation state
+                </span>
+                <p>
+                  <span
+                    className={`deals-stage deals-negotiation-state-${negotiation.state.toLowerCase()}`}
+                  >
+                    {label(negotiation.state)}
+                  </span>
+                </p>
+
+                <label className="deals-form-field">
+                  <span>Change state</span>
+                  <select
+                    value={nextNegotiationState}
+                    disabled={negotiationSaving}
+                    onChange={(event) => {
+  setNextNegotiationState(
+    event.target.value as NegotiationState,
+  );
+  setNegotiationNote("");
+  setCustomNegotiationNote("");
+  setNegotiationError("");
+}}
+                  >
+                    <option value={negotiation.state}>
+                      {label(negotiation.state)} (current)
+                    </option>
+                    {NEGOTIATION_TRANSITIONS[negotiation.state].map(
+                      (state) => (
+                        <option value={state} key={state}>
+                          {label(state)}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+
+
+<div className="deals-negotiation-section">
+  <label
+    className="deals-negotiation-label"
+    htmlFor="negotiation-update-comment"
+  >
+    Reason or update comment
+  </label>
+
+  <select
+    id="negotiation-update-comment"
+    value={negotiationNote}
+    disabled={negotiationSaving}
+    onChange={(event) => {
+      setNegotiationNote(event.target.value);
+      setCustomNegotiationNote("");
+    }}
+  >
+    <option value="">Select a comment</option>
+
+    {NEGOTIATION_COMMENTS[nextNegotiationState].map((comment) => (
+      <option key={comment} value={comment}>
+        {comment}
+      </option>
+    ))}
+
+    <option value="CUSTOM">Other — enter custom comment</option>
+  </select>
+
+  {negotiationNote === "CUSTOM" && (
+    <textarea
+      maxLength={2000}
+      rows={3}
+      value={customNegotiationNote}
+      disabled={negotiationSaving}
+      onChange={(event) =>
+        setCustomNegotiationNote(event.target.value)
+      }
+      placeholder="Enter the reason or negotiation update..."
+      aria-label="Custom negotiation comment"
+    />
+  )}
+
+  <small>
+    Choose a comment relevant to the new state. A reason is required
+    when cancelling or reopening a negotiation.
+  </small>
+</div>
+
+
+                <button
+                  className="deals-primary-button"
+                  type="button"
+                  disabled={
+                    negotiationSaving ||
+                    nextNegotiationState === negotiation.state
+                  }
+                  onClick={() => void saveNegotiationState()}
+                >
+                  {negotiationSaving ? "Saving..." : "Save change"}
+                </button>
+              </section>
+
+              <section className="deals-negotiation-section">
+                <h3>Negotiation history</h3>
+                {negotiationHistory.length === 0 ? (
+                  <p>No history is available yet.</p>
+                ) : (
+                  <ol className="deals-negotiation-timeline">
+                    {negotiationHistory.map((item) => (
+                      <li key={item.id}>
+                        <div className="deals-negotiation-timeline-marker" />
+                        <div className="deals-negotiation-history-content">
+                          <strong>
+                            {item.from_state
+                              ? `${label(item.from_state)} → ${label(item.to_state)}`
+                              : `Negotiation created: ${label(item.to_state)}`}
+                          </strong>
+                          {item.note && <p>{item.note}</p>}
+                          <small>
+                            {formatDate(item.created_at)} ·{" "}
+                            {new Date(item.created_at).toLocaleTimeString(
+                              "en-IN",
+                              {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              },
+                            )}
+                          </small>
+                          {item.actor_user_id && (
+                            <small>
+                              User ID: {item.actor_user_id}
+                            </small>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            </>
+          )}
+        </div>
+
+        <footer className="deals-form-actions">
+          <button
+            className="deals-secondary-button"
+            type="button"
+            disabled={negotiationSaving}
+            onClick={() => setNegotiationDeal(null)}
+          >
+            Close
+          </button>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  )}
 
       {isFormOpen &&
         createPortal(

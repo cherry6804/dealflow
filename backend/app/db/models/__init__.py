@@ -28,6 +28,10 @@ from app.db.models.follow_up import FollowUp
 from app.db.models.requirement_property_shortlist import (
     RequirementPropertyShortlist,
 )
+from app.db.models.deal_negotiation import (
+    DealNegotiation,
+    DealNegotiationHistory,
+)
 from app.db.models.deal import Deal
 from app.db.models.site_visit import SiteVisit
 from app.db.models.requirement_match_run import RequirementMatchRun
@@ -62,4 +66,6 @@ __all__ = [
     "RequirementShortlistEvent",
     "SiteVisit",
     "Deal",
+    "DealNegotiation",
+    "DealNegotiationHistory",
 ]

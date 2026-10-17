@@ -35,6 +35,10 @@ from app.db.models.requirement_match_run import RequirementMatchRun
 from app.db.models.requirement_match_run_result import RequirementMatchRunResult
 from app.db.models.requirement_shortlist_event import RequirementShortlistEvent
 from app.db.models.deal import Deal
+from app.db.models.deal_negotiation import (
+    DealNegotiation,
+    DealNegotiationHistory,
+)
 
 config = context.config
 
