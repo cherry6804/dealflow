@@ -42,6 +42,7 @@ from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.deal_commission import DealCommission
 from app.db.models.referral import Referral
 from app.db.models.document import Document
+from app.db.models.automation_rule import AutomationRule
 
 __all__ = [
     "AuditEvent",
@@ -78,4 +79,5 @@ __all__ = [
     "DealCommission",
     "Referral",
     "Document",
+    "AutomationRule",
 ]

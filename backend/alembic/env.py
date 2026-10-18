@@ -29,6 +29,7 @@ from app.db.models.requirement_property_shortlist import (
 from app.db.models.customer_requirement_possession_parking_preference import (
     CustomerRequirementPossessionParkingPreference,
 )
+from app.db.models.automation_rule import AutomationRule
 from app.db.models.import_batch import ImportBatch
 from app.db.models.activity import Activity
 from app.db.models.follow_up import FollowUp

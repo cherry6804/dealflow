@@ -87,11 +87,11 @@ function formatLabel(value: string): string {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return "â€”";
+  if (!value) return "—";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "â€”";
+  if (Number.isNaN(date.getTime())) return "—";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -105,7 +105,7 @@ function formatDateTime(value: string | null): string {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "â€”";
+  if (Number.isNaN(date.getTime())) return "—";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -982,7 +982,7 @@ async function handleBulkRescheduleFollowUps() {
                 : "All leads"}
           </p>
           <p className="leads-summary-value">
-            {loading && total === 0 ? "â€”" : total.toLocaleString("en-IN")}
+            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
           </p>
         </div>
       </section>
@@ -996,7 +996,7 @@ async function handleBulkRescheduleFollowUps() {
             onClick={() => setSuccess("")}
             aria-label="Dismiss success message"
           >
-            Ã—
+            ×
           </button>
         </div>
       )}
@@ -1014,7 +1014,7 @@ async function handleBulkRescheduleFollowUps() {
             onClick={() => void loadLeads()}
             disabled={loading}
           >
-            {loading ? "Refreshing..." : "â†» Refresh"}
+            {loading ? "Refreshing..." : "↻ Refresh"}
           </button>
         </header>
 
@@ -1022,7 +1022,7 @@ async function handleBulkRescheduleFollowUps() {
           <label className="leads-search">
             <span className="leads-visually-hidden">Search leads</span>
             <span className="leads-search-icon" aria-hidden="true">
-              âŒ•
+              ◷
             </span>
             <input
               type="search"
@@ -1112,7 +1112,7 @@ async function handleBulkRescheduleFollowUps() {
         ) : !error && leads.length === 0 ? (
           <div className="leads-empty">
             <div className="leads-empty-icon" aria-hidden="true">
-              â†—
+              ↗
             </div>
             <h3>
               {search ||
@@ -1235,7 +1235,7 @@ async function handleBulkRescheduleFollowUps() {
 
                         <td>
                           <span className="leads-action-text">
-                            {lead.next_action || "â€”"}
+                            {lead.next_action || "—"}
                           </span>
                         </td>
 
@@ -1294,7 +1294,7 @@ async function handleBulkRescheduleFollowUps() {
 
             <footer className="leads-pagination">
               <p>
-                Showing <strong>{firstResult}â€“{lastResult}</strong> of{" "}
+                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
                 <strong>{total}</strong> leads
               </p>
 
@@ -1379,7 +1379,7 @@ async function handleBulkRescheduleFollowUps() {
               setStatusPromptError("");
             }}
           >
-            Ã—
+            ×
           </button>
         </header>
 
@@ -1499,7 +1499,7 @@ async function handleBulkRescheduleFollowUps() {
               FOLLOW-UP MANAGEMENT
             </span>
             <h2 id="follow-ups-title">
-              Follow-ups â€”{" "}
+              Follow-ups —{" "}
               {getContactName(
                 contactById.get(selectedFollowUpLead.contact_id),
               )}
@@ -1516,7 +1516,7 @@ async function handleBulkRescheduleFollowUps() {
             disabled={followUpSaving}
             onClick={() => setSelectedFollowUpLead(null)}
           >
-            Ã—
+            ×
           </button>
         </header>
 
@@ -1869,7 +1869,7 @@ async function handleBulkRescheduleFollowUps() {
                     setFormError("");
                   }}
                 >
-                  Ã—
+                  ×
                 </button>
               </header>
 
@@ -1932,7 +1932,7 @@ async function handleBulkRescheduleFollowUps() {
 
                         {contactLoading && (
                           <span className="leads-field-hint">
-                            Loading contactsâ€¦
+                            Loading contacts…
                           </span>
                         )}
 
