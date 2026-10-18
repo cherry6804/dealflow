@@ -2,7 +2,8 @@
 """Service-layer operations for private business document uploads."""
 
 from __future__ import annotations
-
+from sqlalchemy import select
+from app.storage import ObjectNotFoundError
 import hashlib
 import logging
 import tempfile
@@ -369,3 +370,52 @@ async def upload_document(
         raise
 
     return document
+
+class DocumentDownloadUnavailableError(Exception):
+    """Raised when document metadata cannot be used for downloading."""
+
+
+def open_document_for_download(
+    db: Session,
+    *,
+    organization_id: UUID,
+    document_id: UUID,
+) -> tuple[Document, BinaryIO]:
+    """Open an available document belonging to the verified organization."""
+    statement = select(Document).where(
+        Document.id == document_id,
+        Document.organization_id == organization_id,
+        Document.status == Document.STATUS_AVAILABLE,
+    )
+
+    document = db.execute(statement).scalar_one_or_none()
+
+    # Do not reveal whether a document exists in another organization.
+    if document is None:
+        raise DocumentDownloadUnavailableError
+
+    if not document.storage_key or not document.storage_backend:
+        raise DocumentDownloadUnavailableError
+
+    settings = get_settings()
+    configured_backend = settings.object_storage_backend.strip().lower()
+
+    # Never read an object through a provider different from its recorded
+    # backend. Provider-specific support can be added in a later story.
+    if document.storage_backend.strip().lower() != configured_backend:
+        raise DocumentDownloadUnavailableError
+
+    storage = get_object_storage()
+
+    try:
+        source = storage.open_read(document.storage_key)
+    except ObjectNotFoundError:
+        raise
+    except StorageError:
+        logger.exception(
+            "Document storage read failed for organization %s.",
+            organization_id,
+        )
+        raise
+
+    return document, source

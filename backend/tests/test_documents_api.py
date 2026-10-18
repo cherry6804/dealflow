@@ -4,11 +4,11 @@
 from __future__ import annotations
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
-
 from app.documents import service as document_service
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
+import uuid
 from uuid import UUID
 
 import pytest
@@ -19,7 +19,6 @@ from app.auth.dependencies import (
 )
 from app.db.models.document import Document
 from app.db.session import SessionLocal, get_db_session
-from app.documents import service as document_service
 from app.storage.local import LocalObjectStorage
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -36,7 +35,7 @@ from tests.test_contacts_api import (
 PERMISSION_KEY = "documents.upload"
 UPLOAD_URL = "/api/v1/documents/uploads"
 PDF_CONTENT = b"%PDF-1.4\nSample document content\n%%EOF\n"
-
+DOWNLOAD_PERMISSION_KEY = "documents.download"
 
 def configure_document_storage(
     monkeypatch: pytest.MonkeyPatch,
@@ -487,3 +486,465 @@ def test_office_archive_rejects_excessive_compression_ratio(
         match="compression ratio exceeds the limit",
     ):
         document_service._validate_content(source, ".docx")
+
+
+def create_downloadable_document(
+    db,
+    *,
+    organization,
+    user,
+    storage_key: str | None = None,
+) -> Document:
+    """Create available document metadata and its private storage object."""
+    document_id = uuid.uuid4()
+    key = storage_key or (
+        f"{organization.id}/{document_id.hex}/agreement.pdf"
+    )
+    content = b"%PDF-1.4\nPrivate agreement\n%%EOF\n"
+
+    document_service.get_object_storage().put(key, BytesIO(content))
+
+    document = Document(
+        id=document_id,
+        organization_id=organization.id,
+        original_filename="agreement.pdf",
+        display_name="Agreement",
+        category=Document.CATEGORY_AGREEMENT,
+        document_type="Agreement",
+        content_type="application/pdf",
+        file_extension=".pdf",
+        file_size_bytes=len(content),
+        checksum_sha256=hashlib.sha256(content).hexdigest(),
+        storage_backend="local",
+        storage_key=key,
+        access_classification=Document.CLASSIFICATION_INTERNAL,
+        status=Document.STATUS_AVAILABLE,
+        uploaded_by_user_id=user.id,
+        created_by_user_id=user.id,
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+def test_download_document_returns_content_and_safe_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Authorized users can download available tenant-owned documents."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=DOWNLOAD_PERMISSION_KEY,
+        )
+        document = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        document_id = document.id
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                f"/api/v1/documents/{document_id}/download"
+            )
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"%PDF-1.4\nPrivate agreement\n%%EOF\n"
+    assert response.headers["content-type"] == "application/pdf"
+    assert 'attachment; filename="agreement.pdf"' in (
+        response.headers["content-disposition"]
+    )
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_download_document_requires_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Membership alone does not grant document download permission."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user = create_user(setup_db)
+        organization = create_organization(setup_db)
+        create_membership(
+            setup_db,
+            user=user,
+            organization=organization,
+        )
+        setup_db.commit()
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.get(
+                f"/api/v1/documents/{UUID(int=1)}/download"
+            )
+
+    assert response.status_code == 403
+
+
+def test_download_document_cannot_cross_organization_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A valid document ID cannot bypass the selected organization."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=DOWNLOAD_PERMISSION_KEY,
+        )
+        other_organization = create_organization(setup_db)
+        setup_db.commit()
+
+        document = create_downloadable_document(
+            setup_db,
+            organization=other_organization,
+            user=user,
+        )
+        document_id = document.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.get(
+                f"/api/v1/documents/{document_id}/download"
+            )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found."
+
+
+def test_download_document_returns_404_for_missing_object(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Missing stored content does not expose internal storage details."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=DOWNLOAD_PERMISSION_KEY,
+        )
+        document_id = uuid.uuid4()
+        document = Document(
+            id=document_id,
+            organization_id=organization.id,
+            original_filename="missing.pdf",
+            display_name="Missing document",
+            category=Document.CATEGORY_AGREEMENT,
+            document_type="Agreement",
+            content_type="application/pdf",
+            file_extension=".pdf",
+            file_size_bytes=10,
+            checksum_sha256="0" * 64,
+            storage_backend="local",
+            storage_key=(
+                f"{organization.id}/{document_id.hex}/missing.pdf"
+            ),
+            access_classification=Document.CLASSIFICATION_INTERNAL,
+            status=Document.STATUS_AVAILABLE,
+            uploaded_by_user_id=user.id,
+            created_by_user_id=user.id,
+        )
+        setup_db.add(document)
+        setup_db.commit()
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.get(
+                f"/api/v1/documents/{document_id}/download"
+            )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found."
+
+
+
+def test_list_documents_returns_paginated_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Return tenant documents with pagination and safe metadata."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        created_documents = [
+            create_downloadable_document(
+                setup_db,
+                organization=organization,
+                user=user,
+            )
+            for _ in range(3)
+        ]
+
+        # Capture expected values before the session closes.
+        expected_ids = [
+            str(document.id)
+            for document in sorted(
+                created_documents,
+                key=lambda document: (
+                    document.created_at,
+                    document.id,
+                ),
+                reverse=True,
+            )[:2]
+        ]
+
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                "/api/v1/documents?page=1&page_size=2"
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["page"] == 1
+    assert payload["page_size"] == 2
+    assert payload["total"] == 3
+    assert payload["total_pages"] == 2
+    assert len(payload["items"]) == 2
+
+    assert [
+        item["id"] for item in payload["items"]
+    ] == expected_ids
+
+    for item in payload["items"]:
+        assert item["organization_id"] == str(organization_id)
+        assert item["status"] == Document.STATUS_AVAILABLE
+        assert "storage_key" not in item
+        assert "storage_backend" not in item
+
+def test_list_documents_requires_read_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Organization membership alone must not grant listing access."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user = create_user(setup_db)
+        organization = create_organization(setup_db)
+        create_membership(
+            setup_db,
+            user=user,
+            organization=organization,
+        )
+        setup_db.commit()
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 403
+
+
+def test_list_documents_does_not_cross_organization_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Only documents belonging to the selected organization are listed."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+        other_organization = create_organization(setup_db)
+
+        create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        create_downloadable_document(
+            setup_db,
+            organization=other_organization,
+            user=user,
+        )
+
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["organization_id"] == str(
+        organization_id
+    )
+
+
+
+def test_list_documents_filters_by_category(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Category filtering is applied within the selected organization."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    available_categories = [
+        value
+        for name, value in vars(Document).items()
+        if name.startswith("CATEGORY_")
+        and isinstance(value, str)
+        and value != Document.CATEGORY_AGREEMENT
+    ]
+
+    if not available_categories:
+        pytest.skip(
+            "The Document model declares no alternative category "
+            "for testing category filtering."
+        )
+
+    other_category = available_categories[0]
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        agreement = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+
+        other_document = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        other_document.category = other_category
+        setup_db.commit()
+
+        organization_id = organization.id
+        agreement_id = agreement.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                "/api/v1/documents?category=agreement"
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == str(agreement_id)
+    assert payload["items"][0]["category"] == (
+        Document.CATEGORY_AGREEMENT
+    )
+
+
+def test_list_documents_excludes_unavailable_documents(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Documents that are not available must not appear in the list."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        available = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+
+        unavailable = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        unavailable.status = "DELETED"
+        setup_db.commit()
+
+        organization_id = organization.id
+        available_id = available.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert [item["id"] for item in payload["items"]] == [
+        str(available_id)
+    ]
+
+
+def test_list_documents_rejects_invalid_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject invalid page numbers and page sizes."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+
+            invalid_page = client.get(
+                "/api/v1/documents?page=0"
+            )
+            invalid_page_size = client.get(
+                "/api/v1/documents?page_size=101"
+            )
+
+    assert invalid_page.status_code == 422
+    assert invalid_page_size.status_code == 422
