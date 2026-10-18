@@ -3,6 +3,8 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -52,10 +54,47 @@ export default function DocumentsPage() {
 
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<DocumentResponse | null>(null);
 
-  const [recentUploads, setRecentUploads] = useState<DocumentResponse[]>([]);
+  const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(true);
+  const [refreshingDocuments, setRefreshingDocuments] = useState(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [documentPage, setDocumentPage] = useState(1);
+  const [documentTotal, setDocumentTotal] = useState(0);
+  const [documentTotalPages, setDocumentTotalPages] = useState(0);
+
+  const loadDocuments = useCallback(async (page = 1) => {
+    setDocumentsError(null);
+
+    try {
+      const response = await documentApi.list({ page, pageSize: 20 });
+      setDocuments(response.items);
+      setDocumentPage(response.page);
+      setDocumentTotal(response.total);
+      setDocumentTotalPages(response.total_pages);
+    } catch (loadError) {
+      setDocumentsError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Documents could not be loaded. Please try again.",
+      );
+    } finally {
+      setLoadingDocuments(false);
+      setRefreshingDocuments(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDocuments();
+  }, [loadDocuments]);
+
+  function handleRefreshDocuments() {
+    setRefreshingDocuments(true);
+    void loadDocuments(documentPage);
+  }
 
   function selectFile(selectedFile: File | undefined) {
     if (!selectedFile) return;
@@ -88,6 +127,25 @@ export default function DocumentsPage() {
     event.preventDefault();
     setDragging(false);
     selectFile(event.dataTransfer.files?.[0]);
+  }
+
+  async function handleDownload(document: DocumentResponse) {
+    if (downloadingDocumentId) return;
+
+    setDownloadingDocumentId(document.id);
+    setError(null);
+
+    try {
+      await documentApi.download(document.id, document.original_filename);
+    } catch (downloadError) {
+      setError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "The document could not be downloaded. Please try again.",
+      );
+    } finally {
+      setDownloadingDocumentId(null);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -133,10 +191,7 @@ export default function DocumentsPage() {
 
       setSuccess(uploadedDocument);
 
-      setRecentUploads((current) => [
-        uploadedDocument,
-        ...current.filter((item) => item.id !== uploadedDocument.id),
-      ]);
+      await loadDocuments(1);
 
       setFile(null);
       setDisplayName("");
@@ -491,21 +546,49 @@ export default function DocumentsPage() {
           <section className="documents-panel documents-recent-panel">
             <div className="documents-panel-heading">
               <div>
-                <h2>Uploaded this session</h2>
-                <p>Uploads completed in this page session.</p>
+                <h2>Document library</h2>
+                <p>Saved documents in your organization.</p>
               </div>
-              <span className="documents-count">{recentUploads.length}</span>
+              <div className="documents-recent-actions">
+                <span className="documents-count">{documentTotal}</span>
+                <button
+                  type="button"
+                  className="documents-text-button"
+                  onClick={handleRefreshDocuments}
+                  disabled={refreshingDocuments || loadingDocuments}
+                >
+                  {refreshingDocuments ? "Refreshing…" : "Refresh"}
+                </button>
+              </div>
             </div>
 
-            {recentUploads.length === 0 ? (
+            {documentsError && (
+              <div className="documents-alert documents-alert-error" role="alert">
+                <span>{documentsError}</span>
+                <button
+                  type="button"
+                  className="documents-text-button"
+                  onClick={handleRefreshDocuments}
+                  disabled={refreshingDocuments}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {loadingDocuments ? (
+              <div className="documents-empty-state" role="status">
+                <p>Loading documents…</p>
+              </div>
+            ) : documents.length === 0 && !documentsError ? (
               <div className="documents-empty-state">
                 <span aria-hidden="true">▤</span>
-                <p>No uploads yet</p>
-                <small>Your successful uploads will appear here.</small>
+                <p>No documents found</p>
+                <small>Upload a document to start building your library.</small>
               </div>
-            ) : (
+            ) : documents.length > 0 ? (
               <ul className="documents-recent-list">
-                {recentUploads.map((item) => (
+                {documents.map((item) => (
                   <li key={item.id}>
                     <span className="documents-recent-file-icon" aria-hidden="true">
                       ▤
@@ -513,21 +596,64 @@ export default function DocumentsPage() {
                     <div className="documents-recent-details">
                       <strong>{item.display_name}</strong>
                       <span>{formatLabel(item.category)}</span>
-                      <small>{formatDate(item.uploaded_at ?? item.created_at)}</small>
+                      <small>
+                        {formatFileSize(item.file_size_bytes ?? 0)} · {formatDate(item.uploaded_at ?? item.created_at)}
+                      </small>
+                      <small>{formatLabel(item.status)}</small>
                     </div>
-                    <span
-                      className="documents-status-indicator"
-                      title={item.status}
-                      aria-label={`Status: ${item.status}`}
-                    />
+                    <div className="documents-recent-actions">
+                      <span
+                        className="documents-status-indicator"
+                        title={item.status}
+                        aria-label={`Status: ${item.status}`}
+                      />
+                      <button
+                        type="button"
+                        className="documents-text-button"
+                        onClick={() => void handleDownload(item)}
+                        disabled={downloadingDocumentId !== null || item.status !== "AVAILABLE"}
+                        aria-label={`Download ${item.display_name}`}
+                      >
+                        {downloadingDocumentId === item.id ? "Downloading…" : "Download"}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
+            ) : null}
+
+            {!loadingDocuments && documentTotalPages > 1 && (
+              <div className="documents-form-actions">
+                <button
+                  type="button"
+                  className="documents-secondary-button"
+                  disabled={documentPage <= 1 || refreshingDocuments}
+                  onClick={() => {
+                    setLoadingDocuments(true);
+                    void loadDocuments(documentPage - 1);
+                  }}
+                >
+                  Previous
+                </button>
+                <span>Page {documentPage} of {documentTotalPages}</span>
+                <button
+                  type="button"
+                  className="documents-secondary-button"
+                  disabled={documentPage >= documentTotalPages || refreshingDocuments}
+                  onClick={() => {
+                    setLoadingDocuments(true);
+                    void loadDocuments(documentPage + 1);
+                  }}
+                >
+                  Next
+                </button>
+              </div>
             )}
 
             <p className="documents-session-note">
-              This list is session-only. A persistent document library and
-              download workflow will be handled in subsequent stories.
+              Documents are loaded from the server and remain available after
+              refreshing the page. Downloads are checked by the server against
+              your organization and document permissions.
             </p>
           </section>
         </aside>

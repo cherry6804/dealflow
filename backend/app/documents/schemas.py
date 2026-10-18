@@ -29,3 +29,13 @@ class DocumentResponse(BaseModel):
     uploaded_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentListResponse(BaseModel):
+    """Paginated document metadata for the current organization."""
+
+    items: list[DocumentResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int

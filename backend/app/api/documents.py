@@ -11,13 +11,15 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
+from sqlalchemy import func, select
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
+from app.documents.schemas import DocumentListResponse, DocumentResponse
 from app.authz.dependencies import require_permission
 from app.db.models.document import Document
 from app.db.session import get_db_session
@@ -129,6 +131,60 @@ async def upload_document_endpoint(
         await file.close()
 
     return DocumentResponse.model_validate(document)
+
+
+@router.get(
+    "",
+    response_model=DocumentListResponse,
+)
+def list_documents_endpoint(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    category: str | None = Query(default=None, min_length=1, max_length=50),
+    tenant_context: TenantContext = Depends(
+        require_permission("documents.read")
+    ),
+    db: Session = Depends(get_db_session),
+) -> DocumentListResponse:
+    """List available document metadata within the verified organization."""
+    filters = [
+        Document.organization_id == tenant_context.organization_id,
+        Document.status == Document.STATUS_AVAILABLE,
+    ]
+
+    if category is not None:
+        filters.append(Document.category == category.strip().upper())
+
+    try:
+        total = db.scalar(
+            select(func.count())
+            .select_from(Document)
+            .where(*filters)
+        ) or 0
+
+        documents = db.scalars(
+            select(Document)
+            .where(*filters)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The documents could not be listed.",
+        ) from None
+
+    return DocumentListResponse(
+        items=[
+            DocumentResponse.model_validate(document)
+            for document in documents
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=(total + page_size - 1) // page_size,
+    )
 
 
 @router.get("/{document_id}/download")

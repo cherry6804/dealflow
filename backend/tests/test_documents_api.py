@@ -674,3 +674,277 @@ def test_download_document_returns_404_for_missing_object(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found."
+
+
+
+def test_list_documents_returns_paginated_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Return tenant documents with pagination and safe metadata."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        created_documents = [
+            create_downloadable_document(
+                setup_db,
+                organization=organization,
+                user=user,
+            )
+            for _ in range(3)
+        ]
+
+        # Capture expected values before the session closes.
+        expected_ids = [
+            str(document.id)
+            for document in sorted(
+                created_documents,
+                key=lambda document: (
+                    document.created_at,
+                    document.id,
+                ),
+                reverse=True,
+            )[:2]
+        ]
+
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                "/api/v1/documents?page=1&page_size=2"
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["page"] == 1
+    assert payload["page_size"] == 2
+    assert payload["total"] == 3
+    assert payload["total_pages"] == 2
+    assert len(payload["items"]) == 2
+
+    assert [
+        item["id"] for item in payload["items"]
+    ] == expected_ids
+
+    for item in payload["items"]:
+        assert item["organization_id"] == str(organization_id)
+        assert item["status"] == Document.STATUS_AVAILABLE
+        assert "storage_key" not in item
+        assert "storage_backend" not in item
+
+def test_list_documents_requires_read_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Organization membership alone must not grant listing access."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user = create_user(setup_db)
+        organization = create_organization(setup_db)
+        create_membership(
+            setup_db,
+            user=user,
+            organization=organization,
+        )
+        setup_db.commit()
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 403
+
+
+def test_list_documents_does_not_cross_organization_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Only documents belonging to the selected organization are listed."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+        other_organization = create_organization(setup_db)
+
+        create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        create_downloadable_document(
+            setup_db,
+            organization=other_organization,
+            user=user,
+        )
+
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["organization_id"] == str(
+        organization_id
+    )
+
+
+
+def test_list_documents_filters_by_category(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Category filtering is applied within the selected organization."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    available_categories = [
+        value
+        for name, value in vars(Document).items()
+        if name.startswith("CATEGORY_")
+        and isinstance(value, str)
+        and value != Document.CATEGORY_AGREEMENT
+    ]
+
+    if not available_categories:
+        pytest.skip(
+            "The Document model declares no alternative category "
+            "for testing category filtering."
+        )
+
+    other_category = available_categories[0]
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        agreement = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+
+        other_document = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        other_document.category = other_category
+        setup_db.commit()
+
+        organization_id = organization.id
+        agreement_id = agreement.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                "/api/v1/documents?category=agreement"
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == str(agreement_id)
+    assert payload["items"][0]["category"] == (
+        Document.CATEGORY_AGREEMENT
+    )
+
+
+def test_list_documents_excludes_unavailable_documents(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Documents that are not available must not appear in the list."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        available = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+
+        unavailable = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        unavailable.status = "DELETED"
+        setup_db.commit()
+
+        organization_id = organization.id
+        available_id = available.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get("/api/v1/documents")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["total"] == 1
+    assert [item["id"] for item in payload["items"]] == [
+        str(available_id)
+    ]
+
+
+def test_list_documents_rejects_invalid_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject invalid page numbers and page sizes."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key="documents.read",
+        )
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+
+            invalid_page = client.get(
+                "/api/v1/documents?page=0"
+            )
+            invalid_page_size = client.get(
+                "/api/v1/documents?page_size=101"
+            )
+
+    assert invalid_page.status_code == 422
+    assert invalid_page_size.status_code == 422
