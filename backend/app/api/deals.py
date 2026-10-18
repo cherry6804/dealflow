@@ -11,6 +11,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
+from app.automation_rules.execution_service import (
+    execute_deal_created_automations,
+)
 from app.db.session import get_db_session
 from app.deals.schemas import (
     DealCreateRequest,
@@ -43,7 +46,7 @@ def create_deal_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
-    """Create a deal within the verified organization."""
+    """Create a deal and execute its matching creation automations."""
     try:
         deal = create_deal(
             db=db,
@@ -51,6 +54,7 @@ def create_deal_endpoint(
             current_user_id=tenant_context.membership.user_id,
             payload=payload,
         )
+
         if deal is None:
             db.rollback()
             raise HTTPException(
@@ -60,6 +64,15 @@ def create_deal_endpoint(
                     "in this organization."
                 ),
             )
+
+        # Execute active DEAL_CREATED rules within the same transaction.
+        # The execution service does not commit; this endpoint owns the
+        # transaction for both the deal and its automation results.
+        execute_deal_created_automations(
+            db,
+            organization_id=tenant_context.organization_id,
+            deal=deal,
+        )
 
         db.commit()
         db.refresh(deal)
@@ -128,11 +141,13 @@ def get_deal_endpoint(
         organization_id=tenant_context.organization_id,
         deal_id=deal_id,
     )
+
     if deal is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deal not found.",
         )
+
     return DealResponse.model_validate(deal)
 
 
