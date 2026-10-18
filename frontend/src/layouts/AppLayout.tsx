@@ -13,13 +13,22 @@ const navigation = [
   { label: "Requirements", path: "/requirements", end: false },
   { label: "Imports", path: "/imports", end: false },
   { label: "Documents", path: "/documents", end: false },
+  {
+    label: "Automation Rules",
+    path: "/automation-rules",
+    end: false,
+  },
 ];
 
 export default function AppLayout() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <NavLink to="/" className="brand-link" aria-label="DealFlow home">
+        <NavLink
+          to="/"
+          className="brand-link"
+          aria-label="DealFlow home"
+        >
           <span className="brand-mark" aria-hidden="true">
             <svg
               viewBox="0 0 32 32"
@@ -33,6 +42,7 @@ export default function AppLayout() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
+
               <path
                 d="M9 13.2V27h14V13.2M13 27v-8h6v8"
                 stroke="currentColor"
@@ -45,17 +55,25 @@ export default function AppLayout() {
 
           <span className="brand-copy">
             <span className="brand-name">DealFlow</span>
-            <span className="brand-subtitle">Real estate workspace</span>
+            <span className="brand-subtitle">
+              Real estate workspace
+            </span>
           </span>
         </NavLink>
 
         <div className="header-context">
-          <span className="workspace-indicator" aria-hidden="true" />
+          <span
+            className="workspace-indicator"
+            aria-hidden="true"
+          />
           <span>Workspace</span>
         </div>
       </header>
 
-      <nav className="app-navigation" aria-label="Main navigation">
+      <nav
+        className="app-navigation"
+        aria-label="Main navigation"
+      >
         <div className="navigation-inner">
           {navigation.map((item) => (
             <NavLink
@@ -63,7 +81,9 @@ export default function AppLayout() {
               to={item.path}
               end={item.end}
               className={({ isActive }) =>
-                isActive ? "navigation-link active" : "navigation-link"
+                isActive
+                  ? "navigation-link active"
+                  : "navigation-link"
               }
             >
               {item.label}

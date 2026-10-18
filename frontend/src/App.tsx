@@ -4,21 +4,23 @@ import AppStatusScreen from "./components/AppStatusScreen";
 import { AppProvider } from "./contexts/AppContext";
 import { useAppContext } from "./contexts/useAppContext";
 import AppLayout from "./layouts/AppLayout";
+
+import AutomationRulesPage from "./pages/AutomationRulesPage";
 import ContactsPage from "./pages/ContactsPage";
 import CustomersPage from "./pages/CustomersPage";
+import DealsPage from "./pages/DealsPage";
+import DocumentsPage from "./pages/DocumentsPage";
 import ImportsPage from "./pages/ImportsPage";
 import LeadsPage from "./pages/LeadsPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
-import PropertiesPage from "./pages/PropertiesPage";
-import RequirementsPage from "./pages/RequirementsPage";
-import TodayPage from "./pages/TodayPage";
-import SiteVisitsPage from "./pages/SiteVisitsPage";
-import DealsPage from "./pages/DealsPage";
-import ReferralsPage from "./pages/ReferralsPage";
-import DocumentsPage from "./pages/DocumentsPage";
-
 import PipelinePage from "./pages/PipelinePage";
+import PropertiesPage from "./pages/PropertiesPage";
+import ReferralsPage from "./pages/ReferralsPage";
+import RequirementsPage from "./pages/RequirementsPage";
+import SiteVisitsPage from "./pages/SiteVisitsPage";
+import TodayPage from "./pages/TodayPage";
+
 function ApplicationRoutes() {
   const {
     user,
@@ -54,7 +56,10 @@ function ApplicationRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route
+          path="*"
+          element={<Navigate to="/login" replace />}
+        />
       </Routes>
     );
   }
@@ -89,7 +94,17 @@ function ApplicationRoutes() {
         <Route path="/requirements" element={<RequirementsPage />} />
         <Route path="/imports" element={<ImportsPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
-        <Route path="/login" element={<Navigate to="/" replace />} />
+
+        <Route
+          path="/automation-rules"
+          element={<AutomationRulesPage />}
+        />
+
+        <Route
+          path="/login"
+          element={<Navigate to="/" replace />}
+        />
+
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

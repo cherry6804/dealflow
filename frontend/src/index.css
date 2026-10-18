@@ -244,3 +244,22 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+:root {
+  --color-primary: #315ce8;
+  --color-primary-hover: #244bd0;
+  --color-primary-soft: #edf2ff;
+
+  --color-text: #172b4d;
+  --color-text-secondary: #68778d;
+  --color-text-muted: #77859a;
+
+  --color-border: #e2e8f1;
+  --color-border-strong: #dce3ed;
+
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f5f7fb;
+
+  --shadow-focus: 0 0 0 3px rgb(49 92 232 / 12%);
+}
