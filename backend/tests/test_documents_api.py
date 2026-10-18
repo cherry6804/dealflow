@@ -17,6 +17,7 @@ from app.auth.dependencies import (
     CurrentUserContext,
     get_current_user_context,
 )
+from app.db.models.audit_event import AuditEvent, AuditEventType
 from app.db.models.document import Document
 from app.db.session import SessionLocal, get_db_session
 from app.storage.local import LocalObjectStorage
@@ -547,6 +548,7 @@ def test_download_document_returns_content_and_safe_headers(
         )
         document_id = document.id
         organization_id = organization.id
+        user_id = user.id
 
         with TestClient(create_document_test_app(user)) as client:
             client.headers.update(
@@ -564,6 +566,24 @@ def test_download_document_returns_content_and_safe_headers(
     )
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "private, no-store"
+
+    with SessionLocal() as audit_db:
+        events = (
+            audit_db.query(AuditEvent)
+            .filter_by(
+                organization_id=organization_id,
+                resource_type="document",
+                resource_id=str(document_id),
+                event_type=AuditEventType.DOCUMENT_ACCESS.value,
+            )
+            .all()
+        )
+
+    assert len(events) == 1
+    assert events[0].user_id == user_id
+    assert events[0].action == "documents.download"
+    assert events[0].decision == "allowed"
+    assert events[0].permission_key == DOWNLOAD_PERMISSION_KEY
 
 
 def test_download_document_requires_permission(
@@ -615,6 +635,7 @@ def test_download_document_cannot_cross_organization_boundary(
             user=user,
         )
         document_id = document.id
+        organization_id = organization.id
 
         with TestClient(create_document_test_app(user)) as client:
             client.headers.update(
@@ -626,6 +647,22 @@ def test_download_document_cannot_cross_organization_boundary(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found."
+
+    with SessionLocal() as audit_db:
+        events = (
+            audit_db.query(AuditEvent)
+            .filter_by(
+                organization_id=organization_id,
+                resource_type="document",
+                resource_id=str(document_id),
+                event_type=AuditEventType.DOCUMENT_ACCESS.value,
+            )
+            .all()
+        )
+
+    assert len(events) == 1
+    assert events[0].action == "documents.download"
+    assert events[0].decision == "denied"
 
 
 def test_download_document_returns_404_for_missing_object(
@@ -675,6 +712,47 @@ def test_download_document_returns_404_for_missing_object(
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found."
 
+
+def test_download_fails_closed_when_audit_persistence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Never serve document content when access auditing fails."""
+    configure_document_storage(monkeypatch, tmp_path)
+
+    def fail_audit(**kwargs) -> None:
+        raise RuntimeError("Audit persistence unavailable")
+
+    monkeypatch.setattr(
+        "app.api.documents._audit_document_download",
+        fail_audit,
+    )
+
+    with SessionLocal() as setup_db:
+        user, organization = create_authorized_user(
+            setup_db,
+            permission_key=DOWNLOAD_PERMISSION_KEY,
+        )
+        document = create_downloadable_document(
+            setup_db,
+            organization=organization,
+            user=user,
+        )
+        document_id = document.id
+        organization_id = organization.id
+
+        with TestClient(create_document_test_app(user)) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization_id)}
+            )
+            response = client.get(
+                f"/api/v1/documents/{document_id}/download"
+            )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "The document access audit could not be recorded."
+    )
 
 
 def test_list_documents_returns_paginated_metadata(
