@@ -1,3 +1,4 @@
+
 import { api } from "../lib/api";
 
 export const DOCUMENT_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -33,6 +34,8 @@ export const DOCUMENT_ACCESS_CLASSIFICATIONS = [
   { value: "PUBLIC", label: "Public" },
 ] as const;
 
+export type DocumentRecordType = "lead" | "property" | "deal";
+
 export interface DocumentUploadRequest {
   file: File;
   displayName: string;
@@ -42,9 +45,17 @@ export interface DocumentUploadRequest {
   accessClassification: string;
 }
 
+export interface DocumentAssociationRequest {
+  record_type: DocumentRecordType | null;
+  record_id: string | null;
+}
+
 export interface DocumentResponse {
   id: string;
   organization_id: string;
+  lead_id: string | null;
+  property_id: string | null;
+  deal_id: string | null;
   original_filename: string;
   display_name: string;
   description: string | null;
@@ -142,12 +153,36 @@ export const documentApi = {
     return api.post<DocumentResponse>("/documents/uploads", formData);
   },
 
+  async updateAssociation(
+    documentId: string,
+    request: DocumentAssociationRequest,
+  ): Promise<DocumentResponse> {
+    if (!documentId.trim()) {
+      throw new Error("A document ID is required.");
+    }
+
+    const hasRecordType = request.record_type !== null;
+    const hasRecordId = request.record_id !== null;
+
+    if (hasRecordType !== hasRecordId) {
+      throw new Error(
+        "Choose a record type and record, or clear both to unlink.",
+      );
+    }
+
+    return api.patch<DocumentResponse>(
+      `/documents/${encodeURIComponent(documentId)}/association`,
+      request,
+    );
+  },
+
   async download(documentId: string, filename: string): Promise<void> {
     if (!documentId.trim()) {
       throw new Error("A document ID is required to download a file.");
     }
 
-    const safeFilename = filename.trim().replace(/[\r\n]/g, "") || "document";
+    const safeFilename =
+      filename.trim().replace(/[\r\n]/g, "") || "document";
 
     return api.download(
       `/documents/${encodeURIComponent(documentId)}/download`,
