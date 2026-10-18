@@ -145,3 +145,38 @@ def persist_authorization_audit_event(
         except Exception:
             db.rollback()
             raise
+
+def persist_document_access_audit_event(
+    *,
+    user_id: UUID,
+    organization_id: UUID,
+    document_id: UUID,
+    decision: AuditDecision,
+    action: str = "documents.download",
+) -> AuditEvent:
+    """Persist a document-access audit event in an independent transaction."""
+    with SessionLocal() as db:
+        try:
+            normalized_action = action.strip()
+            if not normalized_action:
+                raise ValueError("Audit action cannot be empty.")
+            if len(normalized_action) > 200:
+                raise ValueError("Audit action cannot exceed 200 characters.")
+
+            event = AuditEvent(
+                user_id=user_id,
+                organization_id=organization_id,
+                event_type=AuditEventType.DOCUMENT_ACCESS.value,
+                action=normalized_action,
+                decision=decision.value,
+                permission_key="documents.download",
+                resource_type="document",
+                resource_id=str(document_id),
+            )
+            db.add(event)
+            db.commit()
+            db.refresh(event)
+            return event
+        except Exception:
+            db.rollback()
+            raise

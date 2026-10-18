@@ -22,6 +22,7 @@ class AuditEventType(str, Enum):
     """Supported categories of DealFlow audit events."""
 
     AUTHORIZATION = "authorization"
+    DOCUMENT_ACCESS = "document_access"
 
 
 class AuditDecision(str, Enum):

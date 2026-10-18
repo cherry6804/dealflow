@@ -1,4 +1,3 @@
-
 """FastAPI routes for tenant-scoped business documents."""
 
 from collections.abc import Iterator
@@ -15,15 +14,17 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import func, select
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from app.documents.schemas import DocumentListResponse, DocumentResponse
+
+from app.audit.service import persist_document_access_audit_event
 from app.authz.dependencies import require_permission
+from app.db.models.audit_event import AuditDecision
 from app.db.models.document import Document
 from app.db.session import get_db_session
-from app.documents.schemas import DocumentResponse
+from app.documents.schemas import DocumentListResponse, DocumentResponse
 from app.documents.service import (
     DocumentDownloadUnavailableError,
     DocumentUploadError,
@@ -55,7 +56,6 @@ def _content_disposition(filename: str) -> str:
     if not ascii_name:
         ascii_name = "document"
 
-    # RFC 5987 encoding preserves non-ASCII filenames for compatible clients.
     encoded_name = quote(cleaned, safe="")
     return (
         f'attachment; filename="{ascii_name}"; '
@@ -73,6 +73,25 @@ def _stream_and_close(source) -> Iterator[bytes]:
             yield chunk
     finally:
         source.close()
+
+
+def _audit_document_download(
+    *,
+    tenant_context: TenantContext,
+    document_id: UUID,
+    decision: AuditDecision,
+) -> None:
+    """Persist a document-specific download audit event.
+
+    Audit failures intentionally propagate: the download endpoint must not
+    silently proceed when its required audit record cannot be persisted.
+    """
+    persist_document_access_audit_event(
+        user_id=tenant_context.membership.user_id,
+        organization_id=tenant_context.organization_id,
+        document_id=document_id,
+        decision=decision,
+    )
 
 
 @router.post(
@@ -156,11 +175,14 @@ def list_documents_endpoint(
         filters.append(Document.category == category.strip().upper())
 
     try:
-        total = db.scalar(
-            select(func.count())
-            .select_from(Document)
-            .where(*filters)
-        ) or 0
+        total = (
+            db.scalar(
+                select(func.count())
+                .select_from(Document)
+                .where(*filters)
+            )
+            or 0
+        )
 
         documents = db.scalars(
             select(Document)
@@ -195,7 +217,7 @@ def download_document_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> StreamingResponse:
-    """Download an available document from the verified organization."""
+    """Download an available document and audit its access outcome."""
     try:
         document, source = open_document_for_download(
             db,
@@ -203,6 +225,21 @@ def download_document_endpoint(
             document_id=document_id,
         )
     except (DocumentDownloadUnavailableError, ObjectNotFoundError):
+        # Use the same response for missing and cross-tenant documents.
+        # The event identifies the requested ID without revealing whether
+        # the document belongs to another organization.
+        try:
+            _audit_document_download(
+                tenant_context=tenant_context,
+                document_id=document_id,
+                decision=AuditDecision.DENIED,
+            )
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="The document access audit could not be recorded.",
+            ) from None
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found.",
@@ -216,6 +253,20 @@ def download_document_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The document could not be downloaded.",
+        ) from None
+
+    try:
+        _audit_document_download(
+            tenant_context=tenant_context,
+            document_id=document_id,
+            decision=AuditDecision.ALLOWED,
+        )
+    except Exception:
+        # Do not return a file stream if the required audit write failed.
+        source.close()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The document access audit could not be recorded.",
         ) from None
 
     headers = {
