@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -39,6 +40,11 @@ class AutomationRule(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_automation_rules_id_organization",
+        ),
         CheckConstraint(
             "status IN ('DRAFT', 'ACTIVE', 'DISABLED')",
             name="ck_automation_rules_status",
