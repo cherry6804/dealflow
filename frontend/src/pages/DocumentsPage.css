@@ -776,3 +776,48 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+
+.documents-association-label {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary, #64748b);
+  margin-top: 4px;
+}
+
+.documents-association-editor {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  background: var(--surface-secondary, #f8fafc);
+}
+
+.documents-association-editor .documents-field {
+  min-width: 0;
+  width: 100%;
+}
+
+.documents-association-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.documents-association-editor .documents-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.documents-association-editor [role="alert"] {
+  color: var(--danger-color, #b91c1c);
+  overflow-wrap: anywhere;
+}

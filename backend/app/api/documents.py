@@ -1,3 +1,4 @@
+
 """FastAPI routes for tenant-scoped business documents."""
 
 from collections.abc import Iterator
@@ -22,9 +23,16 @@ from sqlalchemy.orm import Session
 from app.audit.service import persist_document_access_audit_event
 from app.authz.dependencies import require_permission
 from app.db.models.audit_event import AuditDecision
+from app.db.models.deal import Deal
 from app.db.models.document import Document
+from app.db.models.lead import Lead
+from app.db.models.property import Property
 from app.db.session import get_db_session
-from app.documents.schemas import DocumentListResponse, DocumentResponse
+from app.documents.schemas import (
+    DocumentAssociationRequest,
+    DocumentListResponse,
+    DocumentResponse,
+)
 from app.documents.service import (
     DocumentDownloadUnavailableError,
     DocumentUploadError,
@@ -49,7 +57,8 @@ def _content_disposition(filename: str) -> str:
 
     ascii_name = cleaned.encode("ascii", "ignore").decode("ascii")
     ascii_name = "".join(
-        char if char.isalnum() or char in " ._-" else "_"
+        char if char.isalnum() or char in " ._-"
+        else "_"
         for char in ascii_name
     ).strip(" .")
 
@@ -207,6 +216,86 @@ def list_documents_endpoint(
         total=total,
         total_pages=(total + page_size - 1) // page_size,
     )
+
+
+@router.patch(
+    "/{document_id}/association",
+    response_model=DocumentResponse,
+)
+def update_document_association_endpoint(
+    document_id: UUID,
+    payload: DocumentAssociationRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("documents.manage")
+    ),
+    db: Session = Depends(get_db_session),
+) -> DocumentResponse:
+    """Link or unlink an available document from a tenant-owned record."""
+    organization_id = tenant_context.organization_id
+
+    try:
+        document = db.scalar(
+            select(Document).where(
+                Document.id == document_id,
+                Document.organization_id == organization_id,
+                Document.status == Document.STATUS_AVAILABLE,
+            )
+        )
+
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found.",
+            )
+
+        # Validate the requested record before changing the document.
+        if payload.record_type is not None and payload.record_id is not None:
+            record_models = {
+                "lead": Lead,
+                "property": Property,
+                "deal": Deal,
+            }
+            record_model = record_models[payload.record_type]
+
+            record_exists = db.scalar(
+                select(record_model.id).where(
+                    record_model.id == payload.record_id,
+                    record_model.organization_id == organization_id,
+                )
+            )
+
+            if record_exists is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Business record not found.",
+                )
+
+        # Clear previous associations so only one record can be linked.
+        document.lead_id = None
+        document.property_id = None
+        document.deal_id = None
+
+        if payload.record_type == "lead":
+            document.lead_id = payload.record_id
+        elif payload.record_type == "property":
+            document.property_id = payload.record_id
+        elif payload.record_type == "deal":
+            document.deal_id = payload.record_id
+
+        db.commit()
+        db.refresh(document)
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The document association could not be saved.",
+        ) from None
+
+    return DocumentResponse.model_validate(document)
 
 
 @router.get("/{document_id}/download")
