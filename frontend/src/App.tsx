@@ -1,4 +1,9 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+} from "react-router-dom";
 
 import AppStatusScreen from "./components/AppStatusScreen";
 import { AppProvider } from "./contexts/AppContext";
@@ -45,7 +50,10 @@ function ApplicationRoutes() {
     return (
       <AppStatusScreen
         title="Unable to load your workspace"
-        message={error ?? "Something went wrong while loading your account."}
+        message={
+          error ??
+          "Something went wrong while loading your account."
+        }
         actionLabel="Try again"
         onAction={() => window.location.reload()}
       />
@@ -83,6 +91,7 @@ function ApplicationRoutes() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route path="/" element={<TodayPage />} />
+
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/leads" element={<LeadsPage />} />

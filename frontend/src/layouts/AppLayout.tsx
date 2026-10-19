@@ -1,5 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 
+import NotificationBell from "../components/NotificationBell";
+
 const navigation = [
   { label: "Today", path: "/", end: true },
   { label: "Contacts", path: "/contacts", end: false },
@@ -61,12 +63,16 @@ export default function AppLayout() {
           </span>
         </NavLink>
 
-        <div className="header-context">
-          <span
-            className="workspace-indicator"
-            aria-hidden="true"
-          />
-          <span>Workspace</span>
+        <div className="header-actions">
+          <NotificationBell />
+
+          <div className="header-context">
+            <span
+              className="workspace-indicator"
+              aria-hidden="true"
+            />
+            <span>Workspace</span>
+          </div>
         </div>
       </header>
 
