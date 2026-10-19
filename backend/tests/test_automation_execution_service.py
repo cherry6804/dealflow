@@ -27,7 +27,9 @@ from tests.test_deals_api import (
     create_lead,
     create_property,
 )
-
+from app.db.models.notification import Notification
+from app.db.models.notification_preference import NotificationPreference
+from app.notifications.service import get_or_create_notification_preferences
 
 TestingSessionLocal = SessionLocal
 
@@ -404,3 +406,173 @@ def test_exists_condition_requires_explicit_boolean_value() -> None:
             [{"field": "lead_id", "operator": "exists"}],
             deal,
         )
+
+
+def test_successful_execution_creates_notification_for_rule_creator() -> None:
+    """A successful execution notifies the automation rule creator."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        lead = create_lead(db, organization=organization)
+        deal = create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+            lead_id=lead.id,
+        )
+        rule = create_active_rule(
+            db,
+            user=user,
+            organization=organization,
+            conditions=[],
+            actions=[
+                {
+                    "type": "CREATE_FOLLOW_UP",
+                    "config": {
+                        "days_after": 1,
+                        "title": "Notification test follow-up",
+                    },
+                }
+            ],
+        )
+        db.commit()
+
+        executions = execute_deal_created_automations(
+            db,
+            organization_id=organization.id,
+            deal=deal,
+        )
+        db.flush()
+
+        assert len(executions) == 1
+        execution = executions[0]
+        assert execution.status == AutomationExecution.STATUS_SUCCEEDED
+
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_type == "AUTOMATION_EXECUTION_SUCCEEDED",
+                Notification.resource_type == "automation_execution",
+                Notification.resource_id == str(execution.id),
+            )
+        )
+
+        assert notification is not None
+        assert notification.title == "Automation completed"
+        assert rule.name in notification.message
+        assert str(deal.id) in notification.message
+        assert (
+            notification.event_key
+            == f"automation-execution:{execution.id}:completed"
+        )
+
+        db.commit()
+
+
+def test_automation_execution_notification_respects_disabled_preference() -> None:
+    """Disabling automation notifications suppresses execution notifications."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        lead = create_lead(db, organization=organization)
+        deal = create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+            lead_id=lead.id,
+        )
+        create_active_rule(
+            db,
+            user=user,
+            organization=organization,
+            conditions=[],
+            actions=[
+                {
+                    "type": "CREATE_FOLLOW_UP",
+                    "config": {"days_after": 1},
+                }
+            ],
+        )
+
+        preference = get_or_create_notification_preferences(
+            db,
+            organization_id=organization.id,
+            user_id=user.id,
+        )
+        preference.automation_enabled = False
+        db.commit()
+
+        executions = execute_deal_created_automations(
+            db,
+            organization_id=organization.id,
+            deal=deal,
+        )
+        db.flush()
+
+        assert len(executions) == 1
+        assert executions[0].status == AutomationExecution.STATUS_SUCCEEDED
+
+        notification = db.scalar(
+            select(Notification.id).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_type == "AUTOMATION_EXECUTION_SUCCEEDED",
+            )
+        )
+        assert notification is None
+
+        db.commit()
+
+
+def test_repeated_deal_created_event_does_not_duplicate_execution_notification() -> None:
+    """Retrying an event doesn't create another execution notification."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        lead = create_lead(db, organization=organization)
+        deal = create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+            lead_id=lead.id,
+        )
+        create_active_rule(
+            db,
+            user=user,
+            organization=organization,
+            conditions=[],
+            actions=[
+                {
+                    "type": "CREATE_FOLLOW_UP",
+                    "config": {"days_after": 1},
+                }
+            ],
+        )
+        db.commit()
+
+        first_executions = execute_deal_created_automations(
+            db,
+            organization_id=organization.id,
+            deal=deal,
+        )
+        db.commit()
+
+        assert len(first_executions) == 1
+
+        second_executions = execute_deal_created_automations(
+            db,
+            organization_id=organization.id,
+            deal=deal,
+        )
+        db.commit()
+
+        assert second_executions == []
+
+        notifications = db.scalars(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_type == "AUTOMATION_EXECUTION_SUCCEEDED",
+                Notification.resource_id == str(first_executions[0].id),
+            )
+        ).all()
+
+        assert len(notifications) == 1

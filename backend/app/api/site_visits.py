@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
 from app.db.models.follow_up import FollowUp
+from app.db.models.site_visit import SiteVisit
 from app.db.session import get_db_session
 from app.follow_ups.schemas import FollowUpCreateRequest, FollowUpResponse
 from app.follow_ups.service import create_site_visit_follow_up
+from app.notifications.service import create_notification
 from app.site_visits.schemas import (
     SiteVisitAttendanceRequest,
     SiteVisitCreateRequest,
@@ -30,6 +32,30 @@ from app.site_visits.service import (
 from app.tenant.dependencies import TenantContext
 
 router = APIRouter(prefix="/api/v1/site-visits", tags=["site-visits"])
+
+
+def _notify_site_visit_owner(
+    db: Session,
+    *,
+    organization_id: UUID,
+    site_visit: SiteVisit,
+    event_type: str,
+    title: str,
+    message: str,
+    event_key: str,
+) -> None:
+    """Create a preference-aware, tenant-scoped site visit notification."""
+    create_notification(
+        db,
+        organization_id=organization_id,
+        recipient_user_id=site_visit.owner_user_id,
+        event_type=event_type,
+        title=title,
+        message=message,
+        resource_type="site_visit",
+        resource_id=str(site_visit.id),
+        event_key=event_key,
+    )
 
 
 @router.get("", response_model=SiteVisitListResponse)
@@ -116,7 +142,7 @@ def schedule_site_visit_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> SiteVisitResponse:
-    """Schedule a site visit within the verified organization."""
+    """Schedule a visit and notify its assigned owner."""
     try:
         site_visit = create_site_visit(
             db=db,
@@ -137,6 +163,16 @@ def schedule_site_visit_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Property or customer reference not found.",
         )
+
+    _notify_site_visit_owner(
+        db,
+        organization_id=tenant_context.organization_id,
+        site_visit=site_visit,
+        event_type="SITE_VISIT_SCHEDULED",
+        title="Site visit scheduled",
+        message="A site visit has been scheduled.",
+        event_key=f"site-visit:{site_visit.id}:scheduled",
+    )
 
     try:
         db.commit()
@@ -160,7 +196,7 @@ def record_site_visit_attendance_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> SiteVisitResponse:
-    """Record visit attendance and outcome within the active tenant."""
+    """Record attendance and notify the owner of the resulting status."""
     try:
         site_visit = record_site_visit_attendance(
             db=db,
@@ -181,6 +217,35 @@ def record_site_visit_attendance_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Site visit not found.",
         )
+
+    if site_visit.status == SiteVisit.STATUS_COMPLETED:
+        event_type = "SITE_VISIT_COMPLETED"
+        title = "Site visit completed"
+        message = "The site visit has been marked as completed."
+    elif site_visit.status == SiteVisit.STATUS_CANCELLED:
+        event_type = "SITE_VISIT_CANCELLED"
+        title = "Site visit cancelled"
+        message = "The site visit has been marked as cancelled."
+    elif site_visit.status == SiteVisit.STATUS_NO_SHOW:
+        event_type = "SITE_VISIT_NO_SHOW"
+        title = "Site visit marked as no-show"
+        message = "The site visit has been marked as a no-show."
+    else:
+        event_type = "SITE_VISIT_STATUS_CHANGED"
+        title = "Site visit status updated"
+        message = (
+            f"The site visit status is now {site_visit.status}."
+        )
+
+    _notify_site_visit_owner(
+        db,
+        organization_id=tenant_context.organization_id,
+        site_visit=site_visit,
+        event_type=event_type,
+        title=title,
+        message=message,
+        event_key=f"site-visit:{site_visit.id}:status:{site_visit.status}",
+    )
 
     try:
         db.commit()

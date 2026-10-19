@@ -45,6 +45,7 @@ from app.db.models.notification import Notification
 from app.db.models.document import Document
 from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.deal_commission import DealCommission
+from app.db.models.notification_preference import NotificationPreference
 
 config = context.config
 

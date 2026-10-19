@@ -30,7 +30,8 @@ from app.db.models.role_permission import RolePermission
 from app.db.models.site_visit import SiteVisit
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-
+from app.db.models.notification import Notification
+from app.db.models.notification_preference import NotificationPreference
 
 TestingSessionLocal = SessionLocal
 
@@ -1122,3 +1123,126 @@ def test_create_site_visit_follow_up_rejects_cross_tenant_visit() -> None:
             )
         )
         assert linked_follow_up is None
+
+
+def test_schedule_site_visit_persists_notification_for_owner() -> None:
+    """Scheduling a visit creates a notification for its assigned owner."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        property_record = create_property(db, organization=organization)
+        lead = create_lead(db, organization=organization)
+
+        payload = valid_payload(
+            property_id=property_record.id,
+            lead_id=lead.id,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.post("/api/v1/site-visits", json=payload)
+
+        assert response.status_code == 201, response.text
+        site_visit_id = response.json()["id"]
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key
+                == f"site-visit:{site_visit_id}:scheduled",
+            )
+        )
+
+        assert notification is not None
+        assert notification.event_type == "SITE_VISIT_SCHEDULED"
+        assert notification.title == "Site visit scheduled"
+        assert notification.resource_type == "site_visit"
+        assert notification.resource_id == site_visit_id
+
+
+def test_complete_site_visit_persists_notification_for_owner() -> None:
+    """Completing a visit creates a notification for its assigned owner."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        site_visit = create_scheduled_site_visit(
+            db,
+            user=user,
+            organization=organization,
+        )
+        site_visit_id = site_visit.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.patch(
+                f"/api/v1/site-visits/{site_visit_id}/attendance",
+                json={
+                    "status": "COMPLETED",
+                    "outcome": "INTERESTED",
+                    "feedback": "Customer liked the property.",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key
+                == f"site-visit:{site_visit_id}:status:COMPLETED",
+            )
+        )
+
+        assert notification is not None
+        assert notification.event_type == "SITE_VISIT_COMPLETED"
+        assert notification.title == "Site visit completed"
+        assert notification.resource_type == "site_visit"
+        assert notification.resource_id == str(site_visit_id)
+
+
+def test_schedule_site_visit_respects_disabled_notifications() -> None:
+    """Do not create a visit notification when the preference is disabled."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        property_record = create_property(db, organization=organization)
+        lead = create_lead(db, organization=organization)
+
+        db.add(
+            NotificationPreference(
+                organization_id=organization.id,
+                user_id=user.id,
+                enabled=True,
+                follow_ups_enabled=True,
+                deals_enabled=True,
+                site_visits_enabled=False,
+                leads_enabled=True,
+                automation_enabled=True,
+            )
+        )
+        db.commit()
+
+        payload = valid_payload(
+            property_id=property_record.id,
+            lead_id=lead.id,
+        )
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            response = client.post("/api/v1/site-visits", json=payload)
+
+        assert response.status_code == 201, response.text
+        site_visit_id = response.json()["id"]
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key
+                == f"site-visit:{site_visit_id}:scheduled",
+            )
+        )
+
+        assert notification is None

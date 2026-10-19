@@ -1,4 +1,3 @@
-
 """FastAPI routes for tenant-scoped in-app notifications."""
 
 from __future__ import annotations
@@ -13,14 +12,18 @@ from app.db.session import get_db_session
 from app.notifications.schemas import (
     NotificationListResponse,
     NotificationMarkAllReadResponse,
+    NotificationPreferencesResponse,
+    NotificationPreferencesUpdateRequest,
     NotificationResponse,
     NotificationUnreadCountResponse,
 )
 from app.notifications.service import (
     count_unread_notifications,
+    get_or_create_notification_preferences,
     list_notifications,
     mark_all_notifications_read,
     mark_notification_read,
+    update_notification_preferences,
 )
 from app.tenant.dependencies import TenantContext
 
@@ -86,6 +89,57 @@ def unread_notification_count_endpoint(
     return NotificationUnreadCountResponse(
         unread_count=unread_count,
     )
+
+
+# Define preferences routes before the dynamic notification_id route.
+@router.get(
+    "/preferences",
+    response_model=NotificationPreferencesResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_notification_preferences_endpoint(
+    tenant_context: TenantContext = Depends(
+        require_permission("notifications.preferences.read"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> NotificationPreferencesResponse:
+    """Get or initialize preferences for the authenticated user."""
+    preferences = get_or_create_notification_preferences(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        user_id=tenant_context.membership.user_id,
+    )
+
+    db.commit()
+    db.refresh(preferences)
+
+    return NotificationPreferencesResponse.model_validate(preferences)
+
+
+@router.patch(
+    "/preferences",
+    response_model=NotificationPreferencesResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_notification_preferences_endpoint(
+    request: NotificationPreferencesUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("notifications.preferences.update"),
+    ),
+    db: Session = Depends(get_db_session),
+) -> NotificationPreferencesResponse:
+    """Update the authenticated user's notification preferences."""
+    preferences = update_notification_preferences(
+        db=db,
+        organization_id=tenant_context.organization_id,
+        user_id=tenant_context.membership.user_id,
+        changes=request,
+    )
+
+    db.commit()
+    db.refresh(preferences)
+
+    return NotificationPreferencesResponse.model_validate(preferences)
 
 
 @router.patch(
