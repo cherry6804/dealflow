@@ -44,6 +44,7 @@ from app.db.models.referral import Referral
 from app.db.models.document import Document
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.automation_execution import AutomationExecution
+from app.db.models.notification import Notification
 
 __all__ = [
     "AuditEvent",
@@ -82,4 +83,5 @@ __all__ = [
     "Document",
     "AutomationRule",
     "AutomationExecution",
+    "Notification",
 ]
