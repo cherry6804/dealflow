@@ -1,16 +1,19 @@
 
-"""FastAPI routes for tenant-scoped automation rules."""
+"""FastAPI routes for tenant-scoped automation rules and execution audits."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
 from app.automation_rules.schemas import (
+    AutomationExecutionListResponse,
+    AutomationExecutionResponse,
     AutomationRuleCreateRequest,
     AutomationRuleListResponse,
     AutomationRuleResponse,
@@ -24,6 +27,7 @@ from app.automation_rules.service import (
     list_automation_rules,
     update_automation_rule,
 )
+from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext
@@ -128,6 +132,96 @@ def list_automation_rules_endpoint(
     return AutomationRuleListResponse(
         items=[
             AutomationRuleResponse.model_validate(item)
+            for item in items
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=(total + page_size - 1) // page_size,
+    )
+
+
+@router.get(
+    "/executions",
+    response_model=AutomationExecutionListResponse,
+)
+def list_automation_executions_endpoint(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+    ),
+    rule_id: UUID | None = Query(default=None),
+    event_type: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=100,
+    ),
+    tenant_context: TenantContext = Depends(
+        require_permission("automation.read")
+    ),
+    db: Session = Depends(get_db_session),
+) -> AutomationExecutionListResponse:
+    """List automation execution audit records for the verified organization."""
+    if (
+        status_filter is not None
+        and status_filter not in AutomationExecution.STATUS_VALUES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid automation execution status.",
+        )
+
+    if event_type is not None:
+        event_type = event_type.strip()
+        if not event_type:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Event type cannot be blank.",
+            )
+
+    # Always apply the organization filter, regardless of other query filters.
+    filters = [
+        AutomationExecution.organization_id
+        == tenant_context.organization_id
+    ]
+
+    if status_filter is not None:
+        filters.append(AutomationExecution.status == status_filter)
+
+    if rule_id is not None:
+        filters.append(AutomationExecution.rule_id == rule_id)
+
+    if event_type is not None:
+        filters.append(AutomationExecution.event_type == event_type)
+
+    try:
+        total = db.scalar(
+            select(func.count())
+            .select_from(AutomationExecution)
+            .where(*filters)
+        ) or 0
+
+        items = db.scalars(
+            select(AutomationExecution)
+            .where(*filters)
+            .order_by(
+                AutomationExecution.created_at.desc(),
+                AutomationExecution.id.desc(),
+            )
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Automation execution audit records could not be listed.",
+        ) from None
+
+    return AutomationExecutionListResponse(
+        items=[
+            AutomationExecutionResponse.model_validate(item)
             for item in items
         ],
         page=page,
