@@ -1,3 +1,4 @@
+
 import { NavLink, Outlet } from "react-router-dom";
 
 import NotificationBell from "../components/NotificationBell";
@@ -18,6 +19,11 @@ const navigation = [
   {
     label: "Automation Rules",
     path: "/automation-rules",
+    end: false,
+  },
+  {
+    label: "Automation History",
+    path: "/automation-history",
     end: false,
   },
   {
@@ -49,7 +55,6 @@ export default function AppLayout() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-
               <path
                 d="M9 13.2V27h14V13.2M13 27v-8h6v8"
                 stroke="currentColor"

@@ -1,5 +1,5 @@
 
-"""Integration tests for tenant-scoped automation rules."""
+"""Integration tests for tenant-scoped automation rules and execution audits."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from app.auth.dependencies import (
     CurrentUserContext,
     get_current_user_context,
 )
+from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.organization import Organization
 from app.db.models.user import User
@@ -62,8 +63,12 @@ def valid_payload() -> dict[str, object]:
         "description": "Create a follow-up when a deal is created.",
         "trigger_type": "DEAL_CREATED",
         "trigger_config": {"source": "deals"},
-        "conditions": [{"field": "stage", "operator": "equals", "value": "NEW"}],
-        "actions": [{"type": "CREATE_FOLLOW_UP", "config": {"days_after": 1}}],
+        "conditions": [
+            {"field": "stage", "operator": "equals", "value": "NEW"}
+        ],
+        "actions": [
+            {"type": "CREATE_FOLLOW_UP", "config": {"days_after": 1}}
+        ],
     }
 
 
@@ -414,3 +419,129 @@ def test_update_automation_rule_rejects_another_tenant() -> None:
         persisted = db.get(AutomationRule, UUID(created["id"]))
         assert persisted is not None
         assert persisted.name == "Follow up on new deals"
+
+
+def test_list_automation_executions_returns_audit_details() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            created = create_rule(client)
+            rule_id = UUID(created["id"])
+
+            execution = AutomationExecution(
+                organization_id=organization.id,
+                rule_id=rule_id,
+                event_type="DEAL_CREATED",
+                event_id=UUID(int=1001),
+                status=AutomationExecution.STATUS_FAILED,
+                action_results=[
+                    {
+                        "action_type": "CREATE_FOLLOW_UP",
+                        "status": "FAILED",
+                        "reason": "Test failure",
+                    }
+                ],
+                error_message="One or more automation actions failed.",
+            )
+            db.add(execution)
+            db.commit()
+            execution_id = execution.id
+
+            response = client.get(
+                "/api/v1/automation-rules/executions",
+                params={
+                    "status": "FAILED",
+                    "rule_id": str(rule_id),
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["total"] == 1
+        assert result["page"] == 1
+        assert result["page_size"] == 20
+        assert result["total_pages"] == 1
+
+        item = result["items"][0]
+        assert item["id"] == str(execution_id)
+        assert item["organization_id"] == str(organization.id)
+        assert item["rule_id"] == str(rule_id)
+        assert item["event_type"] == "DEAL_CREATED"
+        assert item["status"] == "FAILED"
+        assert item["error_message"] == (
+            "One or more automation actions failed."
+        )
+        assert item["action_results"][0]["reason"] == "Test failure"
+        assert item["created_at"] is not None
+
+
+def test_list_automation_executions_rejects_invalid_status() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.get(
+                "/api/v1/automation-rules/executions",
+                params={"status": "INVALID"},
+            )
+
+        assert response.status_code == 422, response.text
+
+
+def test_list_automation_executions_requires_read_permission() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=(AUTOMATION_CREATE,),
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.get(
+                "/api/v1/automation-rules/executions"
+            )
+
+        assert response.status_code == 403, response.text
+
+
+def test_list_automation_executions_is_tenant_scoped() -> None:
+    with TestingSessionLocal() as db:
+        user_a, organization_a = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+        user_b, organization_b = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+
+        with request_as(user=user_b, organization=organization_b) as client_b:
+            created = create_rule(client_b)
+            rule_id = UUID(created["id"])
+
+            execution = AutomationExecution(
+                organization_id=organization_b.id,
+                rule_id=rule_id,
+                event_type="DEAL_CREATED",
+                event_id=UUID(int=1002),
+                status=AutomationExecution.STATUS_SUCCEEDED,
+                action_results=[],
+            )
+            db.add(execution)
+            db.commit()
+
+        with request_as(user=user_a, organization=organization_a) as client_a:
+            response = client_a.get(
+                "/api/v1/automation-rules/executions"
+            )
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["total"] == 0
+        assert result["items"] == []

@@ -98,3 +98,32 @@ class AutomationRuleListResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class AutomationExecutionResponse(BaseModel):
+    """Audit details for one automation-rule execution."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    rule_id: UUID
+    event_type: str
+    event_id: UUID
+    status: str
+    action_results: list[dict[str, Any]]
+    error_message: str | None
+    started_at: Any
+    completed_at: Any
+    created_at: Any
+    updated_at: Any
+
+
+class AutomationExecutionListResponse(BaseModel):
+    """Paginated automation execution audit trail."""
+
+    items: list[AutomationExecutionResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
