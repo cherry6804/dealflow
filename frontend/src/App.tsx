@@ -1,3 +1,4 @@
+
 import {
   BrowserRouter,
   Navigate,
@@ -10,6 +11,7 @@ import { AppProvider } from "./contexts/AppContext";
 import { useAppContext } from "./contexts/useAppContext";
 import AppLayout from "./layouts/AppLayout";
 
+import AutomationExecutionHistoryPage from "./pages/AutomationExecutionHistoryPage";
 import AutomationRulesPage from "./pages/AutomationRulesPage";
 import ContactsPage from "./pages/ContactsPage";
 import CustomersPage from "./pages/CustomersPage";
@@ -108,6 +110,10 @@ function ApplicationRoutes() {
         <Route
           path="/automation-rules"
           element={<AutomationRulesPage />}
+        />
+        <Route
+          path="/automation-history"
+          element={<AutomationExecutionHistoryPage />}
         />
 
         <Route
