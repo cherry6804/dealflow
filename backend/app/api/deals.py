@@ -14,13 +14,13 @@ from app.authz.dependencies import require_permission
 from app.automation_rules.execution_service import (
     execute_deal_created_automations,
 )
+from app.db.models.deal import Deal
 from app.db.session import get_db_session
 from app.deals.schemas import (
     DealCreateRequest,
     DealListResponse,
     DealResponse,
     DealStage,
-    DealStageHistoryResponse,
     DealStageTransitionRequest,
 )
 from app.deals.service import (
@@ -29,9 +29,34 @@ from app.deals.service import (
     list_deals,
     transition_deal_stage,
 )
+from app.notifications.service import create_notification
 from app.tenant.dependencies import TenantContext
 
 router = APIRouter(prefix="/api/v1/deals", tags=["deals"])
+
+
+def _notify_deal_owner(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal: Deal,
+    event_type: str,
+    title: str,
+    message: str,
+    event_key: str,
+) -> None:
+    """Create a preference-aware notification in the current transaction."""
+    create_notification(
+        db,
+        organization_id=organization_id,
+        recipient_user_id=deal.owner_user_id,
+        event_type=event_type,
+        title=title,
+        message=message,
+        resource_type="deal",
+        resource_id=str(deal.id),
+        event_key=event_key,
+    )
 
 
 @router.post(
@@ -46,7 +71,7 @@ def create_deal_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
-    """Create a deal and execute its matching creation automations."""
+    """Create a deal, notify its owner, and execute matching automations."""
     try:
         deal = create_deal(
             db=db,
@@ -65,9 +90,18 @@ def create_deal_endpoint(
                 ),
             )
 
-        # Execute active DEAL_CREATED rules within the same transaction.
-        # The execution service does not commit; this endpoint owns the
-        # transaction for both the deal and its automation results.
+        _notify_deal_owner(
+            db,
+            organization_id=tenant_context.organization_id,
+            deal=deal,
+            event_type="DEAL_CREATED",
+            title="New deal created",
+            message=f"A new deal has been created in stage {deal.stage}.",
+            event_key=f"deal:{deal.id}:created",
+        )
+
+        # Deal creation, notification, and matching automations share
+        # this transaction. The execution service does not commit.
         execute_deal_created_automations(
             db,
             organization_id=tenant_context.organization_id,
@@ -163,7 +197,7 @@ def transition_deal_stage_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
-    """Progress a deal and record its stage history."""
+    """Transition a deal, record history, and notify its owner."""
     try:
         deal = transition_deal_stage(
             db=db,
@@ -180,6 +214,31 @@ def transition_deal_stage_endpoint(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Deal not found.",
             )
+
+        new_stage = deal.stage
+
+        if new_stage == DealStage.CLOSED_WON.value:
+            event_type = "DEAL_CLOSED_WON"
+            title = "Deal won"
+            message = "Your deal has been marked as closed won."
+        elif new_stage == DealStage.CLOSED_LOST.value:
+            event_type = "DEAL_CLOSED_LOST"
+            title = "Deal lost"
+            message = "Your deal has been marked as closed lost."
+        else:
+            event_type = "DEAL_STAGE_CHANGED"
+            title = "Deal stage updated"
+            message = f"Your deal has moved to the {new_stage} stage."
+
+        _notify_deal_owner(
+            db,
+            organization_id=tenant_context.organization_id,
+            deal=deal,
+            event_type=event_type,
+            title=title,
+            message=message,
+            event_key=f"deal:{deal.id}:stage:{new_stage}",
+        )
 
         db.commit()
         db.refresh(deal)

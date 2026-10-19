@@ -16,6 +16,7 @@ from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
+from app.notifications.service import create_notification
 
 
 SUPPORTED_CONDITION_FIELDS = {
@@ -40,7 +41,6 @@ SUPPORTED_OPERATORS = {
 
 class AutomationConditionError(ValueError):
     """Raised when a rule contains an unsupported or invalid condition."""
-
 
 
 def _evaluate_conditions(
@@ -207,6 +207,63 @@ def _execute_action(
     raise ValueError(f"Unsupported automation action: {action_type!r}.")
 
 
+def _notify_automation_execution(
+    db: Session,
+    *,
+    organization_id: UUID,
+    rule: AutomationRule,
+    execution: AutomationExecution,
+    deal: Deal,
+) -> None:
+    """Notify the rule creator about a recorded execution outcome.
+
+    The notification is written in the same transaction as the execution.
+    Notification preferences and recipient membership are enforced by
+    create_notification. The caller remains responsible for committing.
+    """
+
+    status_details = {
+        AutomationExecution.STATUS_SUCCEEDED: (
+            "Automation completed",
+            "completed successfully",
+        ),
+        AutomationExecution.STATUS_PARTIAL: (
+            "Automation partially completed",
+            "completed with some actions skipped or failed",
+        ),
+        AutomationExecution.STATUS_FAILED: (
+            "Automation failed",
+            "failed",
+        ),
+        AutomationExecution.STATUS_SKIPPED: (
+            "Automation skipped",
+            "was skipped",
+        ),
+    }
+
+    details = status_details.get(execution.status)
+    if details is None:
+        # Do not send notifications for intermediate or unknown states.
+        return
+
+    title, outcome = details
+
+    create_notification(
+        db,
+        organization_id=organization_id,
+        recipient_user_id=rule.created_by_user_id,
+        event_type=f"AUTOMATION_EXECUTION_{execution.status}",
+        title=title,
+        message=(
+            f"Automation rule '{rule.name}' {outcome} "
+            f"for deal {deal.id}."
+        ),
+        resource_type="automation_execution",
+        resource_id=str(execution.id),
+        event_key=f"automation-execution:{execution.id}:completed",
+    )
+
+
 def execute_deal_created_automations(
     db: Session,
     *,
@@ -320,7 +377,9 @@ def execute_deal_created_automations(
                             execution.status = (
                                 AutomationExecution.STATUS_SKIPPED
                             )
-                        elif succeeded and (failed or "SKIPPED" in action_statuses):
+                        elif succeeded and (
+                            failed or "SKIPPED" in action_statuses
+                        ):
                             execution.status = (
                                 AutomationExecution.STATUS_PARTIAL
                             )
@@ -343,6 +402,19 @@ def execute_deal_created_automations(
                             )
 
                 execution.completed_at = datetime.now(timezone.utc)
+                db.flush()
+
+                # This uses the persisted execution ID as a stable
+                # notification key, so retries cannot create a second
+                # execution or a second notification for the same event.
+                _notify_automation_execution(
+                    db,
+                    organization_id=organization_id,
+                    rule=rule,
+                    execution=execution,
+                    deal=deal,
+                )
+
                 db.flush()
                 executions.append(execution)
 

@@ -1,10 +1,13 @@
-"""Follow-up creation service operations for DealFlow."""
+"""Follow-up creation and lifecycle operations for DealFlow."""
 
 from __future__ import annotations
+
 from datetime import datetime, timezone
 from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+
 from app.db.models.site_visit import SiteVisit
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
@@ -16,6 +19,36 @@ from app.follow_ups.schemas import (
     FollowUpCreateRequest,
     FollowUpRescheduleRequest,
 )
+from app.notifications.service import create_notification
+
+
+def _notify_follow_up(
+    db: Session,
+    *,
+    follow_up: FollowUp,
+    event_type: str,
+    title: str,
+    message: str,
+    event_key: str,
+) -> None:
+    """Create a tenant-scoped notification for the follow-up owner.
+
+    The caller owns the transaction. Notification creation respects the
+    recipient's notification preferences and uses an event key to prevent
+    duplicate notifications for the same event.
+    """
+    create_notification(
+        db=db,
+        organization_id=follow_up.organization_id,
+        recipient_user_id=follow_up.owner_user_id,
+        event_type=event_type,
+        title=title,
+        message=message,
+        resource_type="follow_up",
+        resource_id=str(follow_up.id),
+        event_key=event_key,
+    )
+
 
 def create_follow_up(
     db: Session,
@@ -25,13 +58,12 @@ def create_follow_up(
     lead_id: UUID,
     payload: FollowUpCreateRequest,
 ) -> FollowUp | None:
-    """Create a pending follow-up for a lead in the verified organization.
+    """Create a pending follow-up and notify its owner.
 
     Return None when the lead does not belong to the organization.
     Raise ValueError when the requested owner is not an active member
     of the organization.
     """
-
     lead_statement = select(Lead.id).where(
         Lead.id == lead_id,
         Lead.organization_id == organization_id,
@@ -68,7 +100,17 @@ def create_follow_up(
     db.flush()
     db.refresh(follow_up)
 
+    _notify_follow_up(
+        db,
+        follow_up=follow_up,
+        event_type="FOLLOW_UP_CREATED",
+        title="New follow-up assigned",
+        message=f"Follow-up '{follow_up.title}' has been created.",
+        event_key=f"follow-up:{follow_up.id}:created",
+    )
+
     return follow_up
+
 
 def create_site_visit_follow_up(
     db: Session,
@@ -99,18 +141,16 @@ def create_site_visit_follow_up(
 
     if site_visit.lead_id is None:
         raise ValueError(
-            "This site visit has no linked lead. "
-            "A follow-up requires a lead."
+            "This site visit has no linked lead. A follow-up requires a lead."
         )
 
     existing_statement = select(FollowUp.id).where(
         FollowUp.organization_id == organization_id,
         FollowUp.site_visit_id == site_visit_id,
     )
+
     if db.scalar(existing_statement) is not None:
-        raise ValueError(
-            "A follow-up already exists for this site visit."
-        )
+        raise ValueError("A follow-up already exists for this site visit.")
 
     follow_up = create_follow_up(
         db,
@@ -129,6 +169,7 @@ def create_site_visit_follow_up(
 
     return follow_up
 
+
 def complete_follow_up(
     db: Session,
     *,
@@ -136,11 +177,7 @@ def complete_follow_up(
     current_user_id: UUID,
     follow_up_id: UUID,
 ) -> FollowUp | None:
-    """Complete a pending follow-up in the verified organization.
-
-    Return None when the follow-up does not belong to the organization.
-    Raise ValueError when the follow-up is not pending.
-    """
+    """Complete a pending follow-up and notify its owner."""
     statement = select(FollowUp).where(
         FollowUp.id == follow_up_id,
         FollowUp.organization_id == organization_id,
@@ -160,6 +197,15 @@ def complete_follow_up(
     db.flush()
     db.refresh(follow_up)
 
+    _notify_follow_up(
+        db,
+        follow_up=follow_up,
+        event_type="FOLLOW_UP_COMPLETED",
+        title="Follow-up completed",
+        message=f"Follow-up '{follow_up.title}' has been completed.",
+        event_key=f"follow-up:{follow_up.id}:completed",
+    )
+
     return follow_up
 
 
@@ -170,11 +216,7 @@ def reschedule_follow_up(
     follow_up_id: UUID,
     payload: FollowUpRescheduleRequest,
 ) -> FollowUp | None:
-    """Reschedule a pending follow-up in the verified organization.
-
-    Return None when the follow-up does not belong to the organization.
-    Raise ValueError when the follow-up is not pending.
-    """
+    """Reschedule a pending follow-up and notify its owner."""
     statement = select(FollowUp).where(
         FollowUp.id == follow_up_id,
         FollowUp.organization_id == organization_id,
@@ -192,7 +234,22 @@ def reschedule_follow_up(
     db.flush()
     db.refresh(follow_up)
 
+    due_at_key = follow_up.due_at.isoformat()
+
+    _notify_follow_up(
+        db,
+        follow_up=follow_up,
+        event_type="FOLLOW_UP_RESCHEDULED",
+        title="Follow-up rescheduled",
+        message=(
+            f"Follow-up '{follow_up.title}' has been rescheduled "
+            f"to {due_at_key}."
+        ),
+        event_key=f"follow-up:{follow_up.id}:rescheduled:{due_at_key}",
+    )
+
     return follow_up
+
 
 def list_follow_ups(
     db: Session,
@@ -208,14 +265,10 @@ def list_follow_ups(
     )
 
     if due_before is not None:
-        statement = statement.where(
-            FollowUp.due_at < due_before,
-        )
+        statement = statement.where(FollowUp.due_at < due_before)
 
     if overdue_only:
-        statement = statement.where(
-            FollowUp.due_at < func.now(),
-        )
+        statement = statement.where(FollowUp.due_at < func.now())
 
     statement = statement.order_by(
         FollowUp.due_at.asc(),
@@ -233,7 +286,6 @@ def bulk_complete_follow_ups(
     payload: BulkFollowUpRequest,
 ) -> list[BulkFollowUpItemResult]:
     """Complete selected pending follow-ups independently."""
-
     results: list[BulkFollowUpItemResult] = []
 
     for follow_up_id in payload.follow_up_ids:
@@ -271,6 +323,15 @@ def bulk_complete_follow_ups(
             db.flush()
             db.refresh(follow_up)
 
+            _notify_follow_up(
+                db,
+                follow_up=follow_up,
+                event_type="FOLLOW_UP_COMPLETED",
+                title="Follow-up completed",
+                message=f"Follow-up '{follow_up.title}' has been completed.",
+                event_key=f"follow-up:{follow_up.id}:completed",
+            )
+
             results.append(
                 BulkFollowUpItemResult(
                     follow_up_id=follow_up_id,
@@ -290,7 +351,6 @@ def bulk_reschedule_follow_ups(
     payload: BulkFollowUpRescheduleRequest,
 ) -> list[BulkFollowUpItemResult]:
     """Reschedule selected pending follow-ups independently."""
-
     results: list[BulkFollowUpItemResult] = []
 
     for follow_up_id in payload.follow_up_ids:
@@ -325,6 +385,22 @@ def bulk_reschedule_follow_ups(
 
             db.flush()
             db.refresh(follow_up)
+
+            due_at_key = follow_up.due_at.isoformat()
+
+            _notify_follow_up(
+                db,
+                follow_up=follow_up,
+                event_type="FOLLOW_UP_RESCHEDULED",
+                title="Follow-up rescheduled",
+                message=(
+                    f"Follow-up '{follow_up.title}' has been rescheduled "
+                    f"to {due_at_key}."
+                ),
+                event_key=(
+                    f"follow-up:{follow_up.id}:rescheduled:{due_at_key}"
+                ),
+            )
 
             results.append(
                 BulkFollowUpItemResult(

@@ -25,7 +25,8 @@ from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-
+from app.db.models.notification import Notification
+from app.db.models.notification_preference import NotificationPreference
 
 TestingSessionLocal = SessionLocal
 
@@ -742,3 +743,131 @@ def test_transition_deal_stage_rejects_another_tenant() -> None:
             )
         ).all()
         assert history == []
+
+
+def test_create_deal_persists_notification_for_owner() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        customer = create_customer_profile(db, organization=organization)
+        property_record = create_property(db, organization=organization)
+        db.commit()
+
+        payload = valid_payload(
+            customer_profile_id=customer.id,
+            property_id=property_record.id,
+        )
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.post("/api/v1/deals", json=payload)
+
+        assert response.status_code == 201, response.text
+        deal_id = response.json()["id"]
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key == f"deal:{deal_id}:created",
+            )
+        )
+
+        assert notification is not None
+        assert notification.event_type == "DEAL_CREATED"
+        assert notification.title == "New deal created"
+        assert notification.resource_type == "deal"
+        assert notification.resource_id == deal_id
+
+
+def test_create_deal_respects_disabled_deal_notifications() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        customer = create_customer_profile(db, organization=organization)
+        property_record = create_property(db, organization=organization)
+
+        db.add(
+            NotificationPreference(
+                organization_id=organization.id,
+                user_id=user.id,
+                enabled=True,
+                deals_enabled=False,
+                follow_ups_enabled=True,
+                site_visits_enabled=True,
+                leads_enabled=True,
+                automation_enabled=True,
+            )
+        )
+        db.commit()
+
+        payload = valid_payload(
+            customer_profile_id=customer.id,
+            property_id=property_record.id,
+        )
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.post("/api/v1/deals", json=payload)
+
+        assert response.status_code == 201, response.text
+        deal_id = response.json()["id"]
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key == f"deal:{deal_id}:created",
+            )
+        )
+
+        assert notification is None
+
+
+def test_transition_deal_stage_persists_notification() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("deals.create", "deals.read", "deals.update"),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+        deal_id = deal.id
+
+        app = create_test_app(user=user)
+        with TestClient(app) as client:
+            client.headers.update(
+                {"X-Organization-ID": str(organization.id)}
+            )
+            response = client.patch(
+                f"/api/v1/deals/{deal_id}/stage",
+                json={
+                    "stage": "QUALIFICATION",
+                    "reason": "Customer requirements qualified",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_key
+                == f"deal:{deal_id}:stage:QUALIFICATION",
+            )
+        )
+
+        assert notification is not None
+        assert notification.event_type == "DEAL_STAGE_CHANGED"
+        assert notification.resource_id == str(deal_id)

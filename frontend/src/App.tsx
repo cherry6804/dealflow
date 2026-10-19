@@ -19,6 +19,7 @@ import ImportsPage from "./pages/ImportsPage";
 import LeadsPage from "./pages/LeadsPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import NotificationPreferencesPage from "./pages/NotificationPreferencesPage";
 import PipelinePage from "./pages/PipelinePage";
 import PropertiesPage from "./pages/PropertiesPage";
 import ReferralsPage from "./pages/ReferralsPage";
@@ -107,6 +108,11 @@ function ApplicationRoutes() {
         <Route
           path="/automation-rules"
           element={<AutomationRulesPage />}
+        />
+
+        <Route
+          path="/notification-preferences"
+          element={<NotificationPreferencesPage />}
         />
 
         <Route

@@ -1,10 +1,10 @@
 
-"""Integration tests for tenant-scoped in-app notifications."""
+"""Integration tests for tenant-scoped in-app notifications and preferences."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -13,20 +13,29 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.notifications import router as notifications_router
-from app.auth.dependencies import (
-    CurrentUserContext,
-    get_current_user_context,
-)
+from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.db.models.membership import Membership
 from app.db.models.notification import Notification
+from app.db.models.notification_preference import NotificationPreference
 from app.db.models.organization import Organization
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-from app.notifications.service import create_notification
+from app.notifications.service import (
+    create_notification,
+    get_or_create_notification_preferences,
+)
 from tests.test_deals_api import create_authorized_user, create_user
 
 
 TestingSessionLocal = SessionLocal
+
+PREFERENCE_READ = "notifications.preferences.read"
+PREFERENCE_UPDATE = "notifications.preferences.update"
+NOTIFICATION_PERMISSIONS = (
+    "leads.read",
+    PREFERENCE_READ,
+    PREFERENCE_UPDATE,
+)
 
 
 def create_test_app(*, user: User) -> FastAPI:
@@ -76,6 +85,7 @@ def create_test_notification(
         resource_id=str(uuid4()),
         event_key=event_key,
     )
+    assert notification is not None
     db.commit()
     db.refresh(notification)
     return notification
@@ -147,15 +157,11 @@ def test_unread_count_and_mark_one_read() -> None:
         )
 
         with request_as(user=user, organization=organization) as client:
-            count_before = client.get(
-                "/api/v1/notifications/unread-count"
-            )
+            count_before = client.get("/api/v1/notifications/unread-count")
             marked = client.patch(
                 f"/api/v1/notifications/{notification.id}/read"
             )
-            count_after = client.get(
-                "/api/v1/notifications/unread-count"
-            )
+            count_after = client.get("/api/v1/notifications/unread-count")
 
         assert count_before.status_code == 200, count_before.text
         assert count_before.json()["unread_count"] == 1
@@ -189,9 +195,7 @@ def test_mark_all_read_updates_only_current_users_notifications() -> None:
         )
 
         with request_as(user=user, organization=organization) as client:
-            response = client.post(
-                "/api/v1/notifications/mark-all-read"
-            )
+            response = client.post("/api/v1/notifications/mark-all-read")
 
         assert response.status_code == 200, response.text
         assert response.json()["updated_count"] == 1
@@ -290,6 +294,8 @@ def test_duplicate_event_key_returns_existing_notification() -> None:
         )
         db.commit()
 
+        assert first is not None
+        assert second is not None
         assert second.id == first.id
 
         persisted = db.scalars(
@@ -402,3 +408,241 @@ def test_mark_unknown_notification_returns_404() -> None:
             )
 
         assert response.status_code == 404, response.text
+
+
+# ---------------------------------------------------------------------------
+# DF-133: Notification preferences API and suppression behavior
+# ---------------------------------------------------------------------------
+
+
+def test_get_notification_preferences_creates_default_preferences() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.get("/api/v1/notifications/preferences")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["organization_id"] == str(organization.id)
+        assert body["user_id"] == str(user.id)
+        assert body["enabled"] is True
+        assert body["follow_ups_enabled"] is True
+        assert body["deals_enabled"] is True
+        assert body["site_visits_enabled"] is True
+        assert body["leads_enabled"] is True
+        assert body["automation_enabled"] is True
+
+        preference = db.scalar(
+            select(NotificationPreference).where(
+                NotificationPreference.organization_id == organization.id,
+                NotificationPreference.user_id == user.id,
+            )
+        )
+        assert preference is not None
+
+
+def test_patch_notification_preferences_updates_only_supplied_fields() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            initial = client.get("/api/v1/notifications/preferences")
+            assert initial.status_code == 200, initial.text
+
+            response = client.patch(
+                "/api/v1/notifications/preferences",
+                json={"deals_enabled": False},
+            )
+
+            subsequent = client.get("/api/v1/notifications/preferences")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["deals_enabled"] is False
+        assert response.json()["follow_ups_enabled"] is True
+        assert response.json()["enabled"] is True
+
+        assert subsequent.status_code == 200, subsequent.text
+        assert subsequent.json()["deals_enabled"] is False
+        assert subsequent.json()["follow_ups_enabled"] is True
+        assert subsequent.json()["site_visits_enabled"] is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"enabled": None},
+        {"deals_enabled": None},
+    ],
+)
+def test_patch_notification_preferences_rejects_empty_or_null_values(
+    payload: dict[str, object],
+) -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.patch(
+                "/api/v1/notifications/preferences",
+                json=payload,
+            )
+
+        assert response.status_code == 422, response.text
+
+
+def test_patch_notification_preferences_rejects_unknown_fields() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.patch(
+                "/api/v1/notifications/preferences",
+                json={"unknown_setting": False},
+            )
+
+        assert response.status_code == 422, response.text
+
+
+def test_create_notification_suppresses_disabled_deal_category() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+
+        preference = get_or_create_notification_preferences(
+            db,
+            organization_id=organization.id,
+            user_id=user.id,
+        )
+        preference.deals_enabled = False
+        db.commit()
+
+        notification = create_notification(
+            db,
+            organization_id=organization.id,
+            recipient_user_id=user.id,
+            event_type="DEAL_UPDATED",
+            title="Deal updated",
+            message="A deal was updated.",
+        )
+
+        assert notification is None
+        assert db.scalar(
+            select(Notification.id).where(
+                Notification.organization_id == organization.id,
+                Notification.recipient_user_id == user.id,
+                Notification.event_type == "DEAL_UPDATED",
+            )
+        ) is None
+
+
+def test_create_notification_suppresses_disabled_global_setting() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+
+        preference = get_or_create_notification_preferences(
+            db,
+            organization_id=organization.id,
+            user_id=user.id,
+        )
+        preference.enabled = False
+        db.commit()
+
+        notification = create_notification(
+            db,
+            organization_id=organization.id,
+            recipient_user_id=user.id,
+            event_type="LEAD_CREATED",
+            title="Lead created",
+            message="A lead was created.",
+        )
+
+        assert notification is None
+
+
+def test_create_notification_allows_enabled_category() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+
+        preference = get_or_create_notification_preferences(
+            db,
+            organization_id=organization.id,
+            user_id=user.id,
+        )
+        preference.deals_enabled = False
+        preference.follow_ups_enabled = True
+        db.commit()
+
+        notification = create_notification(
+            db,
+            organization_id=organization.id,
+            recipient_user_id=user.id,
+            event_type="FOLLOW_UP_CREATED",
+            title="Follow-up created",
+            message="A follow-up was created.",
+        )
+
+        assert notification is not None
+        assert notification.event_type == "FOLLOW_UP_CREATED"
+
+
+def test_notification_preferences_are_scoped_to_organization() -> None:
+    with TestingSessionLocal() as db:
+        user, organization_a = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+        organization_b_user, organization_b = create_authorized_user(
+            db,
+            permission_keys=NOTIFICATION_PERMISSIONS,
+        )
+
+        # The same user belongs to both organizations.
+        add_member_to_organization(
+            db,
+            user=user,
+            organization=organization_b,
+        )
+
+        preference_a = get_or_create_notification_preferences(
+            db,
+            organization_id=organization_a.id,
+            user_id=user.id,
+        )
+        preference_a.deals_enabled = False
+
+        preference_b = get_or_create_notification_preferences(
+            db,
+            organization_id=organization_b.id,
+            user_id=user.id,
+        )
+        preference_b.deals_enabled = True
+        db.commit()
+
+        with request_as(user=user, organization=organization_a) as client:
+            response_a = client.get("/api/v1/notifications/preferences")
+
+        assert response_a.status_code == 200, response_a.text
+        assert response_a.json()["organization_id"] == str(organization_a.id)
+        assert response_a.json()["deals_enabled"] is False
+
+        # The second user's preferences must not be returned for the first user.
+        with request_as(
+            user=organization_b_user,
+            organization=organization_b,
+        ) as client:
+            response_b = client.get("/api/v1/notifications/preferences")
+
+        assert response_b.status_code == 200, response_b.text
+        assert response_b.json()["user_id"] == str(organization_b_user.id)

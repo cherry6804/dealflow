@@ -20,6 +20,11 @@ const navigation = [
     path: "/automation-rules",
     end: false,
   },
+  {
+    label: "Notification Settings",
+    path: "/notification-preferences",
+    end: false,
+  },
 ];
 
 export default function AppLayout() {
