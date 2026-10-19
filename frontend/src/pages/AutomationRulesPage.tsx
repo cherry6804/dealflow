@@ -21,23 +21,73 @@ import "./AutomationRulesPage.css";
 
 const PAGE_SIZE = 10;
 
-const DEFAULT_ACTIONS: Array<Record<string, unknown>> = [
-  {
-    type: "CREATE_FOLLOW_UP",
-    config: {
-      days_after: 1,
-    },
-  },
-];
+const FOLLOW_UP_TYPES = [
+  { value: "CALL", label: "Phone call" },
+  { value: "EMAIL", label: "Email" },
+  { value: "MEETING", label: "Meeting" },
+  { value: "VISIT", label: "Property visit" },
+  { value: "TASK", label: "Task" },
+  { value: "OTHER", label: "Other" },
+] as const;
 
-function createEmptyInput(): AutomationRuleInput {
+const CONDITION_FIELDS = [
+  { value: "stage", label: "Deal stage" },
+  { value: "expected_value", label: "Expected deal value" },
+  { value: "currency", label: "Currency" },
+  { value: "owner_user_id", label: "Deal owner ID" },
+  { value: "lead_id", label: "Lead ID" },
+  { value: "customer_profile_id", label: "Customer profile ID" },
+  { value: "property_id", label: "Property ID" },
+  { value: "notes", label: "Deal notes" },
+] as const;
+
+const CONDITION_OPERATORS = [
+  { value: "equals", label: "Equals" },
+  { value: "not_equals", label: "Does not equal" },
+  { value: "in", label: "Is one of" },
+  { value: "not_in", label: "Is not one of" },
+  { value: "exists", label: "Has a value" },
+] as const;
+
+type ConditionField = (typeof CONDITION_FIELDS)[number]["value"];
+type ConditionOperator =
+  (typeof CONDITION_OPERATORS)[number]["value"];
+
+interface AutomationForm {
+  name: string;
+  description: string;
+  triggerSource: "deals";
+  useCondition: boolean;
+  conditionField: ConditionField;
+  conditionOperator: ConditionOperator;
+  conditionValue: string;
+  conditionExists: boolean;
+  daysAfter: string;
+  followUpTitle: string;
+  followUpDescription: string;
+  followUpType: string;
+}
+
+interface RuleEditorData {
+  form: AutomationForm;
+  extraConditions: Array<Record<string, unknown>>;
+  extraActions: Array<Record<string, unknown>>;
+}
+
+function createEmptyForm(): AutomationForm {
   return {
     name: "",
     description: "",
-    trigger_type: "DEAL_CREATED",
-    trigger_config: {},
-    conditions: [],
-    actions: DEFAULT_ACTIONS,
+    triggerSource: "deals",
+    useCondition: false,
+    conditionField: "stage",
+    conditionOperator: "equals",
+    conditionValue: "NEW",
+    conditionExists: true,
+    daysAfter: "1",
+    followUpTitle: "Contact lead about new deal",
+    followUpDescription: "",
+    followUpType: "CALL",
   };
 }
 
@@ -68,56 +118,167 @@ function statusLabel(status: AutomationRuleStatus): string {
   }
 }
 
-function parseJsonObject(
-  value: string,
-  fieldName: string,
-): Record<string, unknown> {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`${fieldName} must contain valid JSON.`);
-  }
-
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed)
-  ) {
-    throw new Error(`${fieldName} must be a JSON object.`);
-  }
-
-  return parsed as Record<string, unknown>;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
-function parseJsonArray(
-  value: string,
-  fieldName: string,
-): Array<Record<string, unknown>> {
-  let parsed: unknown;
+function getString(
+  record: Record<string, unknown>,
+  key: string,
+  fallback = "",
+): string {
+  const value = record[key];
+  return typeof value === "string" ? value : fallback;
+}
 
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`${fieldName} must contain valid JSON.`);
+function getConditionValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
   }
 
-  if (
-    !Array.isArray(parsed) ||
-    parsed.some(
-      (item) =>
-        item === null ||
-        typeof item !== "object" ||
-        Array.isArray(item),
-    )
+  if (Array.isArray(value)) {
+    return value.map(String).join(", ");
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function getRuleEditorData(rule: AutomationRule): RuleEditorData {
+  const firstCondition = isRecord(rule.conditions[0])
+    ? rule.conditions[0]
+    : null;
+
+  const firstAction = isRecord(rule.actions[0])
+    ? rule.actions[0]
+    : null;
+
+  const actionConfig =
+    firstAction && isRecord(firstAction.config)
+      ? firstAction.config
+      : {};
+
+  const rawField = firstCondition?.field;
+  const conditionField = CONDITION_FIELDS.some(
+    (field) => field.value === rawField,
+  )
+    ? (rawField as ConditionField)
+    : "stage";
+
+  const rawOperator = firstCondition?.operator;
+  const conditionOperator = CONDITION_OPERATORS.some(
+    (operator) => operator.value === rawOperator,
+  )
+    ? (rawOperator as ConditionOperator)
+    : "equals";
+
+  const rawSource = rule.trigger_config.source;
+
+  return {
+    form: {
+      name: rule.name,
+      description: rule.description ?? "",
+      triggerSource: rawSource === "deals" ? "deals" : "deals",
+      useCondition: rule.conditions.length > 0,
+      conditionField,
+      conditionOperator,
+      conditionValue:
+        firstCondition && "value" in firstCondition
+          ? getConditionValue(firstCondition.value)
+          : "",
+      conditionExists:
+        firstCondition?.value === true,
+      daysAfter:
+        typeof actionConfig.days_after === "number"
+          ? String(actionConfig.days_after)
+          : "1",
+      followUpTitle: getString(
+        actionConfig,
+        "title",
+        "Contact lead about new deal",
+      ),
+      followUpDescription: getString(
+        actionConfig,
+        "description",
+      ),
+      followUpType: getString(
+        actionConfig,
+        "follow_up_type",
+        "TASK",
+      ),
+    },
+    extraConditions: rule.conditions.slice(1),
+    extraActions: rule.actions.slice(1),
+  };
+}
+
+function buildCondition(
+  form: AutomationForm,
+): Record<string, unknown> {
+  let value: unknown;
+
+  if (form.conditionOperator === "exists") {
+    value = form.conditionExists;
+  } else if (
+    form.conditionOperator === "in" ||
+    form.conditionOperator === "not_in"
   ) {
-    throw new Error(
-      `${fieldName} must be a JSON array of objects.`,
-    );
+    value = form.conditionValue
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } else if (form.conditionField === "expected_value") {
+    value = Number(form.conditionValue);
+  } else {
+    value = form.conditionValue.trim();
   }
 
-  return parsed as Array<Record<string, unknown>>;
+  return {
+    field: form.conditionField,
+    operator: form.conditionOperator,
+    value,
+  };
+}
+
+function buildRuleInput(
+  form: AutomationForm,
+  extraConditions: Array<Record<string, unknown>>,
+  extraActions: Array<Record<string, unknown>>,
+): AutomationRuleInput {
+  const daysAfter = Number(form.daysAfter);
+
+  const conditions = form.useCondition
+    ? [buildCondition(form), ...extraConditions]
+    : [...extraConditions];
+
+  const actions = [
+    {
+      type: "CREATE_FOLLOW_UP",
+      config: {
+        days_after: daysAfter,
+        title: form.followUpTitle.trim(),
+        description: form.followUpDescription.trim() || null,
+        follow_up_type: form.followUpType,
+      },
+    },
+    ...extraActions,
+  ];
+
+  return {
+    name: form.name.trim(),
+    description: form.description.trim() || null,
+    trigger_type: "DEAL_CREATED",
+    trigger_config: { source: form.triggerSource },
+    conditions,
+    actions,
+  };
 }
 
 export default function AutomationRulesPage() {
@@ -140,16 +301,13 @@ export default function AutomationRulesPage() {
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(
     null,
   );
-
-  const [form, setForm] = useState<AutomationRuleInput>(
-    createEmptyInput,
-  );
-
-  const [triggerConfigText, setTriggerConfigText] = useState("{}");
-  const [conditionsText, setConditionsText] = useState("[]");
-  const [actionsText, setActionsText] = useState(
-    JSON.stringify(DEFAULT_ACTIONS, null, 2),
-  );
+  const [form, setForm] = useState<AutomationForm>(createEmptyForm);
+  const [extraConditions, setExtraConditions] = useState<
+    Array<Record<string, unknown>>
+  >([]);
+  const [extraActions, setExtraActions] = useState<
+    Array<Record<string, unknown>>
+  >([]);
 
   const modalRef = useRef<HTMLElement>(null);
 
@@ -189,8 +347,6 @@ export default function AutomationRulesPage() {
     void loadRules(page, statusFilter);
   }, [loadRules, page, statusFilter]);
 
-  // Modal behavior: lock background scrolling, focus the first field,
-  // and close with Escape when no save operation is in progress.
   useEffect(() => {
     if (!editorOpen) {
       return;
@@ -234,33 +390,21 @@ export default function AutomationRulesPage() {
 
   function openCreateEditor() {
     setEditingRule(null);
-    setForm(createEmptyInput());
-    setTriggerConfigText("{}");
-    setConditionsText("[]");
-    setActionsText(JSON.stringify(DEFAULT_ACTIONS, null, 2));
+    setForm(createEmptyForm());
+    setExtraConditions([]);
+    setExtraActions([]);
     setError(null);
     setNotice(null);
     setEditorOpen(true);
   }
 
   function openEditEditor(rule: AutomationRule) {
+    const data = getRuleEditorData(rule);
+
     setEditingRule(rule);
-
-    setForm({
-      name: rule.name,
-      description: rule.description ?? "",
-      trigger_type: rule.trigger_type,
-      trigger_config: rule.trigger_config,
-      conditions: rule.conditions,
-      actions: rule.actions,
-    });
-
-    setTriggerConfigText(
-      JSON.stringify(rule.trigger_config, null, 2),
-    );
-    setConditionsText(JSON.stringify(rule.conditions, null, 2));
-    setActionsText(JSON.stringify(rule.actions, null, 2));
-
+    setForm(data.form);
+    setExtraConditions(data.extraConditions);
+    setExtraActions(data.extraActions);
     setError(null);
     setNotice(null);
     setEditorOpen(true);
@@ -275,12 +419,17 @@ export default function AutomationRulesPage() {
     setEditingRule(null);
   }
 
-  function handleBackdropClick(
-    event: MouseEvent<HTMLDivElement>,
-  ) {
+  function handleBackdropClick(event: MouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget) {
       closeEditor();
     }
+  }
+
+  function updateForm<K extends keyof AutomationForm>(
+    key: K,
+    value: AutomationForm[K],
+  ) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -288,42 +437,68 @@ export default function AutomationRulesPage() {
     setError(null);
     setNotice(null);
 
-    const name = form.name.trim();
-    const triggerType = form.trigger_type.trim();
-
-    if (!name) {
+    if (!form.name.trim()) {
       setError("Enter a name for this automation rule.");
       return;
     }
 
-    if (!triggerType) {
-      setError("Enter a trigger type.");
+    if (!form.followUpTitle.trim()) {
+      setError("Enter a title for the automatic follow-up.");
+      return;
+    }
+
+    if (form.followUpTitle.trim().length > 200) {
+      setError("Follow-up title must be 200 characters or fewer.");
+      return;
+    }
+
+    const daysAfter = Number(form.daysAfter);
+
+    if (
+      !Number.isInteger(daysAfter) ||
+      daysAfter < 0 ||
+      daysAfter > 3650
+    ) {
+      setError("Follow-up delay must be a whole number from 0 to 3650 days.");
+      return;
+    }
+
+    if (
+      form.useCondition &&
+      form.conditionOperator !== "exists" &&
+      !form.conditionValue.trim()
+    ) {
+      setError("Enter a value for the condition or disable the condition.");
+      return;
+    }
+
+    if (
+      form.useCondition &&
+      ["in", "not_in"].includes(form.conditionOperator) &&
+      !form.conditionValue.split(",").some((item) => item.trim())
+    ) {
+      setError("Enter at least one comma-separated condition value.");
+      return;
+    }
+
+    if (
+      form.useCondition &&
+      form.conditionField === "expected_value" &&
+      form.conditionOperator !== "exists" &&
+      form.conditionValue.split(",").some(
+        (item) => item.trim() && !Number.isFinite(Number(item.trim())),
+      )
+    ) {
+      setError("Expected deal value must contain a valid number.");
       return;
     }
 
     let input: AutomationRuleInput;
 
     try {
-      input = {
-        name,
-        description: form.description?.trim() || null,
-        trigger_type: triggerType,
-        trigger_config: parseJsonObject(
-          triggerConfigText,
-          "Trigger configuration",
-        ),
-        conditions: parseJsonArray(
-          conditionsText,
-          "Conditions",
-        ),
-        actions: parseJsonArray(actionsText, "Actions"),
-      };
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Check the JSON configuration fields.",
-      );
+      input = buildRuleInput(form, extraConditions, extraActions);
+    } catch {
+      setError("Check the automation rule configuration and try again.");
       return;
     }
 
@@ -341,7 +516,6 @@ export default function AutomationRulesPage() {
       setEditorOpen(false);
       setEditingRule(null);
       setPage(1);
-
       await loadRules(1, statusFilter);
     } catch (cause) {
       setError(
@@ -360,11 +534,7 @@ export default function AutomationRulesPage() {
   ) {
     const verb = action === "activate" ? "activate" : "disable";
 
-    if (
-      !window.confirm(
-        `Are you sure you want to ${verb} "${rule.name}"?`,
-      )
-    ) {
+    if (!window.confirm(`Are you sure you want to ${verb} "${rule.name}"?`)) {
       return;
     }
 
@@ -416,18 +586,14 @@ export default function AutomationRulesPage() {
             <header className="automation-modal-header">
               <div>
                 <span className="automation-eyebrow">
-                  {editingRule ? "EDIT CONFIGURATION" : "NEW WORKFLOW"}
+                  {editingRule ? "EDIT WORKFLOW" : "NEW WORKFLOW"}
                 </span>
-
                 <h2 id="automation-editor-title">
-                  {editingRule
-                    ? "Edit automation rule"
-                    : "Create automation rule"}
+                  {editingRule ? "Edit automation rule" : "Create automation rule"}
                 </h2>
-
                 <p>
-                  Configure the trigger, conditions and actions for
-                  this workflow.
+                  When a new deal matches your rule, automatically create a
+                  follow-up for its lead.
                 </p>
               </div>
 
@@ -444,15 +610,11 @@ export default function AutomationRulesPage() {
 
             {editingRule?.status === "ACTIVE" && (
               <div className="automation-inline-note">
-                Active rules cannot be edited. Disable this rule before
-                changing its configuration.
+                Disable this rule before changing its configuration.
               </div>
             )}
 
-            <form
-              className="automation-modal-form"
-              onSubmit={handleSubmit}
-            >
+            <form className="automation-modal-form" onSubmit={handleSubmit}>
               <div className="automation-modal-body">
                 {error && (
                   <div
@@ -464,158 +626,266 @@ export default function AutomationRulesPage() {
                   </div>
                 )}
 
-                <h3 className="automation-form-section-title">
-                  Rule details
-                </h3>
+                <h3 className="automation-form-section-title">Rule details</h3>
 
                 <div className="automation-form-grid">
-                  <label className="automation-field">
+                  <label className="automation-field automation-field-full">
                     Rule name <span className="required">*</span>
-
                     <input
                       value={form.name}
                       maxLength={150}
                       required
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
+                      disabled={saving || editingRule?.status === "ACTIVE"}
                       placeholder="e.g. Follow up on new deals"
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          name: event.target.value,
-                        })
-                      }
+                      onChange={(event) => updateForm("name", event.target.value)}
                     />
-                  </label>
-
-                  <label className="automation-field">
-                    Trigger type <span className="required">*</span>
-
-                    <input
-                      value={form.trigger_type}
-                      maxLength={100}
-                      required
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
-                      placeholder="e.g. DEAL_CREATED"
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          trigger_type: event.target.value,
-                        })
-                      }
-                    />
-
-                    <small>
-                      Use a trigger identifier supported by your
-                      automation implementation.
-                    </small>
                   </label>
 
                   <label className="automation-field automation-field-full">
                     Description
-
                     <textarea
-                      value={form.description ?? ""}
+                      value={form.description}
                       maxLength={20000}
-                      rows={3}
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
-                      placeholder="Describe the purpose of this rule."
+                      rows={2}
+                      disabled={saving || editingRule?.status === "ACTIVE"}
+                      placeholder="What should this workflow accomplish?"
                       onChange={(event) =>
-                        setForm({
-                          ...form,
-                          description: event.target.value,
-                        })
+                        updateForm("description", event.target.value)
                       }
                     />
                   </label>
                 </div>
 
                 <h3 className="automation-form-section-title">
-                  Trigger configuration
+                  <span className="automation-step-number">1</span>
+                  When should this run?
                 </h3>
 
-                <div className="automation-form-grid">
-                  <label className="automation-field automation-field-full">
-                    Trigger configuration JSON
+                <div className="automation-builder-card">
+                  <div className="automation-builder-card-heading">
+                    <span className="automation-builder-icon">↗</span>
+                    <div>
+                      <strong>Deal is created</strong>
+                      <p>Start this workflow when a new deal is created.</p>
+                    </div>
+                  </div>
 
-                    <textarea
-                      className="automation-code-field"
-                      value={triggerConfigText}
-                      rows={5}
-                      spellCheck={false}
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
+                  <label className="automation-field">
+                    Event source
+                    <select
+                      value={form.triggerSource}
+                      disabled={saving || editingRule?.status === "ACTIVE"}
                       onChange={(event) =>
-                        setTriggerConfigText(event.target.value)
+                        updateForm("triggerSource", event.target.value as "deals")
                       }
-                    />
-
-                    <small>
-                      Enter a valid JSON object, for example {"{}"}.
-                    </small>
+                    >
+                      <option value="deals">Deals</option>
+                    </select>
                   </label>
                 </div>
 
                 <h3 className="automation-form-section-title">
-                  Conditions and actions
+                  <span className="automation-step-number">2</span>
+                  Optional conditions
                 </h3>
 
-                <div className="automation-form-grid">
-                  <label className="automation-field automation-field-full">
-                    Conditions JSON
-
-                    <textarea
-                      className="automation-code-field"
-                      value={conditionsText}
-                      rows={5}
-                      spellCheck={false}
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
+                <div className="automation-builder-card">
+                  <label className="automation-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={form.useCondition}
+                      disabled={saving || editingRule?.status === "ACTIVE"}
                       onChange={(event) =>
-                        setConditionsText(event.target.value)
+                        updateForm("useCondition", event.target.checked)
                       }
                     />
-
-                    <small>
-                      Enter an array of condition objects. Use [] if
-                      there are no conditions.
-                    </small>
+                    <span>
+                      <strong>Only run when a deal matches a condition</strong>
+                      <small>
+                        Leave this unchecked to run for every newly created deal.
+                      </small>
+                    </span>
                   </label>
 
-                  <label className="automation-field automation-field-full">
-                    Actions JSON <span className="required">*</span>
+                  {form.useCondition && (
+                    <div className="automation-form-grid automation-condition-grid">
+                      <label className="automation-field">
+                        Deal field
+                        <select
+                          value={form.conditionField}
+                          disabled={saving || editingRule?.status === "ACTIVE"}
+                          onChange={(event) =>
+                            updateForm(
+                              "conditionField",
+                              event.target.value as ConditionField,
+                            )
+                          }
+                        >
+                          {CONDITION_FIELDS.map((field) => (
+                            <option key={field.value} value={field.value}>
+                              {field.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
 
-                    <textarea
-                      className="automation-code-field"
-                      value={actionsText}
-                      rows={7}
-                      spellCheck={false}
-                      disabled={
-                        saving || editingRule?.status === "ACTIVE"
-                      }
-                      onChange={(event) =>
-                        setActionsText(event.target.value)
-                      }
-                    />
+                      <label className="automation-field">
+                        Operator
+                        <select
+                          value={form.conditionOperator}
+                          disabled={saving || editingRule?.status === "ACTIVE"}
+                          onChange={(event) =>
+                            updateForm(
+                              "conditionOperator",
+                              event.target.value as ConditionOperator,
+                            )
+                          }
+                        >
+                          {CONDITION_OPERATORS.map((operator) => (
+                            <option key={operator.value} value={operator.value}>
+                              {operator.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
 
-                    <small>
-                      Activation requires at least one action. Action
-                      configuration must match the supported backend
-                      contract.
-                    </small>
-                  </label>
+                      {form.conditionOperator === "exists" ? (
+                        <label className="automation-field automation-field-full">
+                          Condition
+                          <select
+                            value={String(form.conditionExists)}
+                            disabled={saving || editingRule?.status === "ACTIVE"}
+                            onChange={(event) =>
+                              updateForm(
+                                "conditionExists",
+                                event.target.value === "true",
+                              )
+                            }
+                          >
+                            <option value="true">Has a value</option>
+                            <option value="false">Is empty</option>
+                          </select>
+                        </label>
+                      ) : (
+                        <label className="automation-field automation-field-full">
+                          {form.conditionOperator === "in" ||
+                          form.conditionOperator === "not_in"
+                            ? "Values (comma-separated)"
+                            : "Value"}
+                          <input
+                            value={form.conditionValue}
+                            disabled={saving || editingRule?.status === "ACTIVE"}
+                            placeholder={
+                              form.conditionField === "stage"
+                                ? "e.g. NEW"
+                                : form.conditionField === "expected_value"
+                                  ? "e.g. 5000000"
+                                  : "Enter a value"
+                            }
+                            onChange={(event) =>
+                              updateForm("conditionValue", event.target.value)
+                            }
+                          />
+                          {(form.conditionOperator === "in" ||
+                            form.conditionOperator === "not_in") && (
+                            <small>
+                              Separate each value with a comma.
+                            </small>
+                          )}
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <h3 className="automation-form-section-title">
+                  <span className="automation-step-number">3</span>
+                  What should happen?
+                </h3>
+
+                <div className="automation-builder-card">
+                  <div className="automation-builder-card-heading">
+                    <span className="automation-builder-icon">✓</span>
+                    <div>
+                      <strong>Create a follow-up</strong>
+                      <p>
+                        Create a task linked to the lead associated with the
+                        new deal and assign it to the deal owner.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="automation-form-grid">
+                    <label className="automation-field automation-field-full">
+                      Follow-up title <span className="required">*</span>
+                      <input
+                        value={form.followUpTitle}
+                        maxLength={200}
+                        required
+                        disabled={saving || editingRule?.status === "ACTIVE"}
+                        placeholder="e.g. Contact lead about new deal"
+                        onChange={(event) =>
+                          updateForm("followUpTitle", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="automation-field">
+                      Follow-up type
+                      <select
+                        value={form.followUpType}
+                        disabled={saving || editingRule?.status === "ACTIVE"}
+                        onChange={(event) =>
+                          updateForm("followUpType", event.target.value)
+                        }
+                      >
+                        {FOLLOW_UP_TYPES.map((type) => (
+                          <option key={type.value} value={type.value}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="automation-field">
+                      Create follow-up after (days)
+                      <input
+                        type="number"
+                        min={0}
+                        max={3650}
+                        step={1}
+                        value={form.daysAfter}
+                        required
+                        disabled={saving || editingRule?.status === "ACTIVE"}
+                        onChange={(event) =>
+                          updateForm("daysAfter", event.target.value)
+                        }
+                      />
+                      <small>
+                        0 means due immediately; maximum delay is 3650 days.
+                      </small>
+                    </label>
+
+                    <label className="automation-field automation-field-full">
+                      Follow-up description
+                      <textarea
+                        value={form.followUpDescription}
+                        maxLength={10000}
+                        rows={3}
+                        disabled={saving || editingRule?.status === "ACTIVE"}
+                        placeholder="Instructions for the assigned user (optional)."
+                        onChange={(event) =>
+                          updateForm("followUpDescription", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
                 </div>
 
                 <p className="automation-modal-help">
-                  New rules are saved as drafts. Review the configuration
-                  before activating a rule.
+                  New rules are saved as drafts. Activate a rule after reviewing
+                  the configuration. Rules only execute when the backend
+                  receives a matching deal-created event.
                 </p>
               </div>
 
@@ -628,13 +898,10 @@ export default function AutomationRulesPage() {
                 >
                   Cancel
                 </button>
-
                 <button
                   className="automation-primary-button"
                   type="submit"
-                  disabled={
-                    saving || editingRule?.status === "ACTIVE"
-                  }
+                  disabled={saving || editingRule?.status === "ACTIVE"}
                 >
                   {saving
                     ? "Saving…"
@@ -654,14 +921,10 @@ export default function AutomationRulesPage() {
     <div className="automation-page">
       <header className="automation-header">
         <div>
-          <span className="automation-eyebrow">
-            WORKFLOW MANAGEMENT
-          </span>
-
+          <span className="automation-eyebrow">WORKFLOW MANAGEMENT</span>
           <h1>Automation rules</h1>
-
           <p className="automation-subtitle">
-            Manage repeatable rules for your DealFlow workspace.
+            Automate follow-ups when new deals enter your workspace.
           </p>
         </div>
 
@@ -693,10 +956,7 @@ export default function AutomationRulesPage() {
       )}
 
       {error && !editorOpen && (
-        <div
-          className="automation-alert automation-alert-error"
-          role="alert"
-        >
+        <div className="automation-alert automation-alert-error" role="alert">
           <span aria-hidden="true">!</span>
           <p>{error}</p>
           <button
@@ -716,9 +976,7 @@ export default function AutomationRulesPage() {
         <article className="automation-summary-card">
           <span className="automation-summary-icon">≡</span>
           <div>
-            <span className="automation-summary-label">
-              Rules on this page
-            </span>
+            <span className="automation-summary-label">Rules on this page</span>
             <strong>{rules.length}</strong>
           </div>
         </article>
@@ -726,9 +984,7 @@ export default function AutomationRulesPage() {
         <article className="automation-summary-card">
           <span className="automation-summary-icon active-icon">●</span>
           <div>
-            <span className="automation-summary-label">
-              Active on this page
-            </span>
+            <span className="automation-summary-label">Active on this page</span>
             <strong>{summary.active}</strong>
           </div>
         </article>
@@ -736,9 +992,7 @@ export default function AutomationRulesPage() {
         <article className="automation-summary-card">
           <span className="automation-summary-icon draft-icon">◷</span>
           <div>
-            <span className="automation-summary-label">
-              Drafts on this page
-            </span>
+            <span className="automation-summary-label">Drafts on this page</span>
             <strong>{summary.drafts}</strong>
           </div>
         </article>
@@ -755,7 +1009,6 @@ export default function AutomationRulesPage() {
 
           <div className="automation-filter">
             <label htmlFor="automation-status-filter">Status</label>
-
             <select
               id="automation-status-filter"
               value={statusFilter}
@@ -770,7 +1023,6 @@ export default function AutomationRulesPage() {
               <option value="ACTIVE">Active</option>
               <option value="DISABLED">Disabled</option>
             </select>
-
             <button
               className="automation-secondary-button"
               type="button"
@@ -793,15 +1045,12 @@ export default function AutomationRulesPage() {
             <span className="automation-empty-icon" aria-hidden="true">
               ◇
             </span>
-
             <h3>No automation rules found</h3>
-
             <p>
               {statusFilter
                 ? "Try another status filter or create a new rule."
-                : "Create your first rule to define a repeatable workflow."}
+                : "Create your first rule to automate follow-ups for new deals."}
             </p>
-
             <button
               className="automation-primary-button"
               type="button"
@@ -826,31 +1075,24 @@ export default function AutomationRulesPage() {
                     </th>
                   </tr>
                 </thead>
-
                 <tbody>
                   {rules.map((rule) => (
                     <tr key={rule.id}>
                       <td>
-                        <div className="automation-rule-name">
-                          {rule.name}
-                        </div>
-
+                        <div className="automation-rule-name">{rule.name}</div>
                         <div className="automation-rule-description">
                           {rule.description || "No description provided"}
                         </div>
                       </td>
-
                       <td>
                         <code className="automation-trigger">
                           {rule.trigger_type}
                         </code>
                       </td>
-
                       <td>
                         {rule.actions.length}{" "}
                         {rule.actions.length === 1 ? "action" : "actions"}
                       </td>
-
                       <td>
                         <span
                           className={`automation-status status-${rule.status.toLowerCase()}`}
@@ -858,11 +1100,9 @@ export default function AutomationRulesPage() {
                           {statusLabel(rule.status)}
                         </span>
                       </td>
-
                       <td className="automation-date">
                         {formatDate(rule.updated_at)}
                       </td>
-
                       <td>
                         <div className="automation-row-actions">
                           {rule.status !== "ACTIVE" && (
@@ -874,7 +1114,6 @@ export default function AutomationRulesPage() {
                               Edit
                             </button>
                           )}
-
                           {rule.status !== "ACTIVE" && (
                             <button
                               className="automation-text-button"
@@ -884,12 +1123,9 @@ export default function AutomationRulesPage() {
                                 void handleLifecycle(rule, "activate")
                               }
                             >
-                              {busyRuleId === rule.id
-                                ? "Working…"
-                                : "Activate"}
+                              {busyRuleId === rule.id ? "Working…" : "Activate"}
                             </button>
                           )}
-
                           {rule.status === "ACTIVE" && (
                             <button
                               className="automation-text-button danger-text"
@@ -899,9 +1135,7 @@ export default function AutomationRulesPage() {
                                 void handleLifecycle(rule, "disable")
                               }
                             >
-                              {busyRuleId === rule.id
-                                ? "Working…"
-                                : "Disable"}
+                              {busyRuleId === rule.id ? "Working…" : "Disable"}
                             </button>
                           )}
                         </div>
@@ -916,7 +1150,6 @@ export default function AutomationRulesPage() {
               <span>
                 Page {page} of {totalPages}
               </span>
-
               <div>
                 <button
                   className="automation-secondary-button"
@@ -928,15 +1161,12 @@ export default function AutomationRulesPage() {
                 >
                   Previous
                 </button>
-
                 <button
                   className="automation-secondary-button"
                   type="button"
                   disabled={page >= totalPages || loading}
                   onClick={() =>
-                    setPage((current) =>
-                      Math.min(totalPages, current + 1),
-                    )
+                    setPage((current) => Math.min(totalPages, current + 1))
                   }
                 >
                   Next
