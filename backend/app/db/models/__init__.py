@@ -1,3 +1,4 @@
+
 """DealFlow database models."""
 
 from app.db.models.audit_event import AuditEvent
@@ -46,6 +47,8 @@ from app.db.models.automation_rule import AutomationRule
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.notification import Notification
 from app.db.models.notification_preference import NotificationPreference
+from app.db.models.plan import Plan
+from app.db.models.plan_entitlement import PlanEntitlement
 from app.db.models.subscription import Subscription
 
 __all__ = [
@@ -87,5 +90,7 @@ __all__ = [
     "AutomationExecution",
     "Notification",
     "NotificationPreference",
+    "Plan",
+    "PlanEntitlement",
     "Subscription",
 ]

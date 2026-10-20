@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import (
     Boolean,
@@ -17,9 +17,12 @@ from sqlalchemy import (
     Uuid,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.db.models.plan import Plan
 
 
 class Subscription(Base):
@@ -91,10 +94,23 @@ class Subscription(Base):
         index=True,
     )
 
-    # Replaced by a plan FK in the plan/entitlement story.
+    # Retained for backward compatibility during the plan catalog transition.
     plan_code: Mapped[str] = mapped_column(
         String(80),
         nullable=False,
+    )
+
+    # Nullable so existing subscriptions with unmatched legacy codes remain valid.
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("plans.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
+    plan: Mapped["Plan | None"] = relationship(
+        "Plan",
+        back_populates="subscriptions",
     )
 
     status: Mapped[str] = mapped_column(
