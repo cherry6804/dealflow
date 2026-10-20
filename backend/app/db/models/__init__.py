@@ -46,6 +46,7 @@ from app.db.models.automation_rule import AutomationRule
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.notification import Notification
 from app.db.models.notification_preference import NotificationPreference
+from app.db.models.subscription import Subscription
 
 __all__ = [
     "AuditEvent",
@@ -86,4 +87,5 @@ __all__ = [
     "AutomationExecution",
     "Notification",
     "NotificationPreference",
+    "Subscription",
 ]
