@@ -47,6 +47,8 @@ from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.deal_commission import DealCommission
 from app.db.models.notification_preference import NotificationPreference
 from app.db.models.subscription import Subscription
+from app.db.models.plan import Plan
+from app.db.models.plan_entitlement import PlanEntitlement
 
 config = context.config
 
