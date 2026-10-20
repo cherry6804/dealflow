@@ -1,3 +1,4 @@
+
 """Provider-independent billing integration contracts."""
 
 from app.billing.providers.base import BillingProvider
@@ -10,6 +11,7 @@ from app.billing.providers.errors import (
     ProviderUnavailableError,
     ProviderValidationError,
 )
+from app.billing.providers.fake import FakeBillingProvider
 from app.billing.providers.registry import BillingProviderRegistry
 from app.billing.providers.schemas import (
     CheckoutRequest,
@@ -19,6 +21,7 @@ from app.billing.providers.schemas import (
     ProviderCapabilities,
     RefundRequest,
     RefundResult,
+    VerifiedWebhookEvent,
 )
 
 __all__ = [
@@ -29,6 +32,7 @@ __all__ = [
     "CheckoutSession",
     "CustomerReference",
     "CustomerRequest",
+    "FakeBillingProvider",
     "ProviderAuthenticationError",
     "ProviderCapabilities",
     "ProviderConfigurationError",
@@ -38,4 +42,5 @@ __all__ = [
     "ProviderValidationError",
     "RefundRequest",
     "RefundResult",
+    "VerifiedWebhookEvent",
 ]
