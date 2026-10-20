@@ -8,6 +8,8 @@ import {
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 
 import { ApiError } from "../lib/api";
 import {
@@ -32,7 +34,7 @@ import DealCommissionsPanel from "../components/DealCommissionsPanel";
 
 import "./DealsPage.css";
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 100;
 
 const DEAL_STAGES: DealStage[] = [
   "NEW",
@@ -247,6 +249,28 @@ function stageClass(stage: string): string {
   return `deals-stage deals-stage-${stage.toLowerCase()}`;
 }
 
+async function fetchAllDeals(stage?: DealStage): Promise<Deal[]> {
+  const firstPage = await dealsApi.list({
+    page: 1,
+    page_size: PAGE_SIZE,
+    stage,
+  });
+
+  const allDeals = [...firstPage.items];
+
+  for (let currentPage = 2; currentPage <= firstPage.total_pages; currentPage += 1) {
+    const result = await dealsApi.list({
+      page: currentPage,
+      page_size: PAGE_SIZE,
+      stage,
+    });
+
+    allDeals.push(...result.items);
+  }
+
+  return allDeals;
+}
+
 export default function DealsPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
@@ -272,10 +296,12 @@ const [customNegotiationNote, setCustomNegotiationNote] =
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState("");
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["customerProperty", "stage", "expectedValue", "owner", "createdAt"]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
 
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
+  const [actionMenu, setActionMenu] = useState<{ deal: Deal; top: number; left: number } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -322,23 +348,17 @@ const [transitionError, setTransitionError] = useState("");
     setError("");
 
     try {
-      const result = await dealsApi.list({
-        page,
-        page_size: PAGE_SIZE,
-        stage: stageFilter
-          ? (stageFilter as DealStage)
-          : undefined,
-      });
+      const allDeals = await fetchAllDeals(
+        stageFilter ? (stageFilter as DealStage) : undefined,
+      );
 
-      setDeals(result.items);
-      setTotal(result.total);
-      setTotalPages(result.total_pages);
+      setDeals(allDeals);
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
       setLoading(false);
     }
-  }, [page, stageFilter]);
+  }, [stageFilter]);
 
   const loadSelectorData = useCallback(async () => {
     setSupportDataLoading(true);
@@ -369,6 +389,13 @@ const [transitionError, setTransitionError] = useState("");
   useEffect(() => {
     void loadDeals();
   }, [loadDeals]);
+
+  useEffect(() => {
+    const updateGridDensity = () => setCompactGrid(window.innerWidth >= 1600);
+    updateGridDensity();
+    window.addEventListener("resize", updateGridDensity, { passive: true });
+    return () => window.removeEventListener("resize", updateGridDensity);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -416,7 +443,6 @@ const [transitionError, setTransitionError] = useState("");
       const next = searchInput.trim();
 
       if (next !== search) {
-        setPage(1);
         setSearch(next);
       }
     }, 300);
@@ -425,8 +451,32 @@ const [transitionError, setTransitionError] = useState("");
   }, [searchInput, search]);
 
   useEffect(() => {
-    setPage(1);
-  }, [stageFilter]);
+    if (!columnMenuPosition) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setColumnMenuPosition(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [columnMenuPosition]);
+
+  useEffect(() => {
+    if (!actionMenu) return;
+
+    const closeActionMenu = () => setActionMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeActionMenu();
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeActionMenu);
+    window.addEventListener("scroll", closeActionMenu, true);
+
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeActionMenu);
+      window.removeEventListener("scroll", closeActionMenu, true);
+    };
+  }, [actionMenu]);
 
   useEffect(() => {
     if (!isFormOpen) return;
@@ -770,21 +820,14 @@ async function handleStageTransition(deal: Deal) {
 
       setIsFormOpen(false);
       setForm(EMPTY_FORM);
-      setPage(1);
       setSearch("");
       setSearchInput("");
       setStageFilter("");
       setSuccess("Deal created successfully.");
 
-      // Reload the first page so the new deal is visible.
-      const result = await dealsApi.list({
-        page: 1,
-        page_size: PAGE_SIZE,
-      });
-
-      setDeals(result.items);
-      setTotal(result.total);
-      setTotalPages(result.total_pages);
+      // Reload the complete directory so the new deal is visible.
+      const allDeals = await fetchAllDeals();
+      setDeals(allDeals);
       setError("");
     } catch (createError) {
       setFormError(errorMessage(createError));
@@ -817,467 +860,432 @@ async function handleStageTransition(deal: Deal) {
     });
   }, [deals, search, customerById, propertyById]);
 
-  const stageCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
+  const sortedDeals = useMemo(() => {
+    if (sortColumns.length === 0) return filteredDeals;
 
-    DEAL_STAGES.forEach((stage) => {
-      counts[stage] = 0;
+    return [...filteredDeals].sort((left, right) => {
+      for (const sort of sortColumns) {
+        const getValue = (deal: Deal): string | number => {
+          switch (sort.columnKey) {
+            case "customerProperty":
+              return `${customerName(customerById.get(deal.customer_profile_id))} ${propertyAddress(propertyById.get(deal.property_id))}`;
+            case "stage":
+              return label(deal.stage);
+            case "expectedValue":
+              return Number(deal.expected_value) || 0;
+            case "owner":
+              return deal.owner_name || "Unknown owner";
+            case "createdAt":
+              return new Date(deal.created_at).getTime() || 0;
+            default:
+              return "";
+          }
+        };
+
+        const a = getValue(left);
+        const b = getValue(right);
+        const comparison = typeof a === "number" && typeof b === "number"
+          ? a - b
+          : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+        if (comparison !== 0) return sort.direction === "DESC" ? -comparison : comparison;
+      }
+      return 0;
     });
+  }, [filteredDeals, sortColumns, customerById, propertyById]);
 
-    deals.forEach((deal) => {
-      counts[deal.stage] = (counts[deal.stage] ?? 0) + 1;
+  const openColumnMenu = useCallback((event: { currentTarget: HTMLButtonElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 240;
+    setColumnMenuPosition((current) => current ? null : {
+      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 300)),
+      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
     });
+  }, []);
 
-    return counts;
-  }, [deals]);
+  const openActionMenu = useCallback(
+    (event: { currentTarget: HTMLButtonElement }, deal: Deal) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const menuWidth = 264;
+      const hasStageAction = Boolean(NEXT_DEAL_STAGE[deal.stage as DealStage]);
+      const hasCloseAction = deal.stage === "BOOKING";
+      const actionCount = 3 + Number(hasStageAction) + Number(hasCloseAction);
+      const menuHeight = Math.min(82 + actionCount * 54, window.innerHeight - 24);
+      const top = rect.bottom + menuHeight + 12 > window.innerHeight
+        ? Math.max(12, rect.top - menuHeight - 6)
+        : rect.bottom + 6;
+      const left = Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
 
-  const visibleValue = useMemo(
-    () =>
-      deals.reduce(
-        (sum, deal) => sum + (Number(deal.expected_value) || 0),
-        0,
-      ),
-    [deals],
+      setActionMenu((current) =>
+        current?.deal.id === deal.id ? null : { deal, top, left },
+      );
+    },
+    [],
   );
 
-  const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const lastResult = Math.min(page * PAGE_SIZE, total);
+  const columns = useMemo<readonly Column<Deal>[]>(() => [
+    {
+      key: "customerProperty",
+      name: "Customer / Property",
+      minWidth: 250,
+      width: 330,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const name = customerName(customerById.get(row.customer_profile_id));
+        const property = propertyById.get(row.property_id);
+        const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "D";
+        return (
+          <div className="deals-person-cell">
+            <span className="deals-avatar" aria-hidden="true">{initials}</span>
+            <span className="deals-person-copy">
+              <strong title={name}>{name}</strong>
+              <span title={propertyAddress(property)}>{propertyTitle(property)} · {propertyAddress(property)}</span>
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "stage",
+      name: "Stage",
+      minWidth: 150,
+      width: 170,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className={stageClass(row.stage)}>{label(row.stage)}</span>,
+    },
+    {
+      key: "expectedValue",
+      name: "Expected value",
+      minWidth: 145,
+      width: 165,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="deals-value">{amount(row.expected_value, row.currency || "INR")}</span>,
+    },
+    {
+      key: "owner",
+      name: "Owner",
+      minWidth: 150,
+      width: 180,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="deals-owner-name" title={row.owner_name || "Unknown owner"}>{row.owner_name || "Unknown owner"}</span>,
+    },
+    {
+      key: "createdAt",
+      name: "Created",
+      minWidth: 115,
+      width: 135,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="deals-created-date">{formatDate(row.created_at)}</span>,
+    },
+    {
+      key: "actions",
+      name: "Actions",
+      minWidth: 92,
+      width: 104,
+      resizable: false,
+      sortable: false,
+      renderCell: ({ row }) => {
+        const customer = customerName(customerById.get(row.customer_profile_id));
+        const busy = transitioningDealId === row.id || closureSaving;
+
+        return (
+          <div
+            className="deals-row-actions"
+            role="group"
+            aria-label={`Actions for ${customer}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="deals-icon-action deals-action-menu-trigger"
+              type="button"
+              aria-label={`Open actions for ${customer}`}
+              aria-haspopup="menu"
+              aria-expanded={actionMenu?.deal.id === row.id}
+              disabled={busy}
+              title="Deal actions"
+              onClick={(event) => openActionMenu(event, row)}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="1.8" />
+                <circle cx="12" cy="12" r="1.8" />
+                <circle cx="19" cy="12" r="1.8" />
+              </svg>
+            </button>
+            {busy && (
+              <span className="deals-action-busy" role="status" aria-label="Updating deal" />
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: "configure",
+      name: "",
+      width: "1fr",
+      minWidth: 44,
+      resizable: false,
+      sortable: false,
+      renderHeaderCell: () => (
+        <button className="deals-configure-columns-button" type="button" onClick={openColumnMenu} aria-label="Configure table columns" title="Configure columns" aria-expanded={columnMenuPosition !== null}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>
+        </button>
+      ),
+      renderCell: () => <span aria-hidden="true" />,
+    },
+  ], [customerById, propertyById, transitioningDealId, closureSaving, openActionMenu, actionMenu, openColumnMenu, columnMenuPosition]);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
+    [columns, visibleColumnKeys],
+  );
 
   return (
-    <section className="deals-page">
-      <header className="deals-header">
-        <div>
-          <span className="deals-eyebrow">SALES WORKSPACE</span>
+    <main className="deals-page deals-workspace">
+      <header className="deals-page-header">
+        <div className="deals-heading-copy">
           <h1>Deals</h1>
-          <p className="deals-subtitle">
-            Track opportunities from qualification through closing.
-          </p>
+          <p>Track opportunities, manage negotiations, and keep every next step visible.</p>
         </div>
-
-        <button
-          className="deals-primary-button"
-          type="button"
-          onClick={openCreateForm}
-        >
-          <span aria-hidden="true">+</span> New deal
-        </button>
       </header>
 
       {success && (
         <div className="deals-alert deals-alert-success" role="status">
           <span>{success}</span>
-          <button
-            type="button"
-            className="deals-dismiss"
-            aria-label="Dismiss success message"
-            onClick={() => setSuccess("")}
-          >
-            ×
-          </button>
+          <button type="button" className="deals-dismiss" onClick={() => setSuccess("")} aria-label="Dismiss success message">×</button>
         </div>
       )}
+      {transitionError && <div className="deals-alert deals-alert-error" role="alert">{transitionError}</div>}
 
-      {transitionError && (
-        <div className="deals-error" role="alert">
-          {transitionError}
+      <div className="deals-filterbar">
+        <label className="deals-search-field">
+          <span className="deals-visually-hidden">Search deals</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input type="search" maxLength={320} value={searchInput} placeholder="Search customer, property, stage or deal ID" onChange={(event) => { setSearchInput(event.target.value); }} />
+          {searchInput && <button type="button" aria-label="Clear search" onClick={() => { setSearchInput(""); setSearch(""); }}>×</button>}
+        </label>
+        <label className="deals-filter-field">
+          <span>Stage</span>
+          <select aria-label="Filter deals by stage" value={stageFilter} onChange={(event) => { setStageFilter(event.target.value); }}>
+            <option value="">All stages</option>
+            {DEAL_STAGES.map((stage) => <option value={stage} key={stage}>{label(stage)}</option>)}
+          </select>
+        </label>
+        {(searchInput || stageFilter) && <button className="deals-clear-filters" type="button" onClick={() => { setSearchInput(""); setSearch(""); setStageFilter(""); }}>Clear filters</button>}
+        <button className="deals-primary-button deals-add-button" type="button" onClick={openCreateForm}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          New deal
+        </button>
+      </div>
+
+      {error && <div className="deals-alert deals-alert-error" role="alert"><div><strong>We couldn’t load deals</strong><p>{error}</p></div><button className="deals-secondary-button" type="button" onClick={() => void loadDeals()}>Try again</button></div>}
+
+      {loading ? (
+        <div className="deals-state" role="status" aria-live="polite"><span className="deals-spinner" aria-hidden="true"/><p>Loading deals…</p></div>
+      ) : !error && filteredDeals.length === 0 ? (
+        <div className="deals-empty">
+          <div className="deals-empty-icon" aria-hidden="true">◇</div>
+          <h3>{search || stageFilter ? "No deals match these filters" : "Start with your first deal"}</h3>
+          <p>{search || stageFilter ? "Try another search or clear one or more filters." : "Create a deal to connect a customer with a property and track the opportunity."}</p>
+          {search || stageFilter ? <button className="deals-secondary-button" type="button" onClick={() => { setSearchInput(""); setSearch(""); setStageFilter(""); }}>Reset view</button> : <button className="deals-primary-button" type="button" onClick={openCreateForm}>Create your first deal</button>}
         </div>
-      )}
-
-      <section className="deals-summary" aria-label="Deal summary">
-        <div className="deals-summary-icon" aria-hidden="true">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3 17l6-6 4 4 8-9" />
-            <path d="M15 6h6v6" />
-          </svg>
-        </div>
-
-        <div>
-          <p className="deals-summary-label">Matching deals</p>
-          <p className="deals-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
-          </p>
-        </div>
-
-        <div className="deals-summary-divider" />
-
-        <div className="deals-summary-metric">
-          <span>Visible pipeline value</span>
-          <strong>{amount(visibleValue)}</strong>
-          <small>Current page only</small>
-        </div>
-      </section>
-
-      <section className="deals-panel">
-        <header className="deals-panel-heading">
-          <div>
-            <h2>Deal pipeline</h2>
-            <p>Review opportunities and their current stage.</p>
-          </div>
-
-          <button
-            className="deals-secondary-button"
-            type="button"
-            disabled={loading}
-            onClick={() => void loadDeals()}
-          >
-            {loading ? "Refreshing..." : "↻ Refresh"}
-          </button>
-        </header>
-
-        <div className="deals-stage-strip">
-          {DEAL_STAGES.map((stage) => (
-            <button
-              type="button"
-              key={stage}
-              className={`deals-stage-card ${
-                stageFilter === stage ? "selected" : ""
-              }`}
-              onClick={() => {
-                setStageFilter((current) =>
-                  current === stage ? "" : stage,
-                );
-                setPage(1);
+      ) : !error ? (
+        <>
+          <div className="deals-grid-shell">
+            <DataGrid
+              className="deals-react-data-grid"
+              aria-label="Deals directory"
+              columns={visibleColumns}
+              rows={sortedDeals}
+              rowKeyGetter={(row) => row.id}
+              rowHeight={compactGrid ? 48 : 62}
+              headerRowHeight={52}
+              defaultColumnOptions={{ resizable: true, sortable: true }}
+              sortColumns={sortColumns}
+              onSortColumnsChange={setSortColumns}
+              style={{
+                height: Math.min(52 + sortedDeals.length * (compactGrid ? 48 : 62), Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
+                minHeight: 52 + Math.min(sortedDeals.length, 1) * (compactGrid ? 48 : 62),
               }}
-            >
-              <span>{label(stage)}</span>
-              <strong>{stageCounts[stage] ?? 0}</strong>
-            </button>
-          ))}
-        </div>
-
-        <div className="deals-toolbar">
-          <label className="deals-search">
-            <span aria-hidden="true" className="deals-search-icon">⌕</span>
-            <span className="deals-visually-hidden">Search deals</span>
-            <input
-              type="search"
-              maxLength={320}
-              value={searchInput}
-              placeholder="Search customer, property, or deal..."
-              onChange={(event) => {
-                setSearchInput(event.target.value);
-                setPage(1);
-              }}
+              renderers={{ noRowsFallback: <div className="deals-grid-no-rows">No deals to display.</div> }}
             />
-          </label>
-
-          <label className="deals-filter">
-            <span className="deals-visually-hidden">Filter by stage</span>
-            <select
-              value={stageFilter}
-              onChange={(event) => {
-                setStageFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All stages</option>
-              {DEAL_STAGES.map((stage) => (
-                <option value={stage} key={stage}>
-                  {label(stage)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {error && (
-          <div className="deals-alert deals-alert-error" role="alert">
-            <div>
-              <strong>Couldn't load deals</strong>
-              <p>{error}</p>
-            </div>
-            <button
-              className="deals-secondary-button"
-              type="button"
-              onClick={() => void loadDeals()}
-            >
-              Retry
-            </button>
+            <footer className="deals-grid-footer" aria-live="polite">
+              <span className="deals-grid-footer-count">
+                <strong>{sortedDeals.length}</strong> {sortedDeals.length === 1 ? "deal" : "deals"}
+                {search || stageFilter ? " match your current view" : " in your workspace"}
+              </span>
+              <span className="deals-grid-footer-status">
+                <span className="deals-grid-footer-status-dot" aria-hidden="true" />
+                {search || stageFilter ? "Filtered results" : "You're all caught up"}
+              </span>
+            </footer>
           </div>
-        )}
+        </>
+      ) : null}
 
-        {loading ? (
-          <div className="deals-state" role="status" aria-live="polite">
-            <span className="deals-spinner" aria-hidden="true" />
-            <p>Loading deals...</p>
-          </div>
-        ) : !error && filteredDeals.length === 0 ? (
-          <div className="deals-empty">
-            <div className="deals-empty-icon" aria-hidden="true">◇</div>
-            <h3>
-              {search || stageFilter
-                ? "No matching deals"
-                : "Your deal pipeline starts here"}
-            </h3>
-            <p>
-              {search || stageFilter
-                ? "Try changing your search or stage filter."
-                : "Create your first deal to start tracking a real estate opportunity."}
-            </p>
-            {search || stageFilter ? (
+      {actionMenu && createPortal(
+        <div
+          className="deals-action-menu-layer"
+          role="presentation"
+          onPointerDown={() => setActionMenu(null)}
+        >
+          <section
+            className="deals-action-menu"
+            style={{ top: actionMenu.top, left: actionMenu.left }}
+            role="menu"
+            aria-label="Deal actions"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <header className="deals-action-menu-header">
+              <div>
+                <strong>Deal actions</strong>
+                <span>
+                  {customerName(
+                    customerById.get(actionMenu.deal.customer_profile_id),
+                  )}
+                </span>
+              </div>
               <button
-                className="deals-secondary-button"
                 type="button"
+                aria-label="Close deal actions"
+                onClick={() => setActionMenu(null)}
+              >
+                ×
+              </button>
+            </header>
+
+            {NEXT_DEAL_STAGE[actionMenu.deal.stage as DealStage] && (
+              <button
+                className="deals-action-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={transitioningDealId !== null || closureSaving}
                 onClick={() => {
-                  setSearch("");
-                  setSearchInput("");
-                  setStageFilter("");
-                  setPage(1);
+                  const selectedDeal = actionMenu.deal;
+                  setActionMenu(null);
+                  void handleStageTransition(selectedDeal);
                 }}
               >
-                Clear filters
-              </button>
-            ) : (
-              <button
-                className="deals-primary-button"
-                type="button"
-                onClick={openCreateForm}
-              >
-                + Create your first deal
+                <span className="deals-action-menu-icon deals-action-menu-icon-primary" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+                </span>
+                <span className="deals-action-menu-copy">
+                  <strong>Move to {label(NEXT_DEAL_STAGE[actionMenu.deal.stage as DealStage]!)}</strong>
+                  <small>Advance this deal to the next stage</small>
+                </span>
               </button>
             )}
-          </div>
-        ) : !error ? (
-          <>
-            <div className="deals-table-wrapper">
-              <table className="deals-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Customer / property</th>
-                    <th scope="col">Stage</th>
-                    <th scope="col">Workflow</th>
-                    <th scope="col">Negotiation</th>
-                    <th scope="col">Payments</th>
-                    <th scope="col">Commission</th>
-                    <th scope="col">Expected value</th>
-                    <th scope="col">Owner</th>
-                    <th scope="col">Created</th>
-                  </tr>
-                </thead>
 
-                <tbody>
-                  {filteredDeals.map((deal) => (
-                    <tr key={deal.id}>
-                      <td>
-                        <div className="deals-name">
-                          {customerName(
-                            customerById.get(deal.customer_profile_id),
-                          )}
-                        </div>
-                        <div className="deals-secondary-text">
-                          {propertyAddress(
-                            propertyById.get(deal.property_id),
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <span className={stageClass(deal.stage)}>
-                          {label(deal.stage)}
-                        </span>
-                      </td>
-                      <td>
-                        {NEXT_DEAL_STAGE[deal.stage as DealStage] ? (
-                          <button
-                            className="deals-secondary-button"
-                            type="button"
-                            disabled={transitioningDealId !== null || closureSaving}
-                            onClick={() => void handleStageTransition(deal)}
-                          >
-                            {transitioningDealId === deal.id
-                              ? "Updating..."
-                              : `Move to ${label(NEXT_DEAL_STAGE[deal.stage as DealStage]!)}`}
-                          </button>
-                        ) : deal.stage === "BOOKING" ? (
-                          <button
-                            className="deals-primary-button deals-close-deal-button"
-                            type="button"
-                            disabled={transitioningDealId !== null || closureSaving}
-                            onClick={() => openClosureDialog(deal)}
-                          >
-                            Close deal
-                          </button>
-                        ) : (
-                          <span className="deals-secondary-text">
-                            {deal.stage === "CLOSED_WON"
-                              ? "Deal won"
-                              : deal.stage === "CLOSED_LOST"
-                                ? "Deal lost"
-                                : "No transition"}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <button
-                          className="deals-secondary-button"
-                          type="button"
-                          onClick={() => void openNegotiation(deal)}
-                        >
-                          Manage Negotiation
-                        </button>
-                      </td>
-                      <td>
-                        <button
-                          className="deals-secondary-button"
-                          type="button"
-                          onClick={() => setPaymentMilestoneDeal(deal)}
-                        >
-                          Manage Payments
-                        </button>
-                      </td>
-                      <td>
-                        <button
-                          className="deals-secondary-button"
-                          type="button"
-                          onClick={() => setCommissionDeal(deal)}
-                        >
-                          Manage Commission
-                        </button>
-                      </td>
-                      <td className="deals-value">
-                        {amount(deal.expected_value, deal.currency || "INR")}
-                      </td>
-                      <td>
-                        <span className="deals-owner-name">
-                            {deal.owner_name || "Unknown owner"}
-                        </span>
-                        </td>
-                      <td>
-                        {formatDate(deal.created_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="deals-mobile-list">
-              {filteredDeals.map((deal) => (
-                <article className="deals-mobile-card" key={deal.id}>
-                  <div className="deals-mobile-top">
-                    <span className={stageClass(deal.stage)}>
-                      {label(deal.stage)}
-                    </span>
-                    <strong>
-                      {amount(deal.expected_value, deal.currency || "INR")}
-                    </strong>
-                  </div>
-                  <h3>
-                    {customerName(
-                      customerById.get(deal.customer_profile_id),
-                    )}
-                  </h3>
-                  <p>
-                    {propertyAddress(propertyById.get(deal.property_id))}
-                  </p>
-
-
-<footer>
-  <span>{formatDate(deal.created_at)}</span>
-
-  <span>
-    Owner{" "}
-    {deal.owner_user_id
-      ? `${deal.owner_user_id.slice(0, 8)}…`
-      : "—"}
-  </span>
-
-  {NEXT_DEAL_STAGE[deal.stage as DealStage] && (
-    <button
-      className="deals-secondary-button"
-      type="button"
-      disabled={transitioningDealId !== null || closureSaving}
-      onClick={() => void handleStageTransition(deal)}
-    >
-      {transitioningDealId === deal.id
-        ? "Updating..."
-        : `Move to ${label(
-            NEXT_DEAL_STAGE[deal.stage as DealStage]!
-          )}`}
-    </button>
-  )}
-
-  {deal.stage === "BOOKING" && (
-    <button
-      className="deals-primary-button deals-close-deal-button"
-      type="button"
-      disabled={transitioningDealId !== null || closureSaving}
-      onClick={() => openClosureDialog(deal)}
-    >
-      Close deal
-    </button>
-  )}
-
-  <button
-    className="deals-secondary-button"
-    type="button"
-    onClick={() => void openNegotiation(deal)}
-  >
-    Manage Negotiation
-  </button>
-  
-  <button
-    className="deals-secondary-button"
-    type="button"
-    onClick={() => setPaymentMilestoneDeal(deal)}
-  >
-    Manage Payments
-  </button>
-
-  <button
-    className="deals-secondary-button"
-    type="button"
-    onClick={() => setCommissionDeal(deal)}
-  >
-    Manage Commission
-  </button>
-
-</footer>
-
-
-                </article>
-              ))}
-            </div>
-
-            <footer className="deals-pagination">
-              <p>
-                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
-                <strong>{total}</strong> deals
-              </p>
-
-              <div className="deals-pagination-controls">
-                <button
-                  className="deals-page-button"
-                  type="button"
-                  disabled={page <= 1 || loading}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </button>
-                <span>
-                  Page {page}{totalPages > 0 ? ` of ${totalPages}` : ""}
+            {actionMenu.deal.stage === "BOOKING" && (
+              <button
+                className="deals-action-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={transitioningDealId !== null || closureSaving}
+                onClick={() => {
+                  const selectedDeal = actionMenu.deal;
+                  setActionMenu(null);
+                  openClosureDialog(selectedDeal);
+                }}
+              >
+                <span className="deals-action-menu-icon deals-action-menu-icon-success" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M7 3h10M9 3v3m6-3v3M5 7h14v14H5z"/><path d="m8 14 2.5 2.5L16 11" /></svg>
                 </span>
-                <button
-                  className="deals-page-button"
-                  type="button"
-                  disabled={
-                    page >= totalPages || totalPages === 0 || loading
-                  }
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </button>
-              </div>
-            </footer>
-          </>
-        ) : null}
-      </section>
+                <span className="deals-action-menu-copy">
+                  <strong>Close deal</strong>
+                  <small>Record the final outcome</small>
+                </span>
+              </button>
+            )}
+
+            <div className="deals-action-menu-divider" />
+
+            <button
+              className="deals-action-menu-item"
+              type="button"
+              role="menuitem"
+              disabled={negotiationLoading || negotiationSaving}
+              onClick={() => {
+                const selectedDeal = actionMenu.deal;
+                setActionMenu(null);
+                void openNegotiation(selectedDeal);
+              }}
+            >
+              <span className="deals-action-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>
+              </span>
+              <span className="deals-action-menu-copy">
+                <strong>Negotiation</strong>
+                <small>View terms and negotiation history</small>
+              </span>
+            </button>
+
+            <button
+              className="deals-action-menu-item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const selectedDeal = actionMenu.deal;
+                setActionMenu(null);
+                setPaymentMilestoneDeal(selectedDeal);
+              }}
+            >
+              <span className="deals-action-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h3"/></svg>
+              </span>
+              <span className="deals-action-menu-copy">
+                <strong>Payment milestones</strong>
+                <small>Track scheduled and received payments</small>
+              </span>
+            </button>
+
+            <button
+              className="deals-action-menu-item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const selectedDeal = actionMenu.deal;
+                setActionMenu(null);
+                setCommissionDeal(selectedDeal);
+              }}
+            >
+              <span className="deals-action-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M16 8 8 16M8.5 8.5h.01M15.5 15.5h.01"/></svg>
+              </span>
+              <span className="deals-action-menu-copy">
+                <strong>Commission</strong>
+                <small>Review deal commission details</small>
+              </span>
+            </button>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {columnMenuPosition && createPortal(
+        <div className="deals-column-menu-layer" onPointerDown={() => setColumnMenuPosition(null)} role="presentation">
+          <div className="deals-column-menu" style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }} role="dialog" aria-label="Configure table columns" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="deals-column-menu-heading"><div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div><button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button></div>
+            {[
+              { key: "customerProperty", label: "Customer / Property" },
+              { key: "stage", label: "Stage" },
+              { key: "expectedValue", label: "Expected value" },
+              { key: "owner", label: "Owner" },
+              { key: "createdAt", label: "Created" },
+            ].map((column) => (
+              <label className="deals-column-option" key={column.key}>
+                <input type="checkbox" checked={visibleColumnKeys.includes(column.key)} onChange={(event) => setVisibleColumnKeys((current) => event.target.checked ? [...current, column.key] : current.filter((key) => key !== column.key))}/>
+                <span>{column.label}</span>
+              </label>
+            ))}
+            <div className="deals-column-menu-footer"><button type="button" onClick={() => setVisibleColumnKeys(["customerProperty", "stage", "expectedValue", "owner", "createdAt"])}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div>
+          </div>
+        </div>, document.body,
+      )}
 
       {closingDeal &&
         createPortal(
@@ -1961,6 +1969,6 @@ async function handleStageTransition(deal: Deal) {
           </div>,
           document.body,
         )}
-    </section>
+    </main>
   );
 }

@@ -1,11 +1,15 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
+  type UIEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 import { ApiError } from "../lib/api";
 import { contactsApi, type Contact } from "../services/contactApi";
 import {
@@ -17,15 +21,13 @@ import {
   type LeadStatus,
 } from "../services/leadApi";
 import LeadTimeline from "../components/LeadTimeline";
-import "./LeadsPage.css";
-
 import {
   followUpsApi,
   type BulkFollowUpResponse,
   type FollowUp,
   type FollowUpType,
 } from "../services/followUpApi";
-
+import "./LeadsPage.css";
 
 const PAGE_SIZE = 10;
 
@@ -116,20 +118,6 @@ function formatDateTime(value: string | null): string {
   }).format(date);
 }
 
-function getStatusClass(status: LeadStatus): string {
-  if (status === "WON") return "leads-status leads-status-won";
-  if (status === "LOST") return "leads-status leads-status-lost";
-
-  if (status === "NEGOTIATION" || status === "VISIT") {
-    return "leads-status leads-status-progress";
-  }
-
-  if (status === "ON_HOLD") {
-    return "leads-status leads-status-hold";
-  }
-
-  return "leads-status leads-status-default";
-}
 
 function getContactName(contact: Contact | undefined): string {
   if (!contact) return "Contact unavailable";
@@ -161,6 +149,116 @@ function toLocalDateTimeInput(value: string | null): string {
   return localDate.toISOString().slice(0, 16);
 }
 
+interface InlineChoiceOption {
+  value: string;
+  label: string;
+  tone: string;
+}
+
+function InlineChoiceMenu({
+  value,
+  options,
+  ariaLabel,
+  disabled = false,
+  onChange,
+}: {
+  value: string;
+  options: InlineChoiceOption[];
+  ariaLabel: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  const updatePosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.max(rect.width, 184);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    const estimatedHeight = Math.min(options.length * 38 + 12, 300);
+    const top = rect.bottom + estimatedHeight > window.innerHeight - 8 && rect.top > estimatedHeight
+      ? rect.top - estimatedHeight - 4
+      : rect.bottom + 4;
+    setPosition({ top: Math.max(8, top), left, width });
+  }, [options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, updatePosition]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`leads-choice-trigger ${selected?.tone ?? ""}`}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selected?.label ?? "Select"}</span>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>
+      </button>
+      {open && position && createPortal(
+        <div
+          ref={menuRef}
+          className="leads-choice-menu"
+          role="listbox"
+          aria-label={ariaLabel}
+          style={{ top: position.top, left: position.left, width: position.width }}
+        >
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              className={`leads-choice-option ${option.tone} ${option.value === value ? "is-selected" : ""}`}
+              onClick={() => {
+                setOpen(false);
+                if (option.value !== value) onChange(option.value);
+              }}
+            >
+              <span className="leads-choice-option-label">{option.label}</span>
+              {option.value === value && <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg>}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -176,13 +274,24 @@ export default function LeadsPage() {
   const [interestFilter, setInterestFilter] = useState<
     "" | LeadInterest
   >("");
-  const [activeFilter, setActiveFilter] = useState("active");
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["lead", "status", "interest", "nextAction", "createdAt"]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
+
+  useEffect(() => {
+    const updateGridDensity = () => setCompactGrid(window.innerWidth >= 1600);
+    updateGridDensity();
+    window.addEventListener("resize", updateGridDensity, { passive: true });
+    return () => window.removeEventListener("resize", updateGridDensity);
+  }, []);
 
   const [page, setPage] = useState(1);
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [updatingLeadId, setUpdatingLeadId] = useState<string | null>(null);
   const [statusPromptLead, setStatusPromptLead] = useState<Lead | null>(null);
@@ -227,6 +336,19 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
   const requestSequence = useRef(0);
   const modalRef = useRef<HTMLElement>(null);
 
+  const openColumnMenu = useCallback((event: { currentTarget: HTMLButtonElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 240;
+    setColumnMenuPosition((current) =>
+      current
+        ? null
+        : {
+            top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 280)),
+            left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+          },
+    );
+  }, []);
+
   const loadLeads = useCallback(async () => {
     const sequence = ++requestSequence.current;
 
@@ -240,8 +362,6 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
         search: search || undefined,
         status: statusFilter || undefined,
         interest: interestFilter || undefined,
-        is_active:
-          activeFilter === "all" ? undefined : activeFilter === "active",
       });
 
       if (sequence !== requestSequence.current) return;
@@ -258,12 +378,19 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
         setLoading(false);
       }
     }
-  }, [page, search, statusFilter, interestFilter, activeFilter]);
+  }, [page, search, statusFilter, interestFilter]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchLeads() {
+      if (page === 1) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+      setError("");
+
       try {
         const result = await leadsApi.list({
           page,
@@ -271,23 +398,25 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
           search: search || undefined,
           status: statusFilter || undefined,
           interest: interestFilter || undefined,
-          is_active:
-            activeFilter === "all" ? undefined : activeFilter === "active",
         });
 
         if (cancelled) return;
 
-        setLeads(result.items);
+        setLeads((current) => {
+          if (page === 1) return result.items;
+          const existingIds = new Set(current.map((lead) => lead.id));
+          return [...current, ...result.items.filter((lead) => !existingIds.has(lead.id))];
+        });
         setTotal(result.total);
         setTotalPages(result.total_pages);
         setError("");
       } catch (loadError) {
         if (cancelled) return;
-
         setError(getErrorMessage(loadError));
       } finally {
         if (!cancelled) {
           setLoading(false);
+          setLoadingMore(false);
         }
       }
     }
@@ -297,7 +426,20 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
     return () => {
       cancelled = true;
     };
-  }, [page, search, statusFilter, interestFilter, activeFilter]);
+  }, [page, search, statusFilter, interestFilter]);
+
+  const handleGridScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const nearBottom =
+        element.scrollTop + element.clientHeight >= element.scrollHeight - 180;
+
+      if (nearBottom && !loading && !loadingMore && page < totalPages) {
+        setPage((current) => (current < totalPages ? current + 1 : current));
+      }
+    },
+    [loading, loadingMore, page, totalPages],
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -319,7 +461,7 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
     document.body.style.overflow = "hidden";
 
     const focusTimer = window.setTimeout(() => {
-      modalRef.current?.querySelector<HTMLSelectElement>("select")?.focus();
+      modalRef.current?.querySelector<HTMLInputElement>("input")?.focus();
     }, 50);
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -352,8 +494,7 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
         const result = await contactsApi.list({
           page: 1,
           page_size: 100,
-          is_active: true,
-          search: contactSearch.trim() || undefined,
+            search: contactSearch.trim() || undefined,
         });
 
         if (!cancelled) {
@@ -413,7 +554,8 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
     setContactError("");
     setContactSearch("");
     setFormContacts([]);
-    setNextActionDate("");
+    // Start new leads with the current local date and time selected.
+    setNextActionDate(toLocalDateTimeInput(new Date().toISOString()));
     setIsFormOpen(true);
   }
 
@@ -438,6 +580,11 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
     setSuccess("");
 
     const nextAction = form.next_action.trim();
+
+    if (!editingLead && !form.contact_id) {
+      setFormError("Choose a contact before creating the lead.");
+      return;
+    }
 
     if (nextActionDate && !nextAction) {
       setFormError("Enter a next action when scheduling a date.");
@@ -492,14 +639,12 @@ const [rescheduleDueAt, setRescheduleDueAt] = useState("");
       setSearchInput("");
       setStatusFilter("");
       setInterestFilter("");
-      setActiveFilter("active");
       setSuccess("Lead created successfully.");
       setLoading(true);
 
       const result = await leadsApi.list({
         page: 1,
         page_size: PAGE_SIZE,
-        is_active: true,
       });
 
       setLeads(result.items);
@@ -925,406 +1070,387 @@ async function handleBulkRescheduleFollowUps() {
 }
 
 
-
-  const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const lastResult = Math.min(page * PAGE_SIZE, total);
-
   const contactById = new Map(
-    [...contacts, ...formContacts].map((contact) => [
-      contact.id,
-      contact,
-    ]),
+    [...contacts, ...formContacts].map((contact) => [contact.id, contact]),
+  );
+
+  const sortedLeads = useMemo(() => {
+    if (sortColumns.length === 0) return leads;
+
+    const sorted = [...leads];
+    sorted.sort((left, right) => {
+      for (const sort of sortColumns) {
+        const leftContact = contactById.get(left.contact_id);
+        const rightContact = contactById.get(right.contact_id);
+        let leftValue: string | number = "";
+        let rightValue: string | number = "";
+
+        switch (sort.columnKey) {
+          case "lead":
+            leftValue = getContactName(leftContact).toLocaleLowerCase();
+            rightValue = getContactName(rightContact).toLocaleLowerCase();
+            break;
+          case "status":
+            leftValue = left.status;
+            rightValue = right.status;
+            break;
+          case "interest":
+            leftValue = left.interest ?? "";
+            rightValue = right.interest ?? "";
+            break;
+          case "nextAction":
+            leftValue = left.next_action ?? "";
+            rightValue = right.next_action ?? "";
+            break;
+          case "createdAt":
+            leftValue = left.created_at ?? "";
+            rightValue = right.created_at ?? "";
+            break;
+          default:
+            break;
+        }
+
+        const comparison = String(leftValue).localeCompare(String(rightValue), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (comparison !== 0) {
+          return sort.direction === "DESC" ? -comparison : comparison;
+        }
+      }
+      return 0;
+    });
+
+    return sorted;
+  }, [leads, sortColumns, contactById]);
+
+  const columns = useMemo<readonly Column<Lead>[]>(() => [
+    {
+      key: "lead",
+      name: "Lead / Contact",
+      minWidth: 240,
+      width: 300,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const contact = contactById.get(row.contact_id);
+        const contactName = getContactName(contact);
+        const initials = contactName
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part.charAt(0).toUpperCase())
+          .join("") || "L";
+
+        return (
+          <div className="leads-person-cell">
+            <span className="leads-avatar" aria-hidden="true">{initials}</span>
+            <span className="leads-person-copy">
+              <strong>{contactName}</strong>
+              <span>{contact?.email || contact?.phone || "No contact details added"}</span>
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "status",
+      name: "Status",
+      minWidth: 160,
+      width: 190,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const contactName = getContactName(contactById.get(row.contact_id));
+        const busy = updatingLeadId === row.id;
+
+        return (
+          <div className="leads-status-cell">
+            <InlineChoiceMenu
+              value={row.status}
+              ariaLabel={`Change status for ${contactName}`}
+              disabled={busy || !row.is_active}
+              options={getAvailableStatuses(row.status).map((status) => ({
+                value: status,
+                label: formatLabel(status),
+                tone: `leads-tone-status-${status.toLowerCase()}`,
+              }))}
+              onChange={(value) => void handleStatusChange(row, value as LeadStatus)}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      key: "interest",
+      name: "Interest",
+      minWidth: 125,
+      width: 150,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const contactName = getContactName(contactById.get(row.contact_id));
+        const busy = updatingLeadId === row.id;
+
+        return (
+          <InlineChoiceMenu
+            value={row.interest ?? ""}
+            ariaLabel={`Change interest for ${contactName}`}
+            disabled={busy || !row.is_active}
+            options={[
+              { value: "", label: "Not set", tone: "leads-tone-interest-unset" },
+              ...INTERESTS.map((interest) => ({
+                value: interest,
+                label: formatLabel(interest),
+                tone: `leads-tone-interest-${interest.toLowerCase()}`,
+              })),
+            ]}
+            onChange={(value) => void handleInterestChange(row, value)}
+          />
+        );
+      },
+    },
+    {
+      key: "nextAction",
+      name: "Next follow-up",
+      minWidth: 190,
+      width: 260,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <div className="leads-next-step">
+          <strong>{row.next_action || "No next action"}</strong>
+          <span className={row.next_action_at ? "" : "is-empty"}>
+            {row.next_action_at ? `Due ${formatDateTime(row.next_action_at)}` : "Add a follow-up date"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "createdAt",
+      name: "Created",
+      minWidth: 110,
+      width: 140,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <span className="leads-created-date">{formatDate(row.created_at)}</span>
+      ),
+    },
+    {
+      key: "actions",
+      name: "Actions",
+      minWidth: 126,
+      width: 126,
+      resizable: false,
+      sortable: false,
+      renderCell: ({ row }) => {
+        const contactName = getContactName(contactById.get(row.contact_id));
+        const busy = updatingLeadId === row.id;
+
+        return (
+          <div
+            className="leads-row-actions"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            role="group"
+            aria-label={`Actions for ${contactName}`}
+          >
+            <button className="leads-icon-action" type="button" disabled={busy || saving} onClick={() => openEditForm(row)} aria-label={`Edit ${contactName}`} title="Edit lead">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 5 4 4M4 20l4.2-.8L19 8.4a2.1 2.1 0 0 0-3-3L5.2 16.2 4 20Z"/></svg>
+            </button>
+            <button className="leads-icon-action" type="button" onClick={() => setTimelineLead({ id: row.id, contactName })} aria-label={`View timeline for ${contactName}`} title="Timeline">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            </button>
+            <button className="leads-icon-action" type="button" disabled={busy || !row.is_active} onClick={() => openFollowUps(row)} aria-label={`Manage follow-ups for ${contactName}`} title="Follow-ups">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8M9 3v3m6-3v3M5 7h14v13H5z"/><path d="m8 13 2.5 2.5L16 10"/></svg>
+            </button>
+          </div>
+        );
+      },
+    },
+    {
+      key: "configure",
+      name: "",
+      // Consume spare horizontal space like Jira; stay compact when the grid overflows.
+      width: "1fr",
+      minWidth: 44,
+      resizable: false,
+      sortable: false,
+      renderHeaderCell: () => (
+        <button
+          className="leads-configure-columns-button"
+          type="button"
+          onClick={openColumnMenu}
+          aria-label="Configure table columns"
+          title="Configure columns"
+          aria-expanded={columnMenuPosition !== null}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>
+        </button>
+      ),
+      renderCell: ({ row }) => {
+        const contactName = getContactName(contactById.get(row.contact_id));
+        const busy = updatingLeadId === row.id;
+
+        return (
+          <div className="leads-configure-row-action">
+            <button
+              className="leads-icon-action leads-icon-action-muted"
+              type="button"
+              disabled={busy}
+              onClick={() => void handleActiveToggle(row)}
+              aria-label={row.is_active ? `Deactivate ${contactName}` : `Reactivate ${contactName}`}
+              title={row.is_active ? "Deactivate lead" : "Reactivate lead"}
+            >
+              {busy ? <span className="leads-action-spinner" aria-hidden="true" /> : row.is_active ? (
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6m0-6-6 6"/></svg>
+              ) : (
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15"/></svg>
+              )}
+            </button>
+          </div>
+        );
+      },
+    },
+  ], [contactById, updatingLeadId, saving, handleStatusChange, handleInterestChange, openEditForm, openFollowUps, handleActiveToggle, openColumnMenu, columnMenuPosition]);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
+    [columns, visibleColumnKeys],
   );
 
   return (
-    <section className="leads-page">
-      <header className="leads-header">
-        <div>
-          <span className="leads-eyebrow">SALES WORKSPACE</span>
+    <main className="leads-page leads-workspace">
+      <header className="leads-page-header">
+        <div className="leads-heading-copy">
           <h1>Leads</h1>
-          <p className="leads-subtitle">
-            Track enquiries, manage opportunities, and move prospects toward
-            successful deals.
-          </p>
+          <p>Manage enquiries, understand intent, and keep every next step visible.</p>
         </div>
-
-        <button
-          className="leads-primary-button"
-          type="button"
-          onClick={openCreateForm}
-        >
-          <span aria-hidden="true">+</span> Add lead
-        </button>
       </header>
-
-      <section className="leads-summary" aria-label="Lead overview">
-        <div className="leads-summary-icon" aria-hidden="true">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="10" cy="7" r="4" />
-            <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-          </svg>
-        </div>
-
-        <div>
-          <p className="leads-summary-label">
-            {activeFilter === "active"
-              ? "Active leads"
-              : activeFilter === "inactive"
-                ? "Inactive leads"
-                : "All leads"}
-          </p>
-          <p className="leads-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
-          </p>
-        </div>
-      </section>
 
       {success && (
         <div className="leads-alert leads-alert-success" role="status">
           <span>{success}</span>
-          <button
-            type="button"
-            className="leads-dismiss"
-            onClick={() => setSuccess("")}
-            aria-label="Dismiss success message"
-          >
-            ×
-          </button>
+          <button type="button" className="leads-dismiss" onClick={() => setSuccess("")} aria-label="Dismiss success message">×</button>
         </div>
       )}
 
-      <section className="leads-panel">
-        <header className="leads-panel-heading">
-          <div>
-            <h2>All leads</h2>
-            <p>Search and update your sales pipeline.</p>
-          </div>
-
-          <button
-            className="leads-secondary-button"
-            type="button"
-            onClick={() => void loadLeads()}
-            disabled={loading}
-          >
-            {loading ? "Refreshing..." : "↻ Refresh"}
-          </button>
-        </header>
-
-        <div className="leads-toolbar">
-          <label className="leads-search">
+      <div className="leads-filterbar">
+          <label className="leads-search-field">
             <span className="leads-visually-hidden">Search leads</span>
-            <span className="leads-search-icon" aria-hidden="true">
-              ◷
-            </span>
-            <input
-              type="search"
-              value={searchInput}
-              maxLength={320}
-              placeholder="Search contact, email, phone or next action..."
-              onChange={(event) => {
-                setSearchInput(event.target.value);
-                setPage(1);
-              }}
-            />
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+            <input type="search" value={searchInput} maxLength={320} placeholder="Search name, email, phone or next action" onChange={(event) => { setSearchInput(event.target.value); setPage(1); }} />
+            {searchInput && <button type="button" aria-label="Clear search" onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}>×</button>}
           </label>
-
-          <label className="leads-filter">
-            <span className="leads-visually-hidden">Filter by status</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value as "" | LeadStatus);
-                setPage(1);
-              }}
-            >
-              <option value="">All statuses</option>
-              {STATUSES.map((status) => (
-                <option value={status} key={status}>
-                  {formatLabel(status)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="leads-filter">
-            <span className="leads-visually-hidden">Filter by interest</span>
-            <select
-              value={interestFilter}
-              onChange={(event) => {
-                setInterestFilter(event.target.value as "" | LeadInterest);
-                setPage(1);
-              }}
-            >
-              <option value="">All interest levels</option>
-              {INTERESTS.map((interest) => (
-                <option value={interest} key={interest}>
-                  {formatLabel(interest)} interest
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="leads-filter">
-            <span className="leads-visually-hidden">Filter active leads</span>
-            <select
-              value={activeFilter}
-              onChange={(event) => {
-                setActiveFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="all">All leads</option>
-            </select>
-          </label>
+          <label className="leads-filter-field"><span>Status</span><select aria-label="Filter by status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as "" | LeadStatus); setPage(1); }}><option value="">All statuses</option>{STATUSES.map((status) => <option value={status} key={status}>{formatLabel(status)}</option>)}</select></label>
+          <label className="leads-filter-field"><span>Interest</span><select aria-label="Filter by interest" value={interestFilter} onChange={(event) => { setInterestFilter(event.target.value as "" | LeadInterest); setPage(1); }}><option value="">All levels</option>{INTERESTS.map((interest) => <option value={interest} key={interest}>{formatLabel(interest)}</option>)}</select></label>
+          {(searchInput || statusFilter || interestFilter) && <button className="leads-clear-filters" type="button" onClick={() => { setSearchInput(""); setSearch(""); setStatusFilter(""); setInterestFilter(""); setPage(1); }}>Clear filters</button>}
+          <button className="leads-primary-button leads-add-button leads-toolbar-create" type="button" onClick={openCreateForm}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+            Create lead
+          </button>
         </div>
 
-        {error && (
-          <div className="leads-alert leads-alert-error" role="alert">
-            <div>
-              <strong>Couldn't load or update leads</strong>
-              <p>{error}</p>
-            </div>
-            <button
-              className="leads-secondary-button"
-              type="button"
-              onClick={() => void loadLeads()}
-            >
-              Retry
-            </button>
-          </div>
-        )}
+        {error && <div className="leads-alert leads-alert-error" role="alert"><div><strong>We couldn’t load the leads</strong><p>{error}</p></div><button className="leads-secondary-button" type="button" onClick={() => void loadLeads()}>Try again</button></div>}
 
         {loading ? (
-          <div className="leads-state" role="status" aria-live="polite">
-            <span className="leads-spinner" aria-hidden="true" />
-            <p>Loading leads...</p>
-          </div>
+          <div className="leads-state" role="status" aria-live="polite"><span className="leads-spinner" aria-hidden="true"/><p>Loading leads…</p></div>
         ) : !error && leads.length === 0 ? (
-          <div className="leads-empty">
-            <div className="leads-empty-icon" aria-hidden="true">
-              ↗
-            </div>
-            <h3>
-              {search ||
-              statusFilter ||
-              interestFilter ||
-              activeFilter !== "active"
-                ? "No matching leads"
-                : "Your pipeline starts here"}
-            </h3>
-            <p>
-              {search ||
-              statusFilter ||
-              interestFilter ||
-              activeFilter !== "active"
-                ? "Try changing your search or filters."
-                : "Create a lead from an existing contact to start tracking an opportunity."}
-            </p>
-
-            {search ||
-            statusFilter ||
-            interestFilter ||
-            activeFilter !== "active" ? (
-              <button
-                className="leads-secondary-button"
-                type="button"
-                onClick={() => {
-                  setSearchInput("");
-                  setSearch("");
-                  setStatusFilter("");
-                  setInterestFilter("");
-                  setActiveFilter("active");
-                  setPage(1);
-                }}
-              >
-                Clear filters
-              </button>
-            ) : (
-              <button
-                className="leads-primary-button"
-                type="button"
-                onClick={openCreateForm}
-              >
-                + Add your first lead
-              </button>
-            )}
-          </div>
+          <div className="leads-empty"><div className="leads-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M19 8v6M16 11h6"/></svg></div><h3>{search || statusFilter || interestFilter ? "No leads match these filters" : "Start with your first lead"}</h3><p>{search || statusFilter || interestFilter ? "Try another search or clear one or more filters." : "Add a lead from an existing contact to begin tracking their journey."}</p>{search || statusFilter || interestFilter ? <button className="leads-secondary-button" type="button" onClick={() => { setSearchInput(""); setSearch(""); setStatusFilter(""); setInterestFilter(""); setPage(1); }}>Reset view</button> : <button className="leads-primary-button" type="button" onClick={openCreateForm}>Add your first lead</button>}</div>
         ) : !error ? (
           <>
-            <div className="leads-table-wrapper">
-              <table className="leads-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Contact</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Interest</th>
-                    <th scope="col">Next action</th>
-                    <th scope="col">Follow-up date</th>
-                    <th scope="col">Added</th>
-                    <th scope="col">Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {leads.map((lead) => {
-                    const contact = contactById.get(lead.contact_id);
-                    const busy = updatingLeadId === lead.id;
-
-                    return (
-                      <tr key={lead.id}>
-                        <td>
-                          <div className="leads-contact-name">
-                            {getContactName(contact)}
-                          </div>
-                          <div className="leads-secondary-text">
-                            {contact?.email ||
-                              contact?.phone ||
-                              "No contact details"}
-                          </div>
-                        </td>
-
-                        <td>
-                          <span className={getStatusClass(lead.status)}>
-                            {formatLabel(lead.status)}
-                          </span>
-                          <select
-                            className="leads-inline-select"
-                            aria-label={`Change status for ${getContactName(contact)}`}
-                            value={lead.status}
-                            disabled={busy || !lead.is_active}
-                            onChange={(event) =>
-                              void handleStatusChange(lead, event.target.value)
-                            }
-                          >
-                            {getAvailableStatuses(lead.status).map((status) => (
-                              <option key={status} value={status}>
-                                {formatLabel(status)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        <td>
-                          <select
-                            className="leads-inline-select"
-                            aria-label={`Change interest for ${getContactName(contact)}`}
-                            value={lead.interest ?? ""}
-                            disabled={busy || !lead.is_active}
-                            onChange={(event) =>
-                              void handleInterestChange(lead, event.target.value)
-                            }
-                          >
-                            <option value="">Not set</option>
-                            {INTERESTS.map((interest) => (
-                              <option key={interest} value={interest}>
-                                {formatLabel(interest)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        <td>
-                          <span className="leads-action-text">
-                            {lead.next_action || "—"}
-                          </span>
-                        </td>
-
-                        <td>{formatDateTime(lead.next_action_at)}</td>
-                        <td>{formatDate(lead.created_at)}</td>
-
-                        <td>
-                          <button
-                            className="leads-text-button"
-                            type="button"
-                            disabled={busy || saving}
-                            onClick={() => openEditForm(lead)}
-                          >
-                            Edit
-                          </button>
-
-                          <button
-                            className="leads-text-button"
-                            type="button"
-                            onClick={() =>
-                              setTimelineLead({
-                                id: lead.id,
-                                contactName: getContactName(contact),
-                              })
-                            }
-                          >
-                            View timeline
-                          </button>
-                          <button
-                            className="leads-text-button"
-                            type="button"
-                            disabled={busy || !lead.is_active}
-                            onClick={() => openFollowUps(lead)}
-                          >
-                            Follow-ups
-                          </button>
-                          <button
-                            className="leads-text-button"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleActiveToggle(lead)}
-                          >
-                            {busy
-                              ? "Saving..."
-                              : lead.is_active
-                                ? "Deactivate"
-                                : "Reactivate"}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <footer className="leads-pagination">
-              <p>
-                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
-                <strong>{total}</strong> leads
-              </p>
-
-              <div className="leads-pagination-controls">
-                <button
-                  className="leads-page-button"
-                  type="button"
-                  disabled={page <= 1 || loading}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </button>
-
-                <span>
-                  Page {page}
-                  {totalPages > 0 ? ` of ${totalPages}` : ""}
-                </span>
-
-                <button
-                  className="leads-page-button"
-                  type="button"
-                  disabled={page >= totalPages || totalPages === 0 || loading}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </button>
+            <div className="leads-grid-shell">
+              <DataGrid
+                className="leads-react-data-grid"
+                aria-label="Leads directory"
+                columns={visibleColumns}
+                rows={sortedLeads}
+                rowKeyGetter={(row) => row.id}
+                rowHeight={compactGrid ? 42 : 58}
+                headerRowHeight={52}
+                defaultColumnOptions={{ resizable: true, sortable: true }}
+                sortColumns={sortColumns}
+                onSortColumnsChange={setSortColumns}
+                onScroll={handleGridScroll}
+                style={{
+                  height: Math.min(
+                    52 + sortedLeads.length * (compactGrid ? 42 : 58),
+                    Math.max(220, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68),
+                  ),
+                  minHeight: 52 + Math.min(sortedLeads.length, 1) * (compactGrid ? 42 : 58),
+                }}
+                renderers={{
+                  noRowsFallback: (
+                    <div className="leads-grid-no-rows">No leads to display.</div>
+                  ),
+                }}
+              />
+              {loadingMore && (
+                <div className="leads-load-more" role="status" aria-live="polite">
+                  <span className="leads-spinner" aria-hidden="true" />
+                  <span>Loading more leads…</span>
+                </div>
+              )}
+              <div className="leads-grid-end" role="status" aria-live="polite">
+                {loadingMore
+                  ? `Loading more leads… ${leads.length.toLocaleString("en-IN")} loaded`
+                  : leads.length >= total
+                    ? `You’re all caught up · ${total.toLocaleString("en-IN")} leads`
+                    : `Showing ${leads.length.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")} leads`}
               </div>
-            </footer>
+            </div>
           </>
         ) : null}
+
+{columnMenuPosition &&
+  createPortal(
+    <div
+      className="leads-column-menu-layer"
+      onPointerDown={() => setColumnMenuPosition(null)}
+      role="presentation"
+    >
+      <div
+        className="leads-column-menu"
+        style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }}
+        role="dialog"
+        aria-label="Configure table columns"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="leads-column-menu-heading">
+          <div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div>
+          <button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button>
+        </div>
+        {[
+          { key: "lead", label: "Lead / Contact" },
+          { key: "status", label: "Status" },
+          { key: "interest", label: "Interest" },
+          { key: "nextAction", label: "Next follow-up" },
+          { key: "createdAt", label: "Created" },
+        ].map((column) => (
+          <label className="leads-column-option" key={column.key}>
+            <input
+              type="checkbox"
+              checked={visibleColumnKeys.includes(column.key)}
+              onChange={(event) => {
+                setVisibleColumnKeys((current) =>
+                  event.target.checked
+                    ? [...current, column.key]
+                    : current.filter((key) => key !== column.key),
+                );
+              }}
+            />
+            <span>{column.label}</span>
+          </label>
+        ))}
+        <div className="leads-column-menu-footer">
+          <button type="button" onClick={() => setVisibleColumnKeys(["lead", "status", "interest", "nextAction", "createdAt"])}>Reset columns</button>
+          <button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )}
 
 {statusPromptLead &&
   createPortal(
@@ -1824,8 +1950,6 @@ async function handleBulkRescheduleFollowUps() {
     document.body,
   )}
 
-      </section>
-
       {isFormOpen &&
         createPortal(
           <div
@@ -1840,7 +1964,7 @@ async function handleBulkRescheduleFollowUps() {
           >
             <section
               ref={modalRef}
-              className="leads-modal"
+              className="leads-modal leads-lead-form-modal"
               role="dialog"
               aria-modal="true"
               aria-labelledby="leads-modal-title"
@@ -1886,7 +2010,7 @@ async function handleBulkRescheduleFollowUps() {
 
                   {!editingLead && (
                     <>
-                      <label className="leads-form-field">
+                      <label className="leads-form-field leads-form-contact-search">
                         <span>Find contact</span>
                         <input
                           type="search"
@@ -1900,35 +2024,33 @@ async function handleBulkRescheduleFollowUps() {
                         />
                       </label>
 
-                      <label className="leads-form-field">
+                      <label className="leads-form-field leads-form-contact">
                         <span>
                           Contact <span aria-hidden="true">*</span>
                         </span>
 
-                        <select
-                          required
-                          value={form.contact_id}
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              contact_id: event.target.value,
-                            }))
-                          }
-                          disabled={saving || contactLoading}
-                        >
-                          <option value="">
-                            {contactLoading
-                              ? "Loading contacts..."
-                              : "Select a contact"}
-                          </option>
-
-                          {formContacts.map((contact) => (
-                            <option value={contact.id} key={contact.id}>
-                              {getContactName(contact)}
-                              {contact.phone ? ` Â· ${contact.phone}` : ""}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="leads-form-choice-wrap">
+                          <InlineChoiceMenu
+                            value={form.contact_id}
+                            ariaLabel="Choose contact"
+                            disabled={saving || contactLoading || formContacts.length === 0}
+                            options={[
+                              {
+                                value: "",
+                                label: contactLoading ? "Loading contacts…" : "Select a contact",
+                                tone: "leads-tone-interest-unset",
+                              },
+                              ...formContacts.map((contact) => ({
+                                value: contact.id,
+                                label: `${getContactName(contact)}${contact.phone ? ` · ${contact.phone}` : ""}`,
+                                tone: "leads-tone-contact",
+                              })),
+                            ]}
+                            onChange={(value) =>
+                              setForm((current) => ({ ...current, contact_id: value }))
+                            }
+                          />
+                        </div>
 
                         {contactLoading && (
                           <span className="leads-field-hint">
@@ -1952,30 +2074,32 @@ async function handleBulkRescheduleFollowUps() {
                           )}
                       </label>
 
-                      <label className="leads-form-field">
+                      <label className="leads-form-field leads-form-interest">
                         <span>Interest level</span>
-                        <select
+                        <InlineChoiceMenu
                           value={form.interest}
-                          onChange={(event) =>
+                          ariaLabel="Interest level"
+                          disabled={saving}
+                          options={[
+                            { value: "", label: "Not set", tone: "leads-tone-interest-unset" },
+                            ...INTERESTS.map((interest) => ({
+                              value: interest,
+                              label: formatLabel(interest),
+                              tone: `leads-tone-interest-${interest.toLowerCase()}`,
+                            })),
+                          ]}
+                          onChange={(value) =>
                             setForm((current) => ({
                               ...current,
-                              interest: event.target.value as "" | LeadInterest,
+                              interest: value as "" | LeadInterest,
                             }))
                           }
-                          disabled={saving}
-                        >
-                          <option value="">Not set</option>
-                          {INTERESTS.map((interest) => (
-                            <option key={interest} value={interest}>
-                              {formatLabel(interest)}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </label>
                     </>
                   )}
 
-                  <label className="leads-form-field">
+                  <label className="leads-form-field leads-form-next-action">
                     <span>Next action</span>
                     <input
                       type="text"
@@ -1992,7 +2116,7 @@ async function handleBulkRescheduleFollowUps() {
                     />
                   </label>
 
-                  <label className="leads-form-field">
+                  <label className="leads-form-field leads-form-next-action-date">
                     <span>Next action date and time</span>
                     <input
                       type="datetime-local"
@@ -2021,11 +2145,12 @@ async function handleBulkRescheduleFollowUps() {
                     }}
                     disabled={saving}
                   >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
                     Cancel
                   </button>
 
                   <button
-                    className="leads-primary-button"
+                    className={`leads-primary-button ${editingLead ? "leads-save-button" : "leads-create-submit-button"}`}
                     type="submit"
                     disabled={
                       saving ||
@@ -2033,11 +2158,14 @@ async function handleBulkRescheduleFollowUps() {
                         (contactLoading || formContacts.length === 0))
                     }
                   >
-                    {saving
-                      ? "Saving..."
-                      : editingLead
-                        ? "Save changes"
-                        : "Create lead"}
+                    {saving ? (
+                      <span className="leads-button-spinner" aria-hidden="true" />
+                    ) : editingLead ? (
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5 9.2 17 19 7" /></svg>
+                    ) : (
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                    )}
+                    {saving ? "Saving…" : editingLead ? "Save changes" : "Create lead"}
                   </button>
                 </footer>
               </form>
@@ -2045,6 +2173,6 @@ async function handleBulkRescheduleFollowUps() {
           </div>,
           document.body,
         )}
-    </section>
+    </main>
   );
 }

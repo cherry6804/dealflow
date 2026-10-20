@@ -6,6 +6,8 @@ import {
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 import { ApiError } from "../lib/api";
 import { contactsApi, type Contact } from "../services/contactApi";
 import { leadsApi, type Lead } from "../services/leadApi";
@@ -139,6 +141,11 @@ export default function RequirementsPage() {
   const [totalPages, setTotalPages] = useState(0);
 
   const [statusFilter, setStatusFilter] = useState<"" | RequirementStatus>("");
+  const [searchInput, setSearchInput] = useState("");
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["customerRequirement", "budget", "status", "updatedAt"]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -924,275 +931,194 @@ export default function RequirementsPage() {
     }
   }
 
+  useEffect(() => {
+    const updateDensity = () => setCompactGrid(window.innerWidth >= 1600);
+    updateDensity();
+    window.addEventListener("resize", updateDensity, { passive: true });
+    return () => window.removeEventListener("resize", updateDensity);
+  }, []);
+
+  useEffect(() => {
+    if (!columnMenuPosition) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setColumnMenuPosition(null); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [columnMenuPosition]);
+
+  const openColumnMenu = useCallback((event: { currentTarget: HTMLButtonElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 240;
+    setColumnMenuPosition((current) => current ? null : {
+      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 300)),
+      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+    });
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    const query = searchInput.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => [item.customer_name ?? "", item.customer_email ?? "", item.customer_phone ?? "", item.id,
+      formatCurrency(item.budget_min), formatCurrency(item.budget_max), item.is_active ? "active" : "inactive",
+      formatDate(item.updated_at)].join(" ").toLowerCase().includes(query));
+  }, [items, searchInput]);
+
+  const sortedItems = useMemo(() => {
+    if (!sortColumns.length) return filteredItems;
+    return [...filteredItems].sort((left, right) => {
+      for (const sort of sortColumns) {
+        const value = (item: CustomerRequirement): string | number => {
+          switch (sort.columnKey) {
+            case "customerRequirement": return `${item.customer_name ?? ""} ${item.customer_email ?? ""} ${item.id}`;
+            case "budget": return Number(item.budget_min ?? 0);
+            case "status": return item.is_active ? "Active" : "Inactive";
+            case "updatedAt": return new Date(item.updated_at).getTime() || 0;
+            default: return "";
+          }
+        };
+        const a = value(left); const b = value(right);
+        const comparison = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+        if (comparison) return sort.direction === "DESC" ? -comparison : comparison;
+      }
+      return 0;
+    });
+  }, [filteredItems, sortColumns]);
+
+  const columns = useMemo<readonly Column<CustomerRequirement>[]>(() => [
+    {
+      key: "customerRequirement",
+      name: "Customer / Requirement",
+      minWidth: 230,
+      width: 330,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <div className="requirements-grid-record">
+          <span className="requirements-grid-record-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m3 10 9-7 9 7" />
+              <path d="M5 9v12h14V9M9 21v-7h6v7" />
+            </svg>
+          </span>
+          <div>
+            <strong>{row.customer_name?.trim() || "Customer not assigned"}</strong>
+            {row.customer_email && <small>{row.customer_email}</small>}
+            {row.customer_phone && <small>{row.customer_phone}</small>}
+            <small title={row.id}>REQ-{row.id.replace(/-/g, "").slice(0, 8).toUpperCase()}</small>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "budget",
+      name: "Budget range",
+      minWidth: 150,
+      width: 165,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <div className="requirements-grid-budget">
+          <strong>{formatCurrency(row.budget_min)}</strong>
+          <small>to {formatCurrency(row.budget_max)}</small>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      name: "Status",
+      minWidth: 120,
+      width: 140,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <span className={`requirements-grid-status ${row.is_active ? "is-active" : "is-inactive"}`}>
+          <span className="requirements-grid-status-dot" />
+          {row.is_active ? "Active" : "Inactive"}
+        </span>
+      ),
+    },
+    {
+      key: "updatedAt",
+      name: "Last updated",
+      minWidth: 130,
+      width: 145,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => formatDate(row.updated_at),
+    },
+    {
+      key: "actions",
+      name: "Actions",
+      width: 118,
+      minWidth: 112,
+      sortable: false,
+      resizable: false,
+      renderCell: ({ row }) => (
+        <button
+          className="requirements-grid-action-button"
+          type="button"
+          disabled={busy || saving}
+          onClick={() => void openEditModal(row)}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+          </svg>
+          View / Edit
+        </button>
+      ),
+    },
+    {
+      key: "configure",
+      name: "",
+      width: "1fr",
+      minWidth: 44,
+      sortable: false,
+      resizable: false,
+      renderHeaderCell: () => (
+        <button
+          className="requirements-configure-columns-button"
+          type="button"
+          onClick={openColumnMenu}
+          aria-label="Configure table columns"
+          title="Configure columns"
+          aria-expanded={columnMenuPosition !== null}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M9 4v16M15 4v16" />
+          </svg>
+        </button>
+      ),
+      renderCell: () => null,
+    },
+  ], [busy, saving, openEditModal, openColumnMenu, columnMenuPosition]);
+  const visibleColumns = useMemo(() => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)), [columns, visibleColumnKeys]);
+
   const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastResult = Math.min(page * PAGE_SIZE, total);
 
   return (
-    <section className="requirements-page">
+    <main className="requirements-page">
       <header className="requirements-header">
-        <div>
-          <span className="requirements-eyebrow">CUSTOMER WORKSPACE</span>
-          <h1>Customer requirements</h1>
-          <p className="requirements-subtitle">
-            Manage customer property needs, budgets, locations, and preferences.
-          </p>
-        </div>
-
-        <button
-          className="requirements-primary-button"
-          type="button"
-          onClick={() => void openCreateModal()}
-          disabled={busy || saving}
-        >
-          + New requirement
-        </button>
+        <div className="requirements-heading-copy"><h1>Customer requirements</h1><p>Manage customer property needs, budgets, locations, and preferences.</p></div>
+        <button className="requirements-primary-button" type="button" onClick={() => void openCreateModal()} disabled={busy || saving}><span aria-hidden="true">＋</span> New requirement</button>
       </header>
 
-      <section
-        className="requirements-summary"
-        aria-label="Requirement summary"
-      >
-        <div className="requirements-summary-icon" aria-hidden="true">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            width="22"
-            height="22"
-          >
-            <path d="M4 5h16v14H4z" />
-            <path d="M8 9h8M8 13h5" />
-          </svg>
-        </div>
-        <div>
-          <p className="requirements-summary-label">Matching requirements</p>
-          <p className="requirements-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
-          </p>
-        </div>
+      {error && !modalOpen && <div className="requirements-alert requirements-alert-error" role="alert"><span>{error}</span><button className="requirements-dismiss" type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
+      {notice && !modalOpen && <div className="requirements-alert requirements-alert-success" role="status"><span>{notice}</span><button className="requirements-dismiss" type="button" onClick={() => setNotice("")} aria-label="Dismiss notice">×</button></div>}
+
+      <div className="requirements-filterbar">
+        <label className="requirements-search-field"><span className="requirements-visually-hidden">Search requirements</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input type="search" maxLength={320} value={searchInput} placeholder="Search customer, email, phone or requirement ID" onChange={(event) => setSearchInput(event.target.value)}/>{searchInput && <button type="button" aria-label="Clear search" onClick={() => setSearchInput("")}>×</button>}</label>
+        <label className="requirements-filter"><span>Status</span><select value={statusFilter} onChange={(event) => { setPage(1); setStatusFilter(event.target.value as "" | RequirementStatus); }}><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></label>
+        <button className="requirements-secondary-button" type="button" disabled={loading} onClick={() => void loadRequirements()}>{loading ? "Refreshing…" : "↻ Refresh"}</button>
+      </div>
+
+      <section className="requirements-grid-shell" aria-label="Customer requirements">
+        {loading && items.length === 0 ? <div className="requirements-grid-state" role="status">Loading requirements…</div> : error && items.length === 0 ? <div className="requirements-grid-state">Unable to load requirements. Use the retry action in the message above.</div> : <DataGrid className="requirements-react-data-grid" aria-label="Customer requirements directory" columns={visibleColumns} rows={sortedItems} rowKeyGetter={(row) => row.id} rowHeight={compactGrid ? 48 : 62} headerRowHeight={52} defaultColumnOptions={{ resizable: true, sortable: true }} sortColumns={sortColumns} onSortColumnsChange={setSortColumns} style={{ height: Math.min(52 + sortedItems.length * (compactGrid ? 48 : 62), Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)), minHeight: 52 + Math.min(sortedItems.length, 1) * (compactGrid ? 48 : 62) }} renderers={{ noRowsFallback: <div className="requirements-grid-no-rows">{searchInput || statusFilter ? "No requirements match these filters." : "No requirements yet. Create a requirement to capture a customer's property needs."}</div> }} />}
+        <footer className="requirements-grid-footer" aria-live="polite"><div className="requirements-grid-footer-count"><strong>{total.toLocaleString("en-IN")}</strong> {total === 1 ? "requirement" : "requirements"} in your workspace <span>Showing {firstResult}–{lastResult}</span></div><div className="requirements-grid-footer-right">{totalPages > 1 && <div className="requirements-pagination-controls"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((current) => current + 1)}>Next</button></div>}<span className="requirements-grid-footer-status"><span className="requirements-grid-footer-status-dot" aria-hidden="true"/>{loading ? "Updating records" : "You're all caught up"}</span></div></footer>
       </section>
 
-      {error && !modalOpen && (
-        <div
-          className="requirements-alert requirements-alert-error"
-          role="alert"
-        >
-          <span>{error}</span>
-          <button
-            className="requirements-dismiss"
-            type="button"
-            onClick={() => setError("")}
-            aria-label="Dismiss error"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {notice && !modalOpen && (
-        <div
-          className="requirements-alert requirements-alert-success"
-          role="status"
-        >
-          <span>{notice}</span>
-          <button
-            className="requirements-dismiss"
-            type="button"
-            onClick={() => setNotice("")}
-            aria-label="Dismiss notice"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      <section className="requirements-panel">
-        <header className="requirements-panel-heading">
-          <div>
-            <h2>Customer requirement inventory</h2>
-            <p>Review budgets and manage saved requirements.</p>
-          </div>
-          <button
-            className="requirements-secondary-button"
-            type="button"
-            disabled={loading}
-            onClick={() => void loadRequirements()}
-          >
-            {loading ? "Refreshing…" : "↻ Refresh"}
-          </button>
-        </header>
-
-        <div className="requirements-toolbar">
-          <div className="requirements-toolbar-description">
-            <strong>Filter requirements</strong>
-            <span>Choose which records appear in the table.</span>
-          </div>
-
-          <label className="requirements-filter">
-            <span>Status</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => {
-                setPage(1);
-                setStatusFilter(event.target.value as "" | RequirementStatus);
-              }}
-            >
-              <option value="">All statuses</option>
-              <option value="ACTIVE">Active</option>
-              <option value="INACTIVE">Inactive</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="requirements-table-wrap">
-          <table className="requirements-table">
-            <thead>
-              <tr>
-                <th>Customer / Requirement</th>
-                <th>Budget range</th>
-                <th>Status</th>
-                <th>Last updated</th>
-                <th className="requirements-actions-heading">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="requirements-table-message">
-                    Loading requirements…
-                  </td>
-                </tr>
-              ) : error ? (
-                <tr>
-                  <td colSpan={5} className="requirements-table-message">
-                    Unable to load requirements.
-                    <button
-                      className="requirements-inline-button"
-                      type="button"
-                      onClick={() => void loadRequirements()}
-                    >
-                      Retry
-                    </button>
-                  </td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="requirements-table-message">
-                    <div className="requirements-empty-icon">⌕</div>
-                    <strong>No requirements yet</strong>
-                    <p>
-                      Create a requirement to capture a customer's property
-                      needs.
-                    </p>
-                    <button
-                      className="requirements-secondary-button"
-                      type="button"
-                      onClick={() => void openCreateModal()}
-                    >
-                      Create requirement
-                    </button>
-                  </td>
-                </tr>
-              ) : (
-                items.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <div className="requirements-record">
-                        <span
-                          className="requirements-record-icon"
-                          aria-hidden="true"
-                        >
-                          ⌂
-                        </span>
-
-                        <div>
-                          <strong>
-                            {item.customer_name?.trim() || "Customer not assigned"}
-                          </strong>
-
-                          {item.customer_email && (
-                            <span>{item.customer_email}</span>
-                          )}
-
-                          {item.customer_phone && (
-                            <span>{item.customer_phone}</span>
-                          )}
-
-                          <span title={item.id}>
-                            REQ-{item.id.replace(/-/g, "").slice(0, 8).toUpperCase()}
-                          </span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="requirements-budget">
-                        <strong>{formatCurrency(item.budget_min)}</strong>
-                        <span>to {formatCurrency(item.budget_max)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span
-                        className={`requirements-status ${
-                          item.is_active ? "is-active" : "is-inactive"
-                        }`}
-                      >
-                        <span className="requirements-status-dot" />
-                        {item.is_active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td>{formatDate(item.updated_at)}</td>
-                    <td className="requirements-actions-cell">
-                      <button
-                        className="requirements-edit-button"
-                        type="button"
-                        disabled={busy || saving}
-                        onClick={() => void openEditModal(item)}
-                      >
-                        View / Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <footer className="requirements-pagination">
-          <p>
-            Showing{" "}
-            <strong>
-              {firstResult}–{lastResult}
-            </strong>{" "}
-            of <strong>{total}</strong> requirements
-          </p>
-          <div className="requirements-pagination-controls">
-            <button
-              className="requirements-page-button"
-              type="button"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((current) => current - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Page {page}
-              {totalPages > 0 ? ` of ${totalPages}` : ""}
-            </span>
-            <button
-              className="requirements-page-button"
-              type="button"
-              disabled={page >= totalPages || totalPages === 0 || loading}
-              onClick={() => setPage((current) => current + 1)}
-            >
-              Next
-            </button>
-          </div>
-        </footer>
-      </section>
+      {columnMenuPosition && createPortal(<div className="requirements-column-menu-layer" onPointerDown={() => setColumnMenuPosition(null)} role="presentation"><div className="requirements-column-menu" style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }} role="dialog" aria-label="Configure table columns" onPointerDown={(event) => event.stopPropagation()}><div className="requirements-column-menu-heading"><div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div><button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button></div>{[{key:"customerRequirement",label:"Customer / Requirement"},{key:"budget",label:"Budget range"},{key:"status",label:"Status"},{key:"updatedAt",label:"Last updated"}].map((column) => <label className="requirements-column-option" key={column.key}><input type="checkbox" checked={visibleColumnKeys.includes(column.key)} onChange={(event) => setVisibleColumnKeys((current) => event.target.checked ? [...current, column.key] : current.filter((key) => key !== column.key))}/><span>{column.label}</span></label>)}<div className="requirements-column-menu-footer"><button type="button" onClick={() => setVisibleColumnKeys(["customerRequirement","budget","status","updatedAt"])}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div></div></div>, document.body)}
 
       {modalOpen &&
         requirement &&
@@ -2230,6 +2156,6 @@ export default function RequirementsPage() {
           </div>,
           document.body,
         )}
-    </section>
+    </main>
   );
 }
