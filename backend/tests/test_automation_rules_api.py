@@ -1,9 +1,9 @@
-
 """Integration tests for tenant-scoped automation rules and execution audits."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -19,9 +19,14 @@ from app.auth.dependencies import (
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.organization import Organization
+from app.db.models.plan import Plan
+from app.db.models.plan_entitlement import PlanEntitlement
+from app.db.models.subscription import Subscription
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db_session
-from tests.test_deals_api import create_authorized_user
+from tests.test_deals_api import (
+    create_authorized_user as _create_authorized_user,
+)
 
 TestingSessionLocal = SessionLocal
 
@@ -29,11 +34,59 @@ AUTOMATION_READ = "automation.read"
 AUTOMATION_CREATE = "automation.create"
 AUTOMATION_UPDATE = "automation.update"
 
+WORKFLOW_AUTOMATION_ENTITLEMENT = "workflow_automation"
+
 ALL_PERMISSIONS = (
     AUTOMATION_READ,
     AUTOMATION_CREATE,
     AUTOMATION_UPDATE,
 )
+
+
+def create_authorized_user(
+    db: Session,
+    *,
+    permission_keys: tuple[str, ...],
+) -> tuple[User, Organization]:
+    """Create an authorized test user with an eligible automation plan."""
+    user, organization = _create_authorized_user(
+        db,
+        permission_keys=permission_keys,
+    )
+
+    plan = Plan(
+        # Must fit the plans.code VARCHAR(40) database column.
+        code=f"auto-{organization.id.hex}",
+        name="Automation Test Plan",
+        monthly_price_paise=49900,
+        currency="INR",
+        included_seats=2,
+        is_active=True,
+    )
+    db.add(plan)
+    db.flush()
+
+    subscription = Subscription(
+        organization_id=organization.id,
+        plan_id=plan.id,
+        plan_code=plan.code,
+        status=Subscription.STATUS_ACTIVE,
+        billing_interval="MONTHLY",
+        current_period_start=datetime.now(timezone.utc),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+
+    entitlement = PlanEntitlement(
+        plan_id=plan.id,
+        key=WORKFLOW_AUTOMATION_ENTITLEMENT,
+        value_type="BOOLEAN",
+        value=True,
+    )
+
+    db.add_all([subscription, entitlement])
+    db.commit()
+
+    return user, organization
 
 
 def create_test_app(*, user: User) -> FastAPI:
@@ -97,6 +150,46 @@ def create_rule(
     return response.json()
 
 
+def set_workflow_automation_entitlement(
+    db: Session,
+    *,
+    organization: Organization,
+    enabled: bool | None,
+) -> None:
+    """Enable, disable, or remove this organization's automation entitlement."""
+    subscription = db.scalar(
+        select(Subscription)
+        .where(Subscription.organization_id == organization.id)
+        .order_by(Subscription.created_at.desc(), Subscription.id.desc())
+    )
+    assert subscription is not None
+    assert subscription.plan_id is not None
+
+    entitlement = db.scalar(
+        select(PlanEntitlement).where(
+            PlanEntitlement.plan_id == subscription.plan_id,
+            PlanEntitlement.key == WORKFLOW_AUTOMATION_ENTITLEMENT,
+        )
+    )
+
+    if enabled is None:
+        if entitlement is not None:
+            db.delete(entitlement)
+    elif entitlement is not None:
+        entitlement.value = enabled
+    else:
+        db.add(
+            PlanEntitlement(
+                plan_id=subscription.plan_id,
+                key=WORKFLOW_AUTOMATION_ENTITLEMENT,
+                value_type="BOOLEAN",
+                value=enabled,
+            )
+        )
+
+    db.commit()
+
+
 def test_create_automation_rule_successfully() -> None:
     with TestingSessionLocal() as db:
         user, organization = create_authorized_user(
@@ -151,6 +244,48 @@ def test_create_automation_rule_requires_create_permission() -> None:
         user, organization = create_authorized_user(
             db,
             permission_keys=(AUTOMATION_READ,),
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.post(
+                "/api/v1/automation-rules",
+                json=valid_payload(),
+            )
+
+        assert response.status_code == 403, response.text
+
+
+def test_create_automation_rule_rejects_disabled_entitlement() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+        set_workflow_automation_entitlement(
+            db,
+            organization=organization,
+            enabled=False,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            response = client.post(
+                "/api/v1/automation-rules",
+                json=valid_payload(),
+            )
+
+        assert response.status_code == 403, response.text
+
+
+def test_create_automation_rule_rejects_missing_entitlement() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+        set_workflow_automation_entitlement(
+            db,
+            organization=organization,
+            enabled=None,
         )
 
         with request_as(user=user, organization=organization) as client:
@@ -296,8 +431,7 @@ def test_update_active_automation_rule_is_rejected() -> None:
         )
 
         with request_as(user=user, organization=organization) as client:
-            payload = valid_payload()
-            created = create_rule(client, payload)
+            created = create_rule(client)
 
             activation = client.post(
                 f"/api/v1/automation-rules/{created['id']}/activate"
@@ -386,6 +520,29 @@ def test_activate_automation_rule_requires_update_permission() -> None:
 
         with request_as(user=user, organization=organization) as client:
             created = create_rule(client)
+            response = client.post(
+                f"/api/v1/automation-rules/{created['id']}/activate"
+            )
+
+        assert response.status_code == 403, response.text
+
+
+def test_activate_automation_rule_rejects_disabled_entitlement() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+
+        with request_as(user=user, organization=organization) as client:
+            created = create_rule(client)
+
+            set_workflow_automation_entitlement(
+                db,
+                organization=organization,
+                enabled=False,
+            )
+
             response = client.post(
                 f"/api/v1/automation-rules/{created['id']}/activate"
             )
@@ -503,9 +660,7 @@ def test_list_automation_executions_requires_read_permission() -> None:
         )
 
         with request_as(user=user, organization=organization) as client:
-            response = client.get(
-                "/api/v1/automation-rules/executions"
-            )
+            response = client.get("/api/v1/automation-rules/executions")
 
         assert response.status_code == 403, response.text
 
