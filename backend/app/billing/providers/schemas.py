@@ -2,7 +2,7 @@
 """Provider-independent billing data contracts."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,8 @@ class CustomerRequest(BillingRequest):
 
 
 class CustomerReference(BaseModel):
+    """Normalized provider-side customer reference."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     provider: str
@@ -60,6 +62,8 @@ class RefundRequest(BillingRequest):
 
 
 class RefundResult(BaseModel):
+    """Normalized result of a provider refund operation."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     provider: str
@@ -78,3 +82,14 @@ class ProviderCapabilities(BaseModel):
     customer_management: bool = False
     refunds: bool = False
     recurring_billing: bool = False
+
+
+class VerifiedWebhookEvent(BaseModel):
+    """Normalized event returned after successful provider verification."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: str = Field(min_length=1, max_length=40)
+    provider_event_id: str = Field(min_length=1, max_length=200)
+    event_type: str = Field(min_length=1, max_length=200)
+    payload: dict[str, Any]

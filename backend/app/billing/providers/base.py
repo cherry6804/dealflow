@@ -11,6 +11,7 @@ from app.billing.providers.schemas import (
     ProviderCapabilities,
     RefundRequest,
     RefundResult,
+    VerifiedWebhookEvent,
 )
 
 
@@ -44,3 +45,11 @@ class BillingProvider(ABC):
         self, request: RefundRequest
     ) -> RefundResult:
         """Request a refund against an existing provider payment."""
+
+    @abstractmethod
+    def verify_webhook(
+        self,
+        payload: bytes,
+        signature: str,
+    ) -> VerifiedWebhookEvent:
+        """Verify raw webhook bytes and return a normalized event."""

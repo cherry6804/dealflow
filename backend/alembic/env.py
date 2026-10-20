@@ -49,6 +49,7 @@ from app.db.models.notification_preference import NotificationPreference
 from app.db.models.subscription import Subscription
 from app.db.models.plan import Plan
 from app.db.models.plan_entitlement import PlanEntitlement
+from app.db.models.billing_webhook_event import BillingWebhookEvent
 
 config = context.config
 
