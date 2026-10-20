@@ -2,11 +2,14 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 
 import { ApiError } from "../lib/api";
 import { contactsApi, type Contact } from "../services/contactApi";
@@ -19,8 +22,18 @@ import {
 } from "../services/propertyApi";
 import SiteVisitHistory from "../components/SiteVisitHistory";
 import "./PropertiesPage.css";
+import "./DealsPage.css";
 
 const PAGE_SIZE = 10;
+
+const DEFAULT_VISIBLE_PROPERTY_COLUMNS = [
+  "property",
+  "transaction",
+  "price",
+  "area",
+  "status",
+  "createdAt",
+] as const;
 
 const PROPERTY_TYPES: PropertyType[] = [
   "APARTMENT",
@@ -91,9 +104,11 @@ const EMPTY_FORM: PropertyForm = {
 };
 
 function errorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Something went wrong. Please try again.";
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message;
+  }
+
+  return "Something went wrong. Please try again.";
 }
 
 function label(value: string): string {
@@ -193,7 +208,17 @@ export default function PropertiesPage() {
   const [transactionFilter, setTransactionFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const [cityFilter, setCityFilter] = useState("");
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>([
+    ...DEFAULT_VISIBLE_PROPERTY_COLUMNS,
+  ]);
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [compactGrid, setCompactGrid] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 1600,
+  );
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
 
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -211,8 +236,37 @@ export default function PropertiesPage() {
   const [form, setForm] = useState<PropertyForm>(EMPTY_FORM);
 
   const modalRef = useRef<HTMLElement>(null);
+  const requestSequenceRef = useRef(0);
+
+  useEffect(() => {
+    const updateGridDensity = () => setCompactGrid(window.innerWidth >= 1600);
+    updateGridDensity();
+    window.addEventListener("resize", updateGridDensity, { passive: true });
+    return () => window.removeEventListener("resize", updateGridDensity);
+  }, []);
+
+  useEffect(() => {
+    if (!columnMenuPosition) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setColumnMenuPosition(null);
+    };
+    const closeOnResize = () => setColumnMenuPosition(null);
+
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnResize);
+    window.addEventListener("scroll", closeOnResize, true);
+
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnResize);
+      window.removeEventListener("scroll", closeOnResize, true);
+    };
+  }, [columnMenuPosition]);
 
   const loadProperties = useCallback(async () => {
+    const requestId = ++requestSequenceRef.current;
+
     setLoading(true);
     setError("");
 
@@ -226,55 +280,31 @@ export default function PropertiesPage() {
           : undefined,
         status: statusFilter ? (statusFilter as PropertyStatus) : undefined,
         property_type: typeFilter ? (typeFilter as PropertyType) : undefined,
-        city: cityFilter || undefined,
       });
+
+      if (requestId !== requestSequenceRef.current) return;
 
       setProperties(result.items);
       setTotal(result.total);
       setTotalPages(result.total_pages);
     } catch (loadError) {
-      setError(errorMessage(loadError));
+      if (requestId === requestSequenceRef.current) {
+        setError(errorMessage(loadError));
+      }
     } finally {
-      setLoading(false);
-    }
-  }, [page, search, transactionFilter, statusFilter, typeFilter, cityFilter]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchProperties() {
-      try {
-        const result = await propertiesApi.search({
-          page,
-          page_size: PAGE_SIZE,
-          q: search || undefined,
-          transaction_type: transactionFilter
-            ? (transactionFilter as PropertyTransactionType)
-            : undefined,
-          status: statusFilter ? (statusFilter as PropertyStatus) : undefined,
-          property_type: typeFilter ? (typeFilter as PropertyType) : undefined,
-          city: cityFilter || undefined,
-        });
-
-        if (cancelled) return;
-
-        setProperties(result.items);
-        setTotal(result.total);
-        setTotalPages(result.total_pages);
-        setError("");
-      } catch (loadError) {
-        if (!cancelled) setError(errorMessage(loadError));
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (requestId === requestSequenceRef.current) {
+        setLoading(false);
       }
     }
+  }, [page, search, transactionFilter, statusFilter, typeFilter]);
 
-    void fetchProperties();
+  useEffect(() => {
+    void loadProperties();
 
     return () => {
-      cancelled = true;
+      requestSequenceRef.current += 1;
     };
-  }, [page, search, transactionFilter, statusFilter, typeFilter, cityFilter]);
+  }, [loadProperties]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -313,19 +343,27 @@ export default function PropertiesPage() {
   }, []);
 
   useEffect(() => {
-    if (!isFormOpen) return;
+    if (!isFormOpen && !historyProperty) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    const timer = window.setTimeout(() => {
-      modalRef.current?.querySelector<HTMLInputElement>("input")?.focus();
-    }, 50);
+    const timer = isFormOpen
+      ? window.setTimeout(() => {
+          modalRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+        }, 50)
+      : undefined;
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !saving) {
+      if (event.key !== "Escape" || saving) return;
+
+      if (isFormOpen) {
         setIsFormOpen(false);
         setFormError("");
+      }
+
+      if (historyProperty) {
+        setHistoryProperty(null);
       }
     }
 
@@ -333,10 +371,10 @@ export default function PropertiesPage() {
 
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.clearTimeout(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isFormOpen, saving]);
+  }, [isFormOpen, historyProperty, saving]);
 
   function openCreateForm() {
     setForm(EMPTY_FORM);
@@ -430,7 +468,6 @@ export default function PropertiesPage() {
       setTransactionFilter("");
       setStatusFilter("");
       setTypeFilter("");
-      setCityFilter("");
       setSuccess("Property created successfully.");
 
       const result = await propertiesApi.search({
@@ -446,7 +483,8 @@ export default function PropertiesPage() {
       if (propertyId) {
         setPartialCreation(true);
         setFormError(
-          `Property ${propertyId} was created, but one of its detail updates failed. ${errorMessage(createError)} Refresh the listing and complete the missing details before relying on this record.`,
+          `Property ${propertyId} was created, but one of its detail updates failed. ` +
+            `${errorMessage(createError)} Refresh the listing and complete the missing details before relying on this record.`,
         );
       } else {
         setFormError(errorMessage(createError));
@@ -477,49 +515,283 @@ export default function PropertiesPage() {
     }
   }
 
+  const propertyColumns = useMemo<readonly Column<Property>[]>(
+    () => [
+      {
+        key: "property",
+        name: "Property / Location",
+        resizable: true,
+        sortable: true,
+        width: 280,
+        minWidth: 220,
+        renderCell: ({ row }) => (
+          <div className="properties-grid-property">
+            <strong>{propertyTitle(row)}</strong>
+            <span>{propertyAddress(row) || "Address not provided"}</span>
+          </div>
+        ),
+      },
+      {
+        key: "transaction",
+        name: "Transaction",
+        resizable: true,
+        sortable: true,
+        width: 110,
+        minWidth: 100,
+        renderCell: ({ row }) => (
+          <span className="properties-grid-secondary">
+            {row.transaction_type ? label(row.transaction_type) : "—"}
+          </span>
+        ),
+      },
+      {
+        key: "price",
+        name: "Price / Rent",
+        resizable: true,
+        sortable: true,
+        width: 150,
+        minWidth: 130,
+        renderCell: ({ row }) => (
+          <div className="properties-grid-price">
+            <strong>{priceLabel(row)}</strong>
+            {row.transaction_type === "SALE" && row.maintenance_charge !== null && (
+              <span>
+                Maintenance: {amount(row.maintenance_charge, row.currency || "INR")}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "area",
+        name: "Area",
+        resizable: true,
+        sortable: true,
+        width: 125,
+        minWidth: 110,
+        renderCell: ({ row }) => (
+          <div className="properties-grid-area">
+            <span>
+              {row.built_up_area !== null ? `${row.built_up_area} sq. ft.` : "—"}
+            </span>
+            {row.bhk ? <small>{row.bhk} BHK</small> : null}
+          </div>
+        ),
+      },
+      {
+        key: "status",
+        name: "Status",
+        resizable: true,
+        sortable: true,
+        width: 150,
+        minWidth: 130,
+        renderCell: ({ row }) => (
+          <div className="properties-grid-status">
+            <select
+              className={`properties-inline-select ${statusClass(row.status)}`}
+              aria-label={`Change status for ${propertyTitle(row)}`}
+              value={row.status ?? ""}
+              disabled={updatingId === row.id}
+              onChange={(event) => void handleStatusChange(row, event.target.value)}
+            >
+              {!row.status && <option value="">Unspecified</option>}
+              {PROPERTY_STATUSES.map((status) => (
+                <option value={status} key={status}>{label(status)}</option>
+              ))}
+            </select>
+          </div>
+        ),
+      },
+      {
+        key: "createdAt",
+        name: "Listed",
+        resizable: true,
+        sortable: true,
+        width: 120,
+        minWidth: 105,
+        renderCell: ({ row }) => (
+          <span className="properties-grid-secondary">
+            {Number.isNaN(new Date(row.created_at).getTime())
+              ? "—"
+              : new Intl.DateTimeFormat("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                }).format(new Date(row.created_at))}
+          </span>
+        ),
+      },
+      {
+        key: "actions",
+        name: "Actions",
+        width: 88,
+        minWidth: 76,
+        resizable: false,
+        sortable: false,
+        renderCell: ({ row }) => (
+          <button
+            type="button"
+            className="properties-icon-action"
+            aria-label={`View visit history for ${propertyTitle(row)}`}
+            title="View visit history"
+            onClick={() => setHistoryProperty(row)}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <span>History</span>
+          </button>
+        ),
+      },
+      {
+        key: "configure",
+        name: "",
+        width: "1fr",
+        minWidth: 44,
+        resizable: false,
+        sortable: false,
+        renderHeaderCell: () => (
+          <button
+            type="button"
+            className="deals-configure-columns-button"
+            aria-label="Configure visible columns"
+            aria-expanded={columnMenuPosition !== null}
+            title="Configure columns"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const menuWidth = 230;
+              const menuHeight = 280;
+              const fitsBelow = rect.bottom + menuHeight + 8 <= window.innerHeight;
+              const top = fitsBelow
+                ? rect.bottom + 6
+                : Math.max(8, rect.top - menuHeight - 6);
+
+              setColumnMenuPosition({
+                top,
+                left: Math.max(
+                  8,
+                  Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8),
+                ),
+              });
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+              <path d="M9 4v16M15 4v16" />
+            </svg>
+          </button>
+        ),
+        renderCell: () => <span aria-hidden="true" />,
+      },
+    ],
+    [updatingId],
+  );
+
+  const visiblePropertyColumns = useMemo(
+    () => propertyColumns.filter((column) =>
+      column.key === "actions" || column.key === "configure" || visibleColumnKeys.includes(column.key),
+    ),
+    [propertyColumns, visibleColumnKeys],
+  );
+
+  const sortedProperties = useMemo(() => {
+    if (sortColumns.length === 0) return properties;
+
+    const sorted = [...properties];
+    const compareValues = (left: unknown, right: unknown) => {
+      if (left == null && right == null) return 0;
+      if (left == null) return -1;
+      if (right == null) return 1;
+      if (typeof left === "number" && typeof right === "number") return left - right;
+      return String(left).localeCompare(String(right), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    };
+
+    sorted.sort((left, right) => {
+      for (const sort of sortColumns) {
+        let leftValue: unknown;
+        let rightValue: unknown;
+
+        switch (sort.columnKey) {
+          case "property":
+            leftValue = `${propertyTitle(left)} ${propertyAddress(left)}`;
+            rightValue = `${propertyTitle(right)} ${propertyAddress(right)}`;
+            break;
+          case "transaction":
+            leftValue = left.transaction_type;
+            rightValue = right.transaction_type;
+            break;
+          case "price":
+            leftValue = left.transaction_type === "RENT" ? left.rent : left.price;
+            rightValue = right.transaction_type === "RENT" ? right.rent : right.price;
+            break;
+          case "area":
+            leftValue = left.built_up_area;
+            rightValue = right.built_up_area;
+            break;
+          case "status":
+            leftValue = left.status;
+            rightValue = right.status;
+            break;
+          case "createdAt":
+            leftValue = new Date(left.created_at).getTime();
+            rightValue = new Date(right.created_at).getTime();
+            break;
+          default:
+            continue;
+        }
+
+        const comparison = compareValues(leftValue, rightValue);
+        if (comparison !== 0) return sort.direction === "ASC" ? comparison : -comparison;
+      }
+      return 0;
+    });
+
+    return sorted;
+  }, [properties, sortColumns]);
+
   const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastResult = Math.min(page * PAGE_SIZE, total);
+  const hasActiveFilters = Boolean(
+    search || transactionFilter || statusFilter || typeFilter,
+  );
+
+  function clearFilters() {
+    setSearch("");
+    setSearchInput("");
+    setTransactionFilter("");
+    setStatusFilter("");
+    setTypeFilter("");
+    setPage(1);
+  }
 
   return (
-    <section className="properties-page">
-      <header className="properties-header">
-        <div>
-          <span className="properties-eyebrow">INVENTORY WORKSPACE</span>
+    <main className="deals-page properties-page">
+      <header className="deals-page-header">
+        <div className="deals-heading-copy">
           <h1>Properties</h1>
-          <p className="properties-subtitle">
-            Manage property listings, pricing, location, and availability.
-          </p>
+          <p>Manage property listings, pricing, location, and availability.</p>
         </div>
-
-        <button
-          className="properties-primary-button"
-          type="button"
-          onClick={openCreateForm}
-        >
-          <span aria-hidden="true">+</span> Add property
-        </button>
       </header>
-
-      <section className="properties-summary" aria-label="Property inventory">
-        <div className="properties-summary-icon" aria-hidden="true">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5M9 9h.01M15 9h.01M9 12h.01M15 12h.01" />
-          </svg>
-        </div>
-        <div>
-          <p className="properties-summary-label">Matching properties</p>
-          <p className="properties-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
-          </p>
-        </div>
-      </section>
 
       {success && (
         <div className="properties-alert properties-alert-success" role="status">
@@ -535,118 +807,130 @@ export default function PropertiesPage() {
         </div>
       )}
 
-      <section className="properties-panel">
-        <header className="properties-panel-heading">
+      <div className="deals-filterbar" role="search" aria-label="Filter properties">
+        <label className="deals-search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <span className="properties-visually-hidden">Search properties</span>
+          <input
+            type="search"
+            maxLength={320}
+            value={searchInput}
+            placeholder="Search address, locality, city or postal code"
+            onChange={(event) => {
+              setSearchInput(event.target.value);
+              setPage(1);
+            }}
+          />
+          {searchInput && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchInput("");
+                setSearch("");
+                setPage(1);
+              }}
+            >
+              ×
+            </button>
+          )}
+        </label>
+
+        <label className="deals-filter-field">
+          <span>Transaction</span>
+          <select
+            value={transactionFilter}
+            onChange={(event) => {
+              setTransactionFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All transactions</option>
+            {TRANSACTION_TYPES.map((type) => (
+              <option value={type} key={type}>{label(type)}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="deals-filter-field">
+          <span>Status</span>
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All statuses</option>
+            {PROPERTY_STATUSES.map((status) => (
+              <option value={status} key={status}>{label(status)}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="deals-filter-field">
+          <span>Property type</span>
+          <select
+            value={typeFilter}
+            onChange={(event) => {
+              setTypeFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All types</option>
+            {PROPERTY_TYPES.map((type) => (
+              <option value={type} key={type}>{label(type)}</option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          className="deals-primary-button deals-add-button"
+          type="button"
+          onClick={openCreateForm}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add property
+        </button>
+
+        {hasActiveFilters && (
+          <button className="deals-clear-filters" type="button" onClick={clearFilters}>
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="properties-alert properties-alert-error" role="alert">
           <div>
-            <h2>Property inventory</h2>
-            <p>Search listings and manage availability.</p>
+            <strong>Could not load or update properties</strong>
+            <p>{error}</p>
           </div>
           <button
             className="properties-secondary-button"
             type="button"
-            disabled={loading}
             onClick={() => void loadProperties()}
           >
-            {loading ? "Refreshing..." : "↻ Refresh"}
+            Retry
           </button>
-        </header>
-
-        <div className="properties-toolbar">
-          <label className="properties-search">
-            <span className="properties-visually-hidden">Search properties</span>
-            <span aria-hidden="true" className="properties-search-icon">⌕</span>
-            <input
-              type="search"
-              maxLength={320}
-              value={searchInput}
-              placeholder="Search address, locality, city or postal code..."
-              onChange={(event) => {
-                setSearchInput(event.target.value);
-                setPage(1);
-              }}
-            />
-          </label>
-
-          <label className="properties-filter">
-            <span className="properties-visually-hidden">Transaction type</span>
-            <select
-              value={transactionFilter}
-              onChange={(event) => {
-                setTransactionFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All transactions</option>
-              {TRANSACTION_TYPES.map((type) => (
-                <option value={type} key={type}>{label(type)}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="properties-filter">
-            <span className="properties-visually-hidden">Property status</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All statuses</option>
-              {PROPERTY_STATUSES.map((status) => (
-                <option value={status} key={status}>{label(status)}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="properties-filter">
-            <span className="properties-visually-hidden">Property type</span>
-            <select
-              value={typeFilter}
-              onChange={(event) => {
-                setTypeFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All property types</option>
-              {PROPERTY_TYPES.map((type) => (
-                <option value={type} key={type}>{label(type)}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="properties-filter properties-city-filter">
-            <span className="properties-visually-hidden">Filter by city</span>
-            <input
-              type="text"
-              maxLength={160}
-              value={cityFilter}
-              placeholder="City"
-              onChange={(event) => {
-                setCityFilter(event.target.value);
-                setPage(1);
-              }}
-            />
-          </label>
         </div>
+      )}
 
-        {error && (
-          <div className="properties-alert properties-alert-error" role="alert">
-            <div>
-              <strong>Couldn't load or update properties</strong>
-              <p>{error}</p>
-            </div>
-            <button
-              className="properties-secondary-button"
-              type="button"
-              onClick={() => void loadProperties()}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {loading ? (
+      <div className="deals-grid-shell properties-grid-shell">
+        {loading && properties.length === 0 ? (
           <div className="properties-state" role="status" aria-live="polite">
             <span className="properties-spinner" aria-hidden="true" />
             <p>Loading properties...</p>
@@ -654,658 +938,636 @@ export default function PropertiesPage() {
         ) : !error && properties.length === 0 ? (
           <div className="properties-empty">
             <div className="properties-empty-icon" aria-hidden="true">⌂</div>
-            <h3>
-              {search || transactionFilter || statusFilter || typeFilter || cityFilter
-                ? "No matching properties"
-                : "Your property inventory starts here"}
-            </h3>
+            <h3>{hasActiveFilters ? "No matching properties" : "Your property inventory starts here"}</h3>
             <p>
-              {search || transactionFilter || statusFilter || typeFilter || cityFilter
+              {hasActiveFilters
                 ? "Try changing your search or filters."
                 : "Add your first property to start managing your inventory."}
             </p>
-            {search || transactionFilter || statusFilter || typeFilter || cityFilter ? (
-              <button
-                className="properties-secondary-button"
-                type="button"
-                onClick={() => {
-                  setSearch("");
-                  setSearchInput("");
-                  setTransactionFilter("");
-                  setStatusFilter("");
-                  setTypeFilter("");
-                  setCityFilter("");
-                  setPage(1);
-                }}
-              >
+            {hasActiveFilters ? (
+              <button className="properties-secondary-button" type="button" onClick={clearFilters}>
                 Clear filters
               </button>
             ) : (
-              <button
-                className="properties-primary-button"
-                type="button"
-                onClick={openCreateForm}
-              >
-                + Add your first property
+              <button className="properties-primary-button" type="button" onClick={openCreateForm}>
+                <span aria-hidden="true">+</span> Add your first property
               </button>
             )}
           </div>
         ) : !error ? (
           <>
-            <div className="properties-table-wrapper">
-              <table className="properties-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Property</th>
-                    <th scope="col">Transaction</th>
-                    <th scope="col">Price / Rent</th>
-                    <th scope="col">Area</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Listed</th>
-                    <th scope="col">Visit History</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {properties.map((property) => (
-                    <tr key={property.id}>
-                      <td>
-                        <div className="properties-name">
-                          {propertyTitle(property)}
-                        </div>
-                        <div className="properties-secondary-text">
-                          {propertyAddress(property) || "Address not provided"}
-                        </div>
-                      </td>
-                      <td>
-                        {property.transaction_type
-                          ? label(property.transaction_type)
-                          : "—"}
-                      </td>
-                      <td className="properties-price">
-                        {priceLabel(property)}
-                        {property.transaction_type === "SALE" &&
-                          property.maintenance_charge !== null && (
-                            <div className="properties-secondary-text">
-                              Maintenance:{" "}
-                              {amount(
-                                property.maintenance_charge,
-                                property.currency || "INR",
-                              )}
-                            </div>
-                          )}
-                      </td>
-                      <td>
-                        {property.built_up_area !== null
-                          ? `${property.built_up_area} sq. ft.`
-                          : "—"}
-                        {property.bhk ? (
-                          <div className="properties-secondary-text">
-                            {property.bhk} BHK
-                          </div>
-                        ) : null}
-                      </td>
-                      <td>
-                        <span className={statusClass(property.status)}>
-                          {property.status ? label(property.status) : "Unspecified"}
-                        </span>
-                        <select
-                          className="properties-inline-select"
-                          aria-label={`Change status for ${propertyTitle(property)}`}
-                          value={property.status ?? ""}
-                          disabled={updatingId === property.id}
-                          onChange={(event) =>
-                            void handleStatusChange(property, event.target.value)
-                          }
-                        >
-                          {!property.status && (
-                            <option value="">Unspecified</option>
-                          )}
-                          {PROPERTY_STATUSES.map((status) => (
-                            <option value={status} key={status}>{label(status)}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>
-                        {new Intl.DateTimeFormat("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        }).format(new Date(property.created_at))}
-                      </td>
-                      <td>
-                      <button
-                        type="button"
-                        className="properties-secondary-button"
-                        onClick={() => setHistoryProperty(property)}
-                      >
-                        View visit history
-                      </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataGrid
+              className="deals-react-data-grid properties-react-data-grid"
+              aria-label="Property inventory"
+              columns={visiblePropertyColumns}
+              rows={sortedProperties}
+              rowKeyGetter={(row) => row.id}
+              rowHeight={compactGrid ? 48 : 62}
+              headerRowHeight={52}
+              defaultColumnOptions={{ resizable: true, sortable: true }}
+              sortColumns={sortColumns}
+              onSortColumnsChange={setSortColumns}
+              style={{
+                height: Math.min(
+                  52 + sortedProperties.length * (compactGrid ? 48 : 62),
+                  Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.66),
+                ),
+                minHeight: 52 + Math.min(sortedProperties.length, 1) * (compactGrid ? 48 : 62),
+              }}
+              renderers={{
+                noRowsFallback: <div className="deals-grid-no-rows">No properties to display.</div>,
+              }}
+            />
+            <footer className="properties-grid-footer">
+              <div className="properties-grid-footer-count" aria-live="polite">
+                <strong>{total.toLocaleString("en-IN")}</strong>{" "}
+                {total === 1 ? "property" : "properties"} in your workspace
+                {total > 0 && (
+                  <span className="properties-grid-footer-range">
+                    Showing {firstResult}–{lastResult}
+                  </span>
+                )}
+              </div>
 
-            <footer className="properties-pagination">
-              <p>
-                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
-                <strong>{total}</strong> properties
-              </p>
-              <div className="properties-pagination-controls">
-                <button
-                  className="properties-page-button"
-                  type="button"
-                  disabled={page <= 1 || loading}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </button>
-                <span>
-                  Page {page}{totalPages > 0 ? ` of ${totalPages}` : ""}
+              <div className="properties-grid-footer-right">
+                <span className="properties-grid-footer-status">
+                  <span className="properties-grid-footer-status-dot" aria-hidden="true" />
+                  You’re all caught up
                 </span>
-                <button
-                  className="properties-page-button"
-                  type="button"
-                  disabled={page >= totalPages || totalPages === 0 || loading}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </button>
+
+                {totalPages > 1 && (
+                  <div className="properties-pagination-controls" aria-label="Property pages">
+                    <button
+                      className="properties-page-button"
+                      type="button"
+                      disabled={page <= 1 || loading}
+                      onClick={() => setPage((current) => current - 1)}
+                    >
+                      Previous
+                    </button>
+                    <span>Page {page} of {totalPages}</span>
+                    <button
+                      className="properties-page-button"
+                      type="button"
+                      disabled={page >= totalPages || loading}
+                      onClick={() => setPage((current) => current + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </div>
             </footer>
           </>
-        ) : null}
-      </section>
+        ) : (
+          <div className="properties-empty">
+            <h3>Properties could not be displayed</h3>
+            <p>Retry the request to load the property inventory.</p>
+          </div>
+        )}
+      </div>
+
+      {columnMenuPosition && createPortal(
+        <>
+          <button
+            className="properties-column-menu-backdrop"
+            type="button"
+            aria-label="Close column settings"
+            onClick={() => setColumnMenuPosition(null)}
+          />
+          <div
+            className="properties-column-menu"
+            role="dialog"
+            aria-label="Configure property columns"
+            style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }}
+          >
+            <div className="properties-column-menu-heading">Visible columns</div>
+            {DEFAULT_VISIBLE_PROPERTY_COLUMNS.map((key) => {
+              const names: Record<string, string> = {
+                property: "Property / Location",
+                transaction: "Transaction",
+                price: "Price / Rent",
+                area: "Area",
+                status: "Status",
+                createdAt: "Listed",
+              };
+              return (
+                <label className="properties-column-menu-option" key={key}>
+                  <input
+                    type="checkbox"
+                    checked={visibleColumnKeys.includes(key)}
+                    onChange={(event) => setVisibleColumnKeys((current) =>
+                      event.target.checked
+                        ? [...current, key]
+                        : current.filter((item) => item !== key),
+                    )}
+                  />
+                  <span>{names[key]}</span>
+                </label>
+              );
+            })}
+            <div className="properties-column-menu-footer">
+              <button type="button" onClick={() => setVisibleColumnKeys([...DEFAULT_VISIBLE_PROPERTY_COLUMNS])}>
+                Reset
+              </button>
+              <button type="button" onClick={() => setColumnMenuPosition(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
 
       {isFormOpen &&
-  createPortal(
-    <div
-      className="properties-modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !saving) {
-          setIsFormOpen(false);
-        }
-      }}
-    >
-      <section
-        ref={modalRef}
-        className="properties-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="properties-modal-title"
-      >
-        <header className="properties-modal-header">
-          <div>
-            <span className="properties-eyebrow">PROPERTY DETAILS</span>
-            <h2 id="properties-modal-title">Add a property</h2>
-            <p>Enter the listing details and availability.</p>
-          </div>
-
-          <button
-            className="properties-modal-close"
-            type="button"
-            aria-label="Close form"
-            disabled={saving}
-            onClick={() => setIsFormOpen(false)}
+        createPortal(
+          <div
+            className="properties-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !saving) {
+                setIsFormOpen(false);
+              }
+            }}
           >
-            ×
-          </button>
-        </header>
+            <section
+              ref={modalRef}
+              className="properties-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="properties-modal-title"
+            >
+              <header className="properties-modal-header">
+                <div>
+                  <span className="properties-eyebrow">PROPERTY DETAILS</span>
+                  <h2 id="properties-modal-title">Add a property</h2>
+                  <p>Enter the listing details and availability.</p>
+                </div>
 
-        <form className="properties-form" onSubmit={handleCreate}>
-          <div className="properties-form-body">
-            {formError && (
-              <div
-                className="properties-alert properties-alert-error"
-                role="alert"
-              >
-                {partialCreation && (
-                  <strong>Property needs completion</strong>
-                )}
-                <p>{formError}</p>
+                <button
+                  className="properties-modal-close"
+                  type="button"
+                  aria-label="Close form"
+                  disabled={saving}
+                  onClick={() => setIsFormOpen(false)}
+                >
+                  ×
+                </button>
+              </header>
+
+              <form className="properties-form" onSubmit={handleCreate}>
+                <div className="properties-form-body">
+                  {formError && (
+                    <div
+                      className="properties-alert properties-alert-error"
+                      role="alert"
+                    >
+                      {partialCreation && (
+                        <strong>Property needs completion</strong>
+                      )}
+                      <p>{formError}</p>
+                    </div>
+                  )}
+
+                  {/* LISTING */}
+                  <h3 className="properties-form-section-title">Listing</h3>
+
+                  <div className="properties-form-grid">
+                    <label className="properties-form-field">
+                      <span>Transaction type *</span>
+                      <select
+                        required
+                        value={form.transaction_type}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm(
+                            "transaction_type",
+                            event.target.value as PropertyTransactionType,
+                          )
+                        }
+                      >
+                        {TRANSACTION_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {label(type)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Property type *</span>
+                      <select
+                        required
+                        value={form.property_type}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm(
+                            "property_type",
+                            event.target.value as PropertyType,
+                          )
+                        }
+                      >
+                        {PROPERTY_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {label(type)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Sale price (optional for rent/lease)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        required={form.transaction_type === "SALE"}
+                        value={form.price}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("price", event.target.value)
+                        }
+                        placeholder="e.g. 6500000"
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>
+                        Monthly rent{" "}
+                        {form.transaction_type === "SALE" ? "(optional)" : "*"}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        required={form.transaction_type !== "SALE"}
+                        value={form.rent}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("rent", event.target.value)
+                        }
+                        placeholder="e.g. 25000"
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Security deposit</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.security_deposit}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("security_deposit", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Maintenance charge</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.maintenance_charge}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("maintenance_charge", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Currency *</span>
+                      <select
+                        required
+                        value={form.currency}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("currency", event.target.value)
+                        }
+                      >
+                        <option value="INR">INR — Indian Rupee</option>
+                        <option value="USD">USD — US Dollar</option>
+                        <option value="AED">AED — UAE Dirham</option>
+                        <option value="GBP">GBP — Pound Sterling</option>
+                      </select>
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Availability *</span>
+                      <select
+                        required
+                        value={form.status}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("status", event.target.value as PropertyStatus)
+                        }
+                      >
+                        {PROPERTY_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {label(status)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {/* LOCATION */}
+                  <h3 className="properties-form-section-title">Location</h3>
+
+                  <div className="properties-form-grid">
+                    <label className="properties-form-field properties-field-full">
+                      <span>Address line 1 *</span>
+                      <input
+                        required
+                        maxLength={250}
+                        value={form.address_line_1}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("address_line_1", event.target.value)
+                        }
+                        placeholder="Building, street or plot"
+                      />
+                    </label>
+
+                    <label className="properties-form-field properties-field-full">
+                      <span>Address line 2</span>
+                      <input
+                        maxLength={250}
+                        value={form.address_line_2}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("address_line_2", event.target.value)
+                        }
+                        placeholder="Apartment, landmark (optional)"
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Locality *</span>
+                      <input
+                        required
+                        maxLength={160}
+                        value={form.locality}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("locality", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>City *</span>
+                      <input
+                        required
+                        maxLength={160}
+                        value={form.city}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("city", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>State *</span>
+                      <input
+                        required
+                        maxLength={160}
+                        value={form.state}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("state", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Postal code</span>
+                      <input
+                        maxLength={20}
+                        value={form.postal_code}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("postal_code", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  {/* PROPERTY ATTRIBUTES */}
+                  <h3 className="properties-form-section-title">
+                    Property attributes
+                  </h3>
+
+                  <div className="properties-form-grid">
+                    <label className="properties-form-field">
+                      <span>BHK</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={form.bhk}
+                        disabled={saving}
+                        onChange={(event) => updateForm("bhk", event.target.value)}
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Built-up area (sq. ft.)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.built_up_area}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("built_up_area", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Carpet area (sq. ft.)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.carpet_area}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("carpet_area", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Floor number</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={form.floor_number}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("floor_number", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Total floors</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={form.total_floors}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("total_floors", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  {/* CONTACTS */}
+                  <h3 className="properties-form-section-title">
+                    Contacts (optional)
+                  </h3>
+
+                  <div className="properties-form-grid">
+                    <label className="properties-form-field">
+                      <span>Source contact</span>
+                      <select
+                        value={form.source_contact_id}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("source_contact_id", event.target.value)
+                        }
+                      >
+                        <option value="">Not assigned</option>
+                        {contacts.map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {[contact.first_name, contact.last_name]
+                              .filter(Boolean)
+                              .join(" ")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="properties-form-field">
+                      <span>Owner contact</span>
+                      <select
+                        value={form.owner_contact_id}
+                        disabled={saving}
+                        onChange={(event) =>
+                          updateForm("owner_contact_id", event.target.value)
+                        }
+                      >
+                        <option value="">Not assigned</option>
+                        {contacts.map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {[contact.first_name, contact.last_name]
+                              .filter(Boolean)
+                              .join(" ")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <p className="properties-form-hint">
+                    The property is created first. If a later step fails, the
+                    property record may exist with incomplete details.
+                  </p>
+                </div>
+
+                {/* FIXED FOOTER */}
+                <footer className="properties-form-actions">
+                  <button
+                    className="properties-secondary-button"
+                    type="button"
+                    disabled={saving}
+                    onClick={() => setIsFormOpen(false)}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    className="properties-primary-button"
+                    type="submit"
+                    disabled={saving}
+                  >
+                    {saving ? "Creating..." : "Create property"}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>,
+          document.body,
+        )}
+
+      {historyProperty &&
+        createPortal(
+          <div
+            className="properties-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setHistoryProperty(null);
+              }
+            }}
+          >
+            <section
+              className="properties-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="property-visit-history-title"
+            >
+              <header className="properties-modal-header">
+                <div>
+                  <span className="properties-eyebrow">PROPERTY DETAILS</span>
+                  <h2 id="property-visit-history-title">Visit history</h2>
+                  <p>
+                    {propertyTitle(historyProperty)}
+                    {propertyAddress(historyProperty)
+                      ? ` · ${propertyAddress(historyProperty)}`
+                      : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="properties-modal-close"
+                  aria-label="Close visit history"
+                  onClick={() => setHistoryProperty(null)}
+                >
+                  ×
+                </button>
+              </header>
+
+              <div className="properties-form-body">
+                <SiteVisitHistory
+                  propertyId={historyProperty.id}
+                  title="Property site visits"
+                />
               </div>
-            )}
 
-            {/* LISTING */}
-            <h3 className="properties-form-section-title">Listing</h3>
-
-            <div className="properties-form-grid">
-              <label className="properties-form-field">
-                <span>Transaction type *</span>
-                <select
-                  required
-                  value={form.transaction_type}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm(
-                      "transaction_type",
-                      event.target.value as PropertyTransactionType,
-                    )
-                  }
+              <footer className="properties-form-actions">
+                <button
+                  type="button"
+                  className="properties-secondary-button"
+                  onClick={() => setHistoryProperty(null)}
                 >
-                  {TRANSACTION_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {label(type)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="properties-form-field">
-                <span>Property type *</span>
-                <select
-                  required
-                  value={form.property_type}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm(
-                      "property_type",
-                      event.target.value as PropertyType,
-                    )
-                  }
-                >
-                  {PROPERTY_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {label(type)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="properties-form-field">
-                <span>Sale price (optional for rent/lease)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  required={form.transaction_type === "SALE"}
-                  value={form.price}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("price", event.target.value)
-                  }
-                  placeholder="e.g. 6500000"
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>
-                  Monthly rent{" "}
-                  {form.transaction_type === "SALE" ? "(optional)" : "*"}
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  required={form.transaction_type !== "SALE"}
-                  value={form.rent}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("rent", event.target.value)
-                  }
-                  placeholder="e.g. 25000"
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Security deposit</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.security_deposit}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("security_deposit", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Maintenance charge</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.maintenance_charge}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("maintenance_charge", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Currency *</span>
-                <select
-                  required
-                  value={form.currency}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("currency", event.target.value)
-                  }
-                >
-                  <option value="INR">INR — Indian Rupee</option>
-                  <option value="USD">USD — US Dollar</option>
-                  <option value="AED">AED — UAE Dirham</option>
-                  <option value="GBP">GBP — Pound Sterling</option>
-                </select>
-              </label>
-
-              <label className="properties-form-field">
-                <span>Availability *</span>
-                <select
-                  required
-                  value={form.status}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("status", event.target.value as PropertyStatus)
-                  }
-                >
-                  {PROPERTY_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {label(status)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {/* LOCATION */}
-            <h3 className="properties-form-section-title">Location</h3>
-
-            <div className="properties-form-grid">
-              <label className="properties-form-field properties-field-full">
-                <span>Address line 1 *</span>
-                <input
-                  required
-                  maxLength={250}
-                  value={form.address_line_1}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("address_line_1", event.target.value)
-                  }
-                  placeholder="Building, street or plot"
-                />
-              </label>
-
-              <label className="properties-form-field properties-field-full">
-                <span>Address line 2</span>
-                <input
-                  maxLength={250}
-                  value={form.address_line_2}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("address_line_2", event.target.value)
-                  }
-                  placeholder="Apartment, landmark (optional)"
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Locality *</span>
-                <input
-                  required
-                  maxLength={160}
-                  value={form.locality}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("locality", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>City *</span>
-                <input
-                  required
-                  maxLength={160}
-                  value={form.city}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("city", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>State *</span>
-                <input
-                  required
-                  maxLength={160}
-                  value={form.state}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("state", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Postal code</span>
-                <input
-                  maxLength={20}
-                  value={form.postal_code}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("postal_code", event.target.value)
-                  }
-                />
-              </label>
-            </div>
-
-            {/* PROPERTY ATTRIBUTES */}
-            <h3 className="properties-form-section-title">
-              Property attributes
-            </h3>
-
-            <div className="properties-form-grid">
-              <label className="properties-form-field">
-                <span>BHK</span>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.bhk}
-                  disabled={saving}
-                  onChange={(event) => updateForm("bhk", event.target.value)}
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Built-up area (sq. ft.)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.built_up_area}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("built_up_area", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Carpet area (sq. ft.)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.carpet_area}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("carpet_area", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Floor number</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={form.floor_number}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("floor_number", event.target.value)
-                  }
-                />
-              </label>
-
-              <label className="properties-form-field">
-                <span>Total floors</span>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.total_floors}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("total_floors", event.target.value)
-                  }
-                />
-              </label>
-            </div>
-
-            {/* CONTACTS */}
-            <h3 className="properties-form-section-title">
-              Contacts (optional)
-            </h3>
-
-            <div className="properties-form-grid">
-              <label className="properties-form-field">
-                <span>Source contact</span>
-                <select
-                  value={form.source_contact_id}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("source_contact_id", event.target.value)
-                  }
-                >
-                  <option value="">Not assigned</option>
-                  {contacts.map((contact) => (
-                    <option key={contact.id} value={contact.id}>
-                      {[contact.first_name, contact.last_name]
-                        .filter(Boolean)
-                        .join(" ")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="properties-form-field">
-                <span>Owner contact</span>
-                <select
-                  value={form.owner_contact_id}
-                  disabled={saving}
-                  onChange={(event) =>
-                    updateForm("owner_contact_id", event.target.value)
-                  }
-                >
-                  <option value="">Not assigned</option>
-                  {contacts.map((contact) => (
-                    <option key={contact.id} value={contact.id}>
-                      {[contact.first_name, contact.last_name]
-                        .filter(Boolean)
-                        .join(" ")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <p className="properties-form-hint">
-              The property is created first. If a later step fails, the
-              property record may exist with incomplete details.
-            </p>
-          </div>
-
-          {/* FIXED FOOTER */}
-          <footer className="properties-form-actions">
-            <button
-              className="properties-secondary-button"
-              type="button"
-              disabled={saving}
-              onClick={() => setIsFormOpen(false)}
-            >
-              Cancel
-            </button>
-
-            <button
-              className="properties-primary-button"
-              type="submit"
-              disabled={saving}
-            >
-              {saving ? "Creating..." : "Create property"}
-            </button>
-          </footer>
-        </form>
-      </section>
-    </div>,
-    document.body,
-  )}
-
-  {historyProperty &&
-  createPortal(
-    <div
-      className="properties-modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          setHistoryProperty(null);
-        }
-      }}
-    >
-      <section
-        className="properties-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="property-visit-history-title"
-      >
-        <header className="properties-modal-header">
-          <div>
-            <span className="properties-eyebrow">PROPERTY DETAILS</span>
-            <h2 id="property-visit-history-title">Visit history</h2>
-            <p>
-              {propertyTitle(historyProperty)}
-              {propertyAddress(historyProperty)
-                ? ` · ${propertyAddress(historyProperty)}`
-                : ""}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="properties-modal-close"
-            aria-label="Close visit history"
-            onClick={() => setHistoryProperty(null)}
-          >
-            ×
-          </button>
-        </header>
-
-        <div className="properties-form-body">
-          <SiteVisitHistory
-            propertyId={historyProperty.id}
-            title="Property site visits"
-          />
-        </div>
-
-        <footer className="properties-form-actions">
-          <button
-            type="button"
-            className="properties-secondary-button"
-            onClick={() => setHistoryProperty(null)}
-          >
-            Close
-          </button>
-        </footer>
-      </section>
-    </div>,
-    document.body,
-  )}
-    </section>
+                  Close
+                </button>
+              </footer>
+            </section>
+          </div>,
+          document.body,
+        )}
+    </main>
   );
 }

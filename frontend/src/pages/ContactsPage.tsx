@@ -1,11 +1,15 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 
 import { ApiError } from "../lib/api";
 import {
@@ -13,11 +17,10 @@ import {
   type Contact,
   type ContactCreateInput,
 } from "../services/contactApi";
-
 import "./ContactsPage.css";
 
-const PAGE_SIZE = 10;
-const MODAL_EXIT_DURATION = 240;
+const PAGE_SIZE = 100;
+const MODAL_EXIT_DURATION = 200;
 
 const EMPTY_FORM: ContactCreateInput = {
   first_name: "",
@@ -31,8 +34,14 @@ type ContactFieldErrors = {
   phone?: string;
 };
 
+type ContactActionMenu = {
+  contact: Contact;
+  top: number;
+  left: number;
+};
+
 function getErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
+  if (error instanceof ApiError || error instanceof Error) {
     return error.message;
   }
 
@@ -40,9 +49,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 function getDuplicateFieldErrors(error: unknown): ContactFieldErrors {
-  if (!(error instanceof ApiError)) {
-    return {};
-  }
+  if (!(error instanceof ApiError)) return {};
 
   const details = error.details;
   if (typeof details !== "object" || details === null || !("detail" in details)) {
@@ -54,39 +61,37 @@ function getDuplicateFieldErrors(error: unknown): ContactFieldErrors {
     return {};
   }
 
-  const duplicateDetail = detail as {
-    code?: unknown;
-    fields?: unknown;
-  };
-
-  if (
-    duplicateDetail.code !== "duplicate_contact" ||
-    !Array.isArray(duplicateDetail.fields)
-  ) {
+  const duplicate = detail as { code?: unknown; fields?: unknown };
+  if (duplicate.code !== "duplicate_contact" || !Array.isArray(duplicate.fields)) {
     return {};
   }
 
-  const fields: ContactFieldErrors = {};
-
-  if (duplicateDetail.fields.includes("email")) {
-    fields.email =
-      "A contact with this email address already exists in your organization. Please use a different email address.";
+  const errors: ContactFieldErrors = {};
+  if (duplicate.fields.includes("email")) {
+    errors.email = "A contact with this email address already exists in your organization.";
   }
-
-  if (duplicateDetail.fields.includes("phone")) {
-    fields.phone =
-      "A contact with this phone number already exists in your organization. Please use a different phone number.";
+  if (duplicate.fields.includes("phone")) {
+    errors.phone = "A contact with this phone number already exists in your organization.";
   }
+  return errors;
+}
 
-  return fields;
+function getContactName(contact: Contact): string {
+  return [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim() || "Unnamed contact";
+}
+
+function getInitials(contact: Contact): string {
+  return getContactName(contact)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "C";
 }
 
 function formatDate(value: string): string {
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "—";
-  }
+  if (Number.isNaN(date.getTime())) return "—";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -95,17 +100,38 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
+async function fetchAllContacts(search?: string): Promise<Contact[]> {
+  const firstPage = await contactsApi.list({
+    page: 1,
+    page_size: PAGE_SIZE,
+    search: search || undefined,
+  });
+  const contacts = [...firstPage.items];
+
+  for (let page = 2; page <= firstPage.total_pages; page += 1) {
+    const result = await contactsApi.list({
+      page,
+      page_size: PAGE_SIZE,
+      search: search || undefined,
+    });
+    contacts.push(...result.items);
+  }
+
+  return contacts;
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </svg>
+  );
+}
+
 function ContactsIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
       <circle cx="10" cy="7" r="4" />
       <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
@@ -113,37 +139,37 @@ function ContactsIcon() {
   );
 }
 
-function SearchIcon() {
+function CopyIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-4-4" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
     </svg>
   );
 }
 
-function EmptyContactsIcon() {
+function MailIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="9" cy="8" r="3.5" />
-      <path d="M2.5 20v-1.5A5.5 5.5 0 0 1 8 13h2a5.5 5.5 0 0 1 5.5 5.5V20" />
-      <path d="M19 8v6M16 11h6" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.5 2.8a2 2 0 0 1-.6 1.8L7.7 9.6a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 1.8-.6l2.8.5a2 2 0 0 1 1.7 2.7Z" />
+    </svg>
+  );
+}
+
+function DetailsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
     </svg>
   );
 }
@@ -152,10 +178,9 @@ export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["name", "email", "phone", "createdAt", "status"]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -166,136 +191,305 @@ export default function ContactsPage() {
   const [form, setForm] = useState<ContactCreateInput>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<ContactFieldErrors>({});
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [actionMenu, setActionMenu] = useState<ContactActionMenu | null>(null);
 
   const modalRef = useRef<HTMLElement>(null);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const actionMenuRef = useRef<HTMLElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadContacts = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const result = await contactsApi.list({
-        page,
-        page_size: PAGE_SIZE,
-        search: search || undefined,
-      });
-
-      setContacts(result.items);
-      setTotal(result.total);
-      setTotalPages(result.total_pages);
-      setError("");
+      setContacts(await fetchAllContacts(search));
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [search]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchContacts() {
+    async function load() {
+      setLoading(true);
       try {
-        const result = await contactsApi.list({
-          page,
-          page_size: PAGE_SIZE,
-          search: search || undefined,
-        });
-
+        const result = await fetchAllContacts(search);
         if (cancelled) return;
-
-        setContacts(result.items);
-        setTotal(result.total);
-        setTotalPages(result.total_pages);
+        setContacts(result);
         setError("");
       } catch (loadError) {
-        if (cancelled) return;
-        setError(getErrorMessage(loadError));
+        if (!cancelled) setError(getErrorMessage(loadError));
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
-    void fetchContacts();
-
+    void load();
     return () => {
       cancelled = true;
     };
-  }, [page, search]);
+  }, [search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const nextSearch = searchInput.trim();
-
-      if (nextSearch !== search) {
-        setLoading(true);
-        setPage(1);
-        setSearch(nextSearch);
-      }
+      if (nextSearch !== search) setSearch(nextSearch);
     }, 300);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [searchInput, search]);
 
   useEffect(() => {
-    if (!isFormOpen) return;
+    if (!isFormOpen && !selectedContact) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-
     const focusTimer = window.setTimeout(() => {
-      const firstInput =
-        modalRef.current?.querySelector<HTMLInputElement>(
-          'input:not([type="hidden"])',
-        );
-
-      firstInput?.focus();
+      modalRef.current?.querySelector<HTMLInputElement>('input:not([type="hidden"])')?.focus();
     }, 50);
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !saving) {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (actionMenu) {
+        setActionMenu(null);
+      } else if (selectedContact) {
+        setSelectedContact(null);
+      } else if (!saving) {
         closeCreateForm();
       }
     }
 
-    document.addEventListener("keydown", handleKeyDown);
-
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.clearTimeout(focusTimer);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", onKeyDown);
     };
-    // The modal installs keyboard handling while it is open.
+    // The effect installs keyboard handling for the currently open dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFormOpen, saving]);
+  }, [isFormOpen, selectedContact, saving, actionMenu]);
 
   useEffect(() => {
-    return () => {
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
+    if (!actionMenu) return;
+
+    function onPointerDown(event: PointerEvent) {
+      if (event.target instanceof Node && !actionMenuRef.current?.contains(event.target)) {
+        setActionMenu(null);
       }
+    }
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setActionMenu(null);
+    }
+    function closeOnViewportChange() {
+      setActionMenu(null);
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
     };
+  }, [actionMenu]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
   }, []);
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const openActionMenu = useCallback((event: MouseEvent<HTMLButtonElement>, contact: Contact) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 220;
+    const menuHeight = 230;
+    const left = Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
+    const top = rect.bottom + menuHeight + 8 > window.innerHeight
+      ? Math.max(12, rect.top - menuHeight - 8)
+      : rect.bottom + 8;
 
-    setSuccess("");
-    setLoading(true);
-    setPage(1);
-    setSearch(searchInput.trim());
-  }
+    setActionMenu((current) => current?.contact.id === contact.id ? null : { contact, top, left });
+  }, []);
+
+  const openColumnMenu = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 260;
+    const menuHeight = 330;
+    const left = Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
+    const top = rect.bottom + menuHeight + 8 > window.innerHeight
+      ? Math.max(12, rect.top - menuHeight - 8)
+      : rect.bottom + 8;
+
+    setColumnMenuPosition((current) => current ? null : { top, left });
+  }, []);
+
+  useEffect(() => {
+    if (!columnMenuPosition) return;
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setColumnMenuPosition(null);
+    }
+    function closeOnViewportChange() {
+      setColumnMenuPosition(null);
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+    };
+  }, [columnMenuPosition]);
+
+  const sortedContacts = useMemo(() => {
+    if (sortColumns.length === 0) return contacts;
+    const sort = sortColumns[0];
+
+    return [...contacts].sort((first, second) => {
+      const value = (contact: Contact): string | number => {
+        switch (sort.columnKey) {
+          case "name": return getContactName(contact).toLocaleLowerCase();
+          case "email": return (contact.email || "").toLocaleLowerCase();
+          case "phone": return contact.phone || "";
+          case "createdAt": return new Date(contact.created_at).getTime() || 0;
+          case "status": return contact.is_active ? 1 : 0;
+          default: return "";
+        }
+      };
+      const a = value(first);
+      const b = value(second);
+      const result = typeof a === "number" && typeof b === "number"
+        ? a - b
+        : String(a).localeCompare(String(b));
+      return sort.direction === "DESC" ? -result : result;
+    });
+  }, [contacts, sortColumns]);
+
+  const columns = useMemo<readonly Column<Contact>[]>(() => [
+    {
+      key: "name",
+      name: "Contact",
+      minWidth: 220,
+      width: 280,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <div className="contacts-person-cell">
+          <span className="contacts-avatar" aria-hidden="true">{getInitials(row)}</span>
+          <span className="contacts-person-copy">
+            <strong title={getContactName(row)}>{getContactName(row)}</strong>
+            <span title={row.email || row.phone || "No contact details"}>{row.email || row.phone || "No email or phone added"}</span>
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "email",
+      name: "Email address",
+      minWidth: 190,
+      width: 240,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="contacts-cell-text" title={row.email || ""}>{row.email || "—"}</span>,
+    },
+    {
+      key: "phone",
+      name: "Phone number",
+      minWidth: 150,
+      width: 175,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="contacts-cell-text" title={row.phone || ""}>{row.phone || "—"}</span>,
+    },
+    {
+      key: "createdAt",
+      name: "Created",
+      minWidth: 120,
+      width: 140,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => <span className="contacts-date">{formatDate(row.created_at)}</span>,
+    },
+    {
+      key: "status",
+      name: "Status",
+      minWidth: 110,
+      width: 125,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <span className={`contacts-status ${row.is_active ? "contacts-status-active" : "contacts-status-inactive"}`}>
+          <span aria-hidden="true" />{row.is_active ? "Active" : "Inactive"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      name: "Actions",
+      minWidth: 88,
+      width: 100,
+      resizable: false,
+      sortable: false,
+      renderCell: ({ row }) => (
+        <div className="contacts-row-actions" role="group" aria-label={`Actions for ${getContactName(row)}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+          <button
+            className="contacts-icon-action"
+            type="button"
+            aria-label={`Open actions for ${getContactName(row)}`}
+            aria-haspopup="menu"
+            aria-expanded={actionMenu?.contact.id === row.id}
+            title="Contact actions"
+            onClick={(event) => openActionMenu(event, row)}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+            </svg>
+          </button>
+        </div>
+      ),
+    },
+    {
+      key: "configure",
+      name: "",
+      width: "1fr",
+      minWidth: 44,
+      resizable: false,
+      sortable: false,
+      renderHeaderCell: () => (
+        <button
+          className="contacts-configure-columns-button"
+          type="button"
+          onClick={openColumnMenu}
+          aria-label="Configure table columns"
+          title="Configure columns"
+          aria-expanded={columnMenuPosition !== null}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 4v16M15 4v16" />
+          </svg>
+        </button>
+      ),
+      renderCell: () => <span aria-hidden="true" />,
+    },
+  ], [actionMenu, openActionMenu, openColumnMenu, columnMenuPosition]);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
+    [columns, visibleColumnKeys],
+  );
 
   function openCreateForm() {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-
     setForm(EMPTY_FORM);
     setFormError("");
     setFieldErrors({});
@@ -306,11 +500,9 @@ export default function ContactsPage() {
 
   function closeCreateForm() {
     if (saving || isFormClosing || !isFormOpen) return;
-
     setFormError("");
     setFieldErrors({});
     setIsFormClosing(true);
-
     closeTimerRef.current = window.setTimeout(() => {
       setIsFormOpen(false);
       setIsFormClosing(false);
@@ -318,9 +510,7 @@ export default function ContactsPage() {
     }, MODAL_EXIT_DURATION);
   }
 
-  async function handleCreateContact(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleCreateContact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError("");
     setFieldErrors({});
@@ -335,7 +525,6 @@ export default function ContactsPage() {
       setFormError("First name is required.");
       return;
     }
-
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setFormError("Enter a valid email address.");
       return;
@@ -349,524 +538,230 @@ export default function ContactsPage() {
     };
 
     setSaving(true);
-
     try {
       await contactsApi.create(payload);
-
       if (closeTimerRef.current !== null) {
         window.clearTimeout(closeTimerRef.current);
         closeTimerRef.current = null;
       }
-
       setIsFormOpen(false);
       setIsFormClosing(false);
       setForm(EMPTY_FORM);
       setFormError("");
       setSearchInput("");
       setSearch("");
-      setPage(1);
-      setLoading(true);
       setSuccess("Contact created successfully.");
-
-      const result = await contactsApi.list({
-        page: 1,
-        page_size: PAGE_SIZE,
-      });
-
-      setContacts(result.items);
-      setTotal(result.total);
-      setTotalPages(result.total_pages);
+      setContacts(await fetchAllContacts());
       setError("");
     } catch (createError) {
-      const duplicateFieldErrors = getDuplicateFieldErrors(createError);
-
-      if (Object.keys(duplicateFieldErrors).length > 0) {
-        setFieldErrors(duplicateFieldErrors);
-        setFormError("");
+      const duplicateErrors = getDuplicateFieldErrors(createError);
+      if (Object.keys(duplicateErrors).length > 0) {
+        setFieldErrors(duplicateErrors);
       } else {
         setFormError(getErrorMessage(createError));
       }
     } finally {
       setSaving(false);
-      setLoading(false);
     }
   }
 
-  const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const lastResult = Math.min(page * PAGE_SIZE, total);
+  async function copyContactValue(value: string | null | undefined, label: string) {
+    const contact = actionMenu?.contact;
+    if (!value) return;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setSuccess(`${label} copied to clipboard.`);
+      setActionMenu(null);
+    } catch {
+      setActionMenu(null);
+      if (contact) setSelectedContact(contact);
+      setSuccess(`Clipboard access is unavailable. You can copy the ${label.toLowerCase()} from contact details.`);
+    }
+  }
 
   return (
-    <section className="contacts-page">
-      <header className="contacts-header">
-        <div>
-          <span className="contacts-eyebrow">YOUR WORKSPACE</span>
+    <main className="contacts-page contacts-workspace">
+      <header className="contacts-page-header">
+        <div className="contacts-heading-copy">
           <h1>Contacts</h1>
-          <p className="contacts-subtitle">
-            Build and manage your real-estate relationships in one place.
-          </p>
+          <p>Keep your relationships organized and contact details ready when you need them.</p>
         </div>
-
-        <button
-          className="contacts-primary-button"
-          type="button"
-          onClick={openCreateForm}
-        >
-          <span aria-hidden="true">+</span> Add contact
-        </button>
       </header>
 
-      <section className="contacts-summary" aria-label="Contact overview">
-        <div className="contacts-summary-icon" aria-hidden="true">
-          <ContactsIcon />
-        </div>
-
-        <div>
-          <p className="contacts-summary-label">Total contacts</p>
-          <p className="contacts-summary-value">
-            {loading && total === 0 ? "—" : total.toLocaleString("en-IN")}
-          </p>
-        </div>
-      </section>
-
       {success && (
-        <div
-          className="contacts-alert contacts-alert-success"
-          role="status"
-        >
+        <div className="contacts-alert contacts-alert-success" role="status">
           <span>{success}</span>
-          <button
-            type="button"
-            className="contacts-alert-dismiss"
-            onClick={() => setSuccess("")}
-            aria-label="Dismiss success message"
-          >
-            ×
-          </button>
+          <button type="button" className="contacts-dismiss" onClick={() => setSuccess("")} aria-label="Dismiss success message">×</button>
         </div>
       )}
 
-      <section className="contacts-list-panel">
-        <div className="contacts-list-heading">
-          <div>
-            <h2>All contacts</h2>
-            <p>Keep your client and business contact details organized.</p>
-          </div>
+      <div className="contacts-filterbar">
+        <form className="contacts-search-field" onSubmit={(event) => { event.preventDefault(); setSearch(searchInput.trim()); }}>
+          <SearchIcon />
+          <label className="contacts-visually-hidden" htmlFor="contacts-search">Search contacts</label>
+          <input id="contacts-search" type="search" maxLength={320} value={searchInput} placeholder="Search name, email or phone number" onChange={(event) => setSearchInput(event.target.value)} />
+          {searchInput && <button type="button" aria-label="Clear search" onClick={() => { setSearchInput(""); setSearch(""); }}>×</button>}
+        </form>
+        {(searchInput || search) && <button className="contacts-clear-filters" type="button" onClick={() => { setSearchInput(""); setSearch(""); }}>Clear search</button>}
+        <button className="contacts-primary-button contacts-add-button" type="button" onClick={openCreateForm}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          Add contact
+        </button>
+      </div>
+
+      {error && (
+        <div className="contacts-alert contacts-alert-error" role="alert">
+          <div><strong>We couldn’t load contacts</strong><p>{error}</p></div>
+          <button className="contacts-secondary-button" type="button" onClick={() => void loadContacts()}>Try again</button>
         </div>
+      )}
 
-        <form className="contacts-search-form" onSubmit={handleSearch}>
-          <label className="contacts-search-field">
-            <span className="contacts-search-icon" aria-hidden="true">
-              <SearchIcon />
-            </span>
-
-            <span className="contacts-visually-hidden">
-              Search contacts
-            </span>
-
-            <input
-              type="search"
-              placeholder="Search by name, email or phone..."
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              maxLength={320}
-            />
-          </label>
-
-          <button className="contacts-secondary-button" type="submit">
-            Search
-          </button>
-
-          {search && (
-            <button
-              className="contacts-text-button"
-              type="button"
-              onClick={() => {
-                setSearchInput("");
-                setSearch("");
-                setPage(1);
-                setLoading(true);
-              }}
-            >
-              Clear
-            </button>
-          )}
-        </form>
-
-        {error && (
-          <div className="contacts-alert contacts-alert-error" role="alert">
-            <div>
-              <strong>Couldn't load contacts</strong>
-              <p>{error}</p>
-            </div>
-
-            <button
-              className="contacts-secondary-button"
-              type="button"
-              onClick={() => {
-                setLoading(true);
-                setError("");
-                void loadContacts();
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="contacts-state" role="status" aria-live="polite">
-            <span className="contacts-spinner" aria-hidden="true" />
-            <p>Loading contacts...</p>
-          </div>
-        ) : !error && contacts.length === 0 ? (
-          <div className="contacts-empty-state">
-            <div className="contacts-empty-icon" aria-hidden="true">
-              <EmptyContactsIcon />
-            </div>
-
-            <h3>
-              {search ? "No matching contacts" : "Your contacts start here"}
-            </h3>
-
-            <p>
-              {search
-                ? "Try a different search term or clear your search."
-                : "Add your first contact to start organizing your real-estate relationships."}
-            </p>
-
-            {search ? (
-              <button
-                className="contacts-secondary-button"
-                type="button"
-                onClick={() => {
-                  setSearchInput("");
-                  setSearch("");
-                  setPage(1);
-                  setLoading(true);
-                }}
-              >
-                Clear search
-              </button>
-            ) : (
-              <button
-                className="contacts-primary-button"
-                type="button"
-                onClick={openCreateForm}
-              >
-                + Add your first contact
-              </button>
-            )}
-          </div>
-        ) : !error ? (
-          <>
-            <div className="contacts-table-wrapper">
-              <table className="contacts-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Contact</th>
-                    <th scope="col">Email</th>
-                    <th scope="col">Phone</th>
-                    <th scope="col">Date added</th>
-                    <th scope="col">Status</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {contacts.map((contact) => {
-                    const fullName = [
-                      contact.first_name,
-                      contact.last_name,
-                    ]
-                      .filter(Boolean)
-                      .join(" ");
-
-                    return (
-                      <tr key={contact.id}>
-                        <td>
-                          <div className="contacts-person">
-                            <span
-                              className="contacts-avatar"
-                              aria-hidden="true"
-                            >
-                              {contact.first_name.charAt(0).toUpperCase()}
-                              {contact.last_name?.charAt(0).toUpperCase() ??
-                                ""}
-                            </span>
-
-                            <span className="contacts-person-name">
-                              {fullName}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td>{contact.email || "—"}</td>
-                        <td>{contact.phone || "—"}</td>
-                        <td>{formatDate(contact.created_at)}</td>
-
-                        <td>
-                          <span
-                            className={`contacts-status ${
-                              contact.is_active
-                                ? "contacts-status-active"
-                                : "contacts-status-inactive"
-                            }`}
-                          >
-                            <span aria-hidden="true" />
-                            {contact.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <footer className="contacts-pagination">
-              <p>
-                Showing <strong>{firstResult}–{lastResult}</strong> of{" "}
-                <strong>{total}</strong> contacts
-              </p>
-
-              <div className="contacts-pagination-controls">
-                <button
-                  className="contacts-page-button"
-                  type="button"
-                  disabled={page <= 1 || loading}
-                  onClick={() => {
-                    setLoading(true);
-                    setPage((current) => current - 1);
-                  }}
-                >
-                  Previous
-                </button>
-
-                <span>
-                  Page {page}
-                  {totalPages > 0 ? ` of ${totalPages}` : ""}
-                </span>
-
-                <button
-                  className="contacts-page-button"
-                  type="button"
-                  disabled={page >= totalPages || loading || totalPages === 0}
-                  onClick={() => {
-                    setLoading(true);
-                    setPage((current) => current + 1);
-                  }}
-                >
-                  Next
-                </button>
-              </div>
-            </footer>
-          </>
-        ) : null}
-      </section>
-
-      {isFormOpen &&
-  createPortal(
-    <div
-      className={`contacts-modal-backdrop ${
-        isFormClosing ? "is-closing" : ""
-      }`}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          closeCreateForm();
-        }
-      }}
-      onAnimationEnd={(event) => {
-        if (
-          event.target === event.currentTarget &&
-          event.animationName === "contacts-backdrop-out" &&
-          isFormClosing
-        ) {
-          if (closeTimerRef.current !== null) {
-            window.clearTimeout(closeTimerRef.current);
-            closeTimerRef.current = null;
-          }
-
-          setIsFormOpen(false);
-          setIsFormClosing(false);
-        }
-      }}
-    >
-      <section
-        ref={modalRef}
-        className={`contacts-modal ${
-          isFormClosing ? "is-closing" : ""
-        }`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="contacts-modal-title"
-      >
-        <header className="contacts-modal-header">
-          <div>
-            <span className="contacts-eyebrow">CONTACT DETAILS</span>
-            <h2 id="contacts-modal-title">Add a contact</h2>
-            <p>Enter the details of your new contact.</p>
-          </div>
-
-          <button
-            type="button"
-            className="contacts-modal-close"
-            onClick={closeCreateForm}
-            disabled={saving || isFormClosing}
-            aria-label="Close form"
-          >
-            ×
-          </button>
-        </header>
-
-        <form
-          className="contacts-form"
-          onSubmit={handleCreateContact}
-        >
-          <div className="contacts-form-body">
-            {formError && (
-              <div
-                className="contacts-alert contacts-alert-error"
-                role="alert"
-              >
-                {formError}
-              </div>
-            )}
-
-            <div className="contacts-form-grid">
-              <label className="contacts-form-field">
-                <span>
-                  First name <span aria-hidden="true">*</span>
-                </span>
-
-                <input
-                  autoFocus
-                  required
-                  maxLength={100}
-                  value={form.first_name}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      first_name: event.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Rahul"
-                  disabled={saving}
-                />
-              </label>
-
-              <label className="contacts-form-field">
-                <span>Last name</span>
-
-                <input
-                  maxLength={100}
-                  value={form.last_name ?? ""}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      last_name: event.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Sharma"
-                  disabled={saving}
-                />
-              </label>
-
-              <label className="contacts-form-field contacts-form-field-full">
-                <span>Email address</span>
-
-                <input
-                  type="email"
-                  maxLength={320}
-                  value={form.email ?? ""}
-                  aria-invalid={Boolean(fieldErrors.email)}
-                  aria-describedby={fieldErrors.email ? "contact-email-error" : undefined}
-                  onChange={(event) => {
-                    setForm((current) => ({
-                      ...current,
-                      email: event.target.value,
-                    }));
-                    setFieldErrors((current) => ({
-                      ...current,
-                      email: undefined,
-                    }));
-                    setFormError("");
-                  }}
-                  placeholder="name@example.com"
-                  disabled={saving}
-                />
-                {fieldErrors.email && (
-                  <span
-                    id="contact-email-error"
-                    className="contacts-field-error"
-                    role="alert"
-                  >
-                    {fieldErrors.email}
-                  </span>
-                )}
-              </label>
-
-              <label className="contacts-form-field contacts-form-field-full">
-                <span>Phone number</span>
-
-                <input
-                  type="tel"
-                  maxLength={50}
-                  value={form.phone ?? ""}
-                  aria-invalid={Boolean(fieldErrors.phone)}
-                  aria-describedby={fieldErrors.phone ? "contact-phone-error" : undefined}
-                  onChange={(event) => {
-                    setForm((current) => ({
-                      ...current,
-                      phone: event.target.value,
-                    }));
-                    setFieldErrors((current) => ({
-                      ...current,
-                      phone: undefined,
-                    }));
-                    setFormError("");
-                  }}
-                  placeholder="Enter phone number"
-                  disabled={saving}
-                />
-                {fieldErrors.phone && (
-                  <span
-                    id="contact-phone-error"
-                    className="contacts-field-error"
-                    role="alert"
-                  >
-                    {fieldErrors.phone}
-                  </span>
-                )}
-              </label>
-            </div>
-
-            <p className="contacts-required-note">
-              <span aria-hidden="true">*</span> Required field
-            </p>
-          </div>
-
-          <footer className="contacts-form-actions">
-            <button
-              className="contacts-secondary-button"
-              type="button"
-              onClick={closeCreateForm}
-              disabled={saving || isFormClosing}
-            >
-              Cancel
-            </button>
-
-            <button
-              className="contacts-primary-button"
-              type="submit"
-              disabled={saving || isFormClosing}
-            >
-              {saving ? "Saving..." : "Save contact"}
-            </button>
+      {loading ? (
+        <div className="contacts-state" role="status" aria-live="polite"><span className="contacts-spinner" aria-hidden="true" /><p>Loading contacts…</p></div>
+      ) : !error && sortedContacts.length === 0 ? (
+        <div className="contacts-empty">
+          <div className="contacts-empty-icon" aria-hidden="true"><ContactsIcon /></div>
+          <h3>{search ? "No contacts match this search" : "Start with your first contact"}</h3>
+          <p>{search ? "Try another name, email or phone number, or clear your search." : "Add a contact to keep important customer and business details together."}</p>
+          {search ? <button className="contacts-secondary-button" type="button" onClick={() => { setSearchInput(""); setSearch(""); }}>Clear search</button> : <button className="contacts-primary-button" type="button" onClick={openCreateForm}>Add your first contact</button>}
+        </div>
+      ) : !error ? (
+        <section className="contacts-grid-shell" aria-label="Contacts grid">
+          <DataGrid
+            className="contacts-react-data-grid"
+            aria-label="Contacts directory"
+            columns={visibleColumns}
+            rows={sortedContacts}
+            rowKeyGetter={(row) => row.id}
+            rowHeight={60}
+            headerRowHeight={52}
+            defaultColumnOptions={{ resizable: true, sortable: true }}
+            sortColumns={sortColumns}
+            onSortColumnsChange={setSortColumns}
+            style={{
+              height: Math.min(52 + sortedContacts.length * 60, Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
+              minHeight: 112,
+            }}
+            renderers={{ noRowsFallback: <div className="contacts-grid-no-rows">No contacts to display.</div> }}
+          />
+          <footer className="contacts-grid-footer" aria-live="polite">
+            <span className="contacts-grid-footer-count"><strong>{sortedContacts.length}</strong> {sortedContacts.length === 1 ? "contact" : "contacts"}{search ? " match your search" : " in your workspace"}</span>
+            <span className="contacts-grid-footer-status"><span aria-hidden="true" />{search ? "Filtered results" : "You’re all caught up"}</span>
           </footer>
-        </form>
-      </section>
-    </div>,
-    document.body,
-  )}
-    </section>
+        </section>
+      ) : null}
+
+      {columnMenuPosition && createPortal(
+        <div className="contacts-column-menu-layer" onPointerDown={() => setColumnMenuPosition(null)} role="presentation">
+          <section
+            className="contacts-column-menu"
+            style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }}
+            role="dialog"
+            aria-label="Configure table columns"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <header className="contacts-column-menu-heading">
+              <div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div>
+              <button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button>
+            </header>
+            {[
+              { key: "name", label: "Contact" },
+              { key: "email", label: "Email address" },
+              { key: "phone", label: "Phone number" },
+              { key: "createdAt", label: "Created" },
+              { key: "status", label: "Status" },
+            ].map((column) => (
+              <label className="contacts-column-option" key={column.key}>
+                <input
+                  type="checkbox"
+                  checked={visibleColumnKeys.includes(column.key)}
+                  onChange={(event) => setVisibleColumnKeys((current) => event.target.checked
+                    ? [...current, column.key]
+                    : current.filter((key) => key !== column.key))}
+                />
+                <span>{column.label}</span>
+              </label>
+            ))}
+            <footer className="contacts-column-menu-footer">
+              <button type="button" onClick={() => setVisibleColumnKeys(["name", "email", "phone", "createdAt", "status"])}>Reset columns</button>
+              <button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {actionMenu && createPortal(
+        <div className="contacts-action-menu-layer" role="presentation" onPointerDown={() => setActionMenu(null)}>
+          <section ref={actionMenuRef} className="contacts-action-menu" style={{ top: actionMenu.top, left: actionMenu.left }} role="menu" aria-label="Contact actions" onPointerDown={(event) => event.stopPropagation()}>
+            <header className="contacts-action-menu-header"><strong>Contact actions</strong><span title={getContactName(actionMenu.contact)}>{getContactName(actionMenu.contact)}</span></header>
+            <button type="button" role="menuitem" onClick={() => { setSelectedContact(actionMenu.contact); setActionMenu(null); }}><DetailsIcon />View contact details</button>
+            <button type="button" role="menuitem" disabled={!actionMenu.contact.email} onClick={() => void copyContactValue(actionMenu.contact.email, "Email address")}><CopyIcon />Copy email address</button>
+            <button type="button" role="menuitem" disabled={!actionMenu.contact.phone} onClick={() => void copyContactValue(actionMenu.contact.phone, "Phone number")}><CopyIcon />Copy phone number</button>
+            <a role="menuitem" className={!actionMenu.contact.email ? "is-disabled" : ""} aria-disabled={!actionMenu.contact.email} href={actionMenu.contact.email ? `mailto:${actionMenu.contact.email}` : undefined} onClick={() => setActionMenu(null)}><MailIcon />Send email</a>
+            <a role="menuitem" className={!actionMenu.contact.phone ? "is-disabled" : ""} aria-disabled={!actionMenu.contact.phone} href={actionMenu.contact.phone ? `tel:${actionMenu.contact.phone}` : undefined} onClick={() => setActionMenu(null)}><PhoneIcon />Call contact</a>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {selectedContact && createPortal(
+        <div className="contacts-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedContact(null); }}>
+          <section className="contacts-modal contacts-details-modal" role="dialog" aria-modal="true" aria-labelledby="contacts-details-title">
+            <header className="contacts-modal-header">
+              <div><span className="contacts-eyebrow">CONTACT PROFILE</span><h2 id="contacts-details-title">{getContactName(selectedContact)}</h2><p>Contact information and account status.</p></div>
+              <button type="button" className="contacts-modal-close" onClick={() => setSelectedContact(null)} aria-label="Close contact details">×</button>
+            </header>
+            <div className="contacts-details-body">
+              <div className="contacts-details-identity">
+                <span className="contacts-avatar contacts-avatar-large" aria-hidden="true">{getInitials(selectedContact)}</span>
+                <div><strong>{getContactName(selectedContact)}</strong><span className={`contacts-status ${selectedContact.is_active ? "contacts-status-active" : "contacts-status-inactive"}`}><span aria-hidden="true" />{selectedContact.is_active ? "Active" : "Inactive"}</span></div>
+              </div>
+              <dl className="contacts-details-list">
+                <div><dt>Email address</dt><dd>{selectedContact.email || "Not provided"}{selectedContact.email && <button type="button" className="contacts-inline-action" onClick={() => void copyContactValue(selectedContact.email, "Email address")} aria-label="Copy email address" title="Copy email address"><CopyIcon /></button>}</dd></div>
+                <div><dt>Phone number</dt><dd>{selectedContact.phone || "Not provided"}{selectedContact.phone && <button type="button" className="contacts-inline-action" onClick={() => void copyContactValue(selectedContact.phone, "Phone number")} aria-label="Copy phone number" title="Copy phone number"><CopyIcon /></button>}</dd></div>
+                <div><dt>Created</dt><dd>{formatDate(selectedContact.created_at)}</dd></div>
+                <div><dt>Contact ID</dt><dd className="contacts-id-value">{selectedContact.id}</dd></div>
+              </dl>
+            </div>
+            <footer className="contacts-modal-footer">
+              <button className="contacts-secondary-button" type="button" onClick={() => setSelectedContact(null)}>Close</button>
+              {selectedContact.email && <a className="contacts-primary-button" href={`mailto:${selectedContact.email}`}><MailIcon />Send email</a>}
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {isFormOpen && createPortal(
+        <div className={`contacts-modal-backdrop ${isFormClosing ? "is-closing" : ""}`} onMouseDown={(event) => { if (event.target === event.currentTarget) closeCreateForm(); }}>
+          <section ref={modalRef} className={`contacts-modal ${isFormClosing ? "is-closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="contacts-modal-title">
+            <header className="contacts-modal-header">
+              <div><span className="contacts-eyebrow">CONTACT DETAILS</span><h2 id="contacts-modal-title">Add a contact</h2><p>Create a contact record for your workspace.</p></div>
+              <button type="button" className="contacts-modal-close" onClick={closeCreateForm} disabled={saving || isFormClosing} aria-label="Close form">×</button>
+            </header>
+            <form className="contacts-form" onSubmit={handleCreateContact}>
+              <div className="contacts-form-body">
+                {formError && <div className="contacts-alert contacts-alert-error" role="alert">{formError}</div>}
+                <div className="contacts-form-section"><h3>Basic information</h3><p>Name is required. Add an email address or phone number to make this contact easier to reach.</p></div>
+                <div className="contacts-form-grid">
+                  <label className="contacts-form-field"><span>First name <b aria-hidden="true">*</b></span><input autoFocus required maxLength={100} value={form.first_name} onChange={(event) => setForm((current) => ({ ...current, first_name: event.target.value }))} placeholder="e.g. Rahul" disabled={saving} /></label>
+                  <label className="contacts-form-field"><span>Last name</span><input maxLength={100} value={form.last_name ?? ""} onChange={(event) => setForm((current) => ({ ...current, last_name: event.target.value }))} placeholder="e.g. Sharma" disabled={saving} /></label>
+                  <label className="contacts-form-field contacts-form-field-full"><span>Email address</span><input type="email" maxLength={320} value={form.email ?? ""} aria-invalid={Boolean(fieldErrors.email)} aria-describedby={fieldErrors.email ? "contact-email-error" : undefined} onChange={(event) => { setForm((current) => ({ ...current, email: event.target.value })); setFieldErrors((current) => ({ ...current, email: undefined })); setFormError(""); }} placeholder="name@example.com" disabled={saving} />{fieldErrors.email && <span id="contact-email-error" className="contacts-field-error" role="alert">{fieldErrors.email}</span>}</label>
+                  <label className="contacts-form-field contacts-form-field-full"><span>Phone number</span><input type="tel" maxLength={50} value={form.phone ?? ""} aria-invalid={Boolean(fieldErrors.phone)} aria-describedby={fieldErrors.phone ? "contact-phone-error" : undefined} onChange={(event) => { setForm((current) => ({ ...current, phone: event.target.value })); setFieldErrors((current) => ({ ...current, phone: undefined })); setFormError(""); }} placeholder="Enter phone number" disabled={saving} />{fieldErrors.phone && <span id="contact-phone-error" className="contacts-field-error" role="alert">{fieldErrors.phone}</span>}</label>
+                </div>
+                <p className="contacts-required-note"><span aria-hidden="true">*</span> Required field</p>
+              </div>
+              <footer className="contacts-modal-footer">
+                <button className="contacts-secondary-button" type="button" onClick={closeCreateForm} disabled={saving || isFormClosing}>Cancel</button>
+                <button className="contacts-primary-button" type="submit" disabled={saving || isFormClosing}>{saving ? "Saving contact…" : "Save contact"}</button>
+              </footer>
+            </form>
+          </section>
+        </div>,
+        document.body,
+      )}
+    </main>
   );
 }

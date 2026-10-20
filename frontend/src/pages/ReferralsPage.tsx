@@ -1,12 +1,14 @@
-
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 import { ApiError } from "../lib/api";
 import { contactsApi, type Contact } from "../services/contactApi";
 import {
@@ -24,7 +26,7 @@ import "./ReferralsPage.css";
 
 const PAGE_SIZE = 10;
 
-const STATUS_OPTIONS: { value: ReferralStatus; label: string }[] = [
+const STATUS_OPTIONS: { value: ReferralStatus; label: string; }[] = [
   { value: "NEW", label: "New" },
   { value: "CONTACTED", label: "Contacted" },
   { value: "CONVERTED", label: "Converted" },
@@ -191,13 +193,16 @@ export default function ReferralsPage() {
   );
   const [form, setForm] = useState<ReferralFormValues>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>([
+    "referral", "contact", "associations", "status", "createdAt",
+  ]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number; } | null>(null);
+  const [actionMenu, setActionMenu] = useState<{ referral: Referral; top: number; left: number; } | null>(null);
+  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
 
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const firstResult = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const lastResult = Math.min(page * PAGE_SIZE, total);
 
   const loadReferrals = useCallback(async () => {
     const sequence = ++requestSequence.current;
@@ -287,6 +292,30 @@ export default function ReferralsPage() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isFormOpen, saving]);
+
+  useEffect(() => {
+    function updateDensity() {
+      setCompactGrid(window.innerWidth >= 1600);
+    }
+    function closeFloatingMenus() {
+      setActionMenu(null);
+      setColumnMenuPosition(null);
+    }
+    function handleGlobalKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setActionMenu(null);
+        setColumnMenuPosition(null);
+      }
+    }
+    window.addEventListener("resize", updateDensity);
+    window.addEventListener("scroll", closeFloatingMenus, true);
+    document.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("resize", updateDensity);
+      window.removeEventListener("scroll", closeFloatingMenus, true);
+      document.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, []);
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);
@@ -496,293 +525,211 @@ export default function ReferralsPage() {
     setStatusFilter(value);
   }
 
+  const sortedReferrals = useMemo(() => {
+    if (sortColumns.length === 0) return referrals;
+    return [...referrals].sort((left, right) => {
+      for (const sort of sortColumns) {
+        let a: string | number = "";
+        let b: string | number = "";
+        switch (sort.columnKey) {
+          case "referral":
+            a = left.referral_name;
+            b = right.referral_name;
+            break;
+          case "contact":
+            a = `${left.referral_email ?? ""} ${left.referral_phone ?? ""}`;
+            b = `${right.referral_email ?? ""} ${right.referral_phone ?? ""}`;
+            break;
+          case "associations":
+            a = getAssociationLabels(left, customers, contacts, deals).join(" ");
+            b = getAssociationLabels(right, customers, contacts, deals).join(" ");
+            break;
+          case "status":
+            a = formatStatus(left.status);
+            b = formatStatus(right.status);
+            break;
+          case "createdAt":
+            a = new Date(left.created_at).getTime() || 0;
+            b = new Date(right.created_at).getTime() || 0;
+            break;
+          default:
+            break;
+        }
+        const comparison = typeof a === "number" && typeof b === "number"
+          ? a - b
+          : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+        if (comparison !== 0) return sort.direction === "DESC" ? -comparison : comparison;
+      }
+      return 0;
+    });
+  }, [referrals, sortColumns, customers, contacts, deals]);
+
+  const openColumnMenu = useCallback((event: { currentTarget: HTMLButtonElement; }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 240;
+    setColumnMenuPosition((current) => current ? null : {
+      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 320)),
+      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+    });
+  }, []);
+
+  const openActionMenu = useCallback((event: { currentTarget: HTMLButtonElement; }, referral: Referral) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 220;
+    const menuHeight = 112;
+    const top = rect.bottom + menuHeight + 12 > window.innerHeight
+      ? Math.max(12, rect.top - menuHeight - 6)
+      : rect.bottom + 6;
+    const left = Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
+    setActionMenu((current) => current?.referral.id === referral.id ? null : { referral, top, left });
+  }, []);
+
+  const columns = useMemo<readonly Column<Referral>[]>(() => [
+    {
+      key: "referral", name: "Referral", minWidth: 190, width: 230, resizable: true, sortable: true,
+      renderCell: ({ row }) => {
+        const name = row.referral_name || "Unnamed referral";
+        const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "R";
+        return <div className="referrals-person-cell"><span className="referrals-avatar" aria-hidden="true">{initials}</span><span className="referrals-person-copy"><strong title={name}>{name}</strong><span title={`#${row.id.slice(0, 8)}`}>#{row.id.slice(0, 8)}</span></span></div>;
+      },
+    },
+    {
+      key: "contact", name: "Contact details", minWidth: 180, width: 230, resizable: true, sortable: true,
+      renderCell: ({ row }) => <div className="referrals-grid-contact"><span title={row.referral_email || "No email"}>{row.referral_email || "No email"}</span><span title={row.referral_phone || "No phone"}>{row.referral_phone || "No phone"}</span></div>,
+    },
+    {
+      key: "associations", name: "Associations", minWidth: 200, width: 260, resizable: true, sortable: true,
+      renderCell: ({ row }) => {
+        const labels = getAssociationLabels(row, customers, contacts, deals);
+        return <div className="referrals-grid-associations">{labels.length ? labels.map((label) => <span key={label} title={label}>{label}</span>) : <span>—</span>}</div>;
+      },
+    },
+    {
+      key: "status", name: "Status", minWidth: 125, width: 145, resizable: true, sortable: true,
+      renderCell: ({ row }) => <span className={getStatusClass(row.status)}>{formatStatus(row.status)}</span>,
+    },
+    {
+      key: "createdAt", name: "Created", minWidth: 120, width: 140, resizable: true, sortable: true,
+      renderCell: ({ row }) => <span className="referrals-created-date">{formatDate(row.created_at)}</span>,
+    },
+    {
+      key: "actions", name: "Actions", minWidth: 82, width: 96, resizable: false, sortable: false,
+      renderCell: ({ row }) => <div className="referrals-grid-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}><button className="referrals-icon-action" type="button" aria-label={`Open actions for ${row.referral_name}`} aria-haspopup="menu" aria-expanded={actionMenu?.referral.id === row.id} title="Referral actions" onClick={(event) => openActionMenu(event, row)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button></div>,
+    },
+    {
+      key: "configure", name: "", width: "1fr", minWidth: 44, resizable: false, sortable: false,
+      renderHeaderCell: () => <button className="referrals-configure-columns-button" type="button" onClick={openColumnMenu} aria-label="Configure table columns" title="Configure columns" aria-expanded={columnMenuPosition !== null}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></svg></button>,
+    },
+  ], [customers, contacts, deals, actionMenu, openActionMenu, openColumnMenu, columnMenuPosition]);
+
+  const visibleColumns = useMemo(() => columns.filter((column) =>
+    column.key === "actions" || column.key === "configure" || visibleColumnKeys.includes(column.key),
+  ), [columns, visibleColumnKeys]);
+
   return (
     <section className="referrals-page">
       <header className="referrals-header">
         <div>
-          <span className="referrals-eyebrow">DEAL WORKSPACE</span>
           <h1>Referrals</h1>
           <p className="referrals-subtitle">
-            Track introductions, manage referral sources, and turn
-            opportunities into successful deals.
+            Track introductions, manage referral sources, and turn opportunities into successful deals.
           </p>
         </div>
-
-        <button
-          className="referrals-primary-button"
-          type="button"
-          onClick={openCreateForm}
-        >
-          <span aria-hidden="true">+</span> Add referral
-        </button>
       </header>
 
       {error && (
         <div className="referrals-alert referrals-alert-error" role="alert">
           <span>{error}</span>
-          <button
-            type="button"
-            className="referrals-dismiss"
-            onClick={() => setError("")}
-            aria-label="Dismiss error"
-          >
-            ×
-          </button>
+          <button type="button" className="referrals-dismiss" onClick={() => setError("")} aria-label="Dismiss error">×</button>
         </div>
       )}
-
       {success && (
-        <div
-          className="referrals-alert referrals-alert-success"
-          role="status"
-        >
+        <div className="referrals-alert referrals-alert-success" role="status">
           <span>{success}</span>
-          <button
-            type="button"
-            className="referrals-dismiss"
-            onClick={() => setSuccess("")}
-            aria-label="Dismiss success"
-          >
-            ×
-          </button>
+          <button type="button" className="referrals-dismiss" onClick={() => setSuccess("")} aria-label="Dismiss success">×</button>
         </div>
       )}
 
-      <section className="referrals-summary" aria-label="Referral overview">
-        <div className="referrals-summary-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="10" cy="7" r="4" />
-            <path d="M20 8v6M17 11h6" />
-          </svg>
+      <div className="referrals-toolbar">
+        <label className="referrals-search">
+          <svg className="referrals-search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.2 4.2" /></svg>
+          <input aria-label="Search referrals" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search referral name, email or phone" />
+        </label>
+        <label className="referrals-filter">
+          <span className="referrals-visually-hidden">Filter by status</span>
+          <select aria-label="Filter referrals by status" value={statusFilter} onChange={(event) => handleStatusChange(event.target.value)}>
+            <option value="">All statuses</option>
+            {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <button className="referrals-primary-button" type="button" onClick={openCreateForm}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          Add referral
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="referrals-state" role="status" aria-live="polite"><span className="referrals-spinner" /><p>Loading referrals…</p></div>
+      ) : referrals.length === 0 ? (
+        <div className="referrals-empty">
+          <div className="referrals-empty-icon" aria-hidden="true">↗</div>
+          <h3>{search || statusFilter ? "No referrals match these filters" : "Add your first referral"}</h3>
+          <p>{search || statusFilter ? "Try another search term or status filter." : "Capture a referral and link it to a customer, contact, or deal."}</p>
+          {search || statusFilter ? <button className="referrals-secondary-button" type="button" onClick={() => { setSearchInput(""); setSearch(""); setStatusFilter(""); setPage(1); }}>Clear filters</button> : <button className="referrals-primary-button" type="button" onClick={openCreateForm}><span aria-hidden="true">+</span> Add referral</button>}
         </div>
-        <div>
-          <p className="referrals-summary-label">Total referrals</p>
-          <p className="referrals-summary-value">{total}</p>
-        </div>
-      </section>
-
-      <section className="referrals-panel">
-        <header className="referrals-panel-heading">
-          <div>
-            <h2>Referral records</h2>
-            <p>Manage referral details and their linked records.</p>
-          </div>
-          <button
-            type="button"
-            className="referrals-secondary-button"
-            onClick={() => void loadReferrals()}
-            disabled={loading}
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
-        </header>
-
-        <div className="referrals-toolbar">
-          <label className="referrals-search">
-            <span className="referrals-search-icon" aria-hidden="true">⌕</span>
-            <input
-              aria-label="Search referrals"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Search by name, email, or phone"
-            />
-          </label>
-
-          <label className="referrals-filter">
-            <span className="referrals-visually-hidden">Filter by status</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => handleStatusChange(event.target.value)}
-            >
-              <option value="">All statuses</option>
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {loading ? (
-          <div className="referrals-state" role="status">
-            <span className="referrals-spinner" />
-            <p>Loading referrals…</p>
-          </div>
-        ) : referrals.length === 0 ? (
-          <div className="referrals-empty">
-            <div className="referrals-empty-icon" aria-hidden="true">↗</div>
-            <h3>No referrals found</h3>
-            <p>
-              {search || statusFilter
-                ? "Try a different search term or status filter."
-                : "Add your first referral to start tracking introductions."}
-            </p>
-            {!search && !statusFilter && (
-              <button
-                className="referrals-primary-button"
-                type="button"
-                onClick={openCreateForm}
-              >
-                Add your first referral
-              </button>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="referrals-table-wrapper">
-              <table className="referrals-table">
-                <thead>
-                  <tr>
-                    <th>Referral</th>
-                    <th>Contact details</th>
-                    <th>Associations</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {referrals.map((referral) => {
-                    const associations = getAssociationLabels(
-                      referral,
-                      customers,
-                      contacts,
-                      deals,
-                    );
-
-                    return (
-                      <tr key={referral.id}>
-                        <td>
-                          <div className="referrals-person">
-                            <span className="referrals-avatar" aria-hidden="true">
-                              {referral.referral_name.trim().charAt(0).toUpperCase()}
-                            </span>
-                            <div>
-                              <strong>{referral.referral_name}</strong>
-                              <span className="referrals-secondary-text">
-                                #{referral.id.slice(0, 8)}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="referrals-contact-details">
-                            <span>{referral.referral_email || "No email"}</span>
-                            <span>{referral.referral_phone || "No phone"}</span>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="referrals-associations">
-                            {associations.length > 0
-                              ? associations.map((label) => (
-                                  <span key={label}>{label}</span>
-                                ))
-                              : <span>—</span>}
-                          </div>
-                        </td>
-                        <td>
-                          <span className={getStatusClass(referral.status)}>
-                            {formatStatus(referral.status)}
-                          </span>
-                        </td>
-                        <td>{formatDate(referral.created_at)}</td>
-                        <td>
-                          <div className="referrals-row-actions">
-                            <button
-                              type="button"
-                              className="referrals-text-button"
-                              onClick={() => openEditForm(referral)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="referrals-text-button referrals-danger-button"
-                              onClick={() => void handleDeactivate(referral)}
-                            >
-                              Deactivate
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+      ) : (
+        <div className="referrals-grid-shell">
+          <DataGrid
+            className="referrals-react-data-grid"
+            aria-label="Referrals directory"
+            columns={visibleColumns}
+            rows={sortedReferrals}
+            rowKeyGetter={(row) => row.id}
+            rowHeight={compactGrid ? 48 : 62}
+            headerRowHeight={52}
+            defaultColumnOptions={{ resizable: true, sortable: true }}
+            sortColumns={sortColumns}
+            onSortColumnsChange={setSortColumns}
+            style={{
+              height: Math.min(52 + sortedReferrals.length * (compactGrid ? 48 : 62), Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
+              minHeight: 52 + Math.min(sortedReferrals.length, 1) * (compactGrid ? 48 : 62),
+            }}
+            renderers={{ noRowsFallback: <div className="referrals-grid-no-rows">No referrals to display.</div> }}
+          />
+          <footer className="referrals-grid-footer">
+            <p><strong>{total}</strong> referrals in your workspace</p>
+            <div className="referrals-pagination-controls">
+              <span className="customers-caught-up"><span aria-hidden="true" />You’re all caught up</span>
             </div>
+          </footer>
+        </div>
+      )}
 
-            <div className="referrals-mobile-list">
-              {referrals.map((referral) => (
-                <article className="referrals-mobile-card" key={referral.id}>
-                  <div className="referrals-mobile-card-heading">
-                    <div className="referrals-person">
-                      <span className="referrals-avatar" aria-hidden="true">
-                        {referral.referral_name.trim().charAt(0).toUpperCase()}
-                      </span>
-                      <div>
-                        <strong>{referral.referral_name}</strong>
-                        <span className="referrals-secondary-text">
-                          {formatDate(referral.created_at)}
-                        </span>
-                      </div>
-                    </div>
-                    <span className={getStatusClass(referral.status)}>
-                      {formatStatus(referral.status)}
-                    </span>
-                  </div>
+      {actionMenu && createPortal(
+        <div className="referrals-action-menu-layer" role="presentation" onPointerDown={() => setActionMenu(null)}>
+          <section className="referrals-action-menu" style={{ top: actionMenu.top, left: actionMenu.left }} role="menu" aria-label="Referral actions" onPointerDown={(event) => event.stopPropagation()}>
+            <header className="referrals-action-menu-header"><div><strong>Referral actions</strong><span>{actionMenu.referral.referral_name}</span></div><button type="button" aria-label="Close referral actions" onClick={() => setActionMenu(null)}>×</button></header>
+            <button type="button" role="menuitem" onClick={() => { const referral = actionMenu.referral; setActionMenu(null); openEditForm(referral); }}><span className="referrals-menu-icon" aria-hidden="true">✎</span><span><strong>Edit referral</strong><small>Update details and linked records</small></span></button>
+            <button type="button" role="menuitem" className="referrals-menu-danger" onClick={() => { const referral = actionMenu.referral; setActionMenu(null); void handleDeactivate(referral); }}><span className="referrals-menu-icon" aria-hidden="true">⊘</span><span><strong>Deactivate referral</strong><small>Remove it from active workflows</small></span></button>
+          </section>
+        </div>, document.body,
+      )}
 
-                  <p>{referral.referral_email || "No email"}</p>
-                  <p>{referral.referral_phone || "No phone"}</p>
-
-                  <div className="referrals-row-actions">
-                    <button
-                      type="button"
-                      className="referrals-text-button"
-                      onClick={() => openEditForm(referral)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="referrals-text-button referrals-danger-button"
-                      onClick={() => void handleDeactivate(referral)}
-                    >
-                      Deactivate
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <footer className="referrals-pagination">
-              <p>
-                Showing {firstResult}–{lastResult} of {total}
-              </p>
-              <div className="referrals-pagination-controls">
-                <button
-                  type="button"
-                  className="referrals-page-button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </button>
-                <span>Page {page} of {totalPages}</span>
-                <button
-                  type="button"
-                  className="referrals-page-button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </button>
-              </div>
-            </footer>
-          </>
-        )}
-      </section>
+      {columnMenuPosition && createPortal(
+        <div className="referrals-column-menu-layer" role="presentation" onPointerDown={() => setColumnMenuPosition(null)}>
+          <div className="referrals-column-menu" style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }} role="dialog" aria-label="Configure table columns" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="referrals-column-menu-heading"><div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div><button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button></div>
+            {[
+              { key: "referral", label: "Referral" },
+              { key: "contact", label: "Contact details" },
+              { key: "associations", label: "Associations" },
+              { key: "status", label: "Status" },
+              { key: "createdAt", label: "Created" },
+            ].map((column) => <label className="referrals-column-option" key={column.key}><input type="checkbox" checked={visibleColumnKeys.includes(column.key)} onChange={(event) => setVisibleColumnKeys((current) => event.target.checked ? [...current, column.key] : current.filter((key) => key !== column.key))} /><span>{column.label}</span></label>)}
+            <div className="referrals-column-menu-footer"><button type="button" onClick={() => setVisibleColumnKeys(["referral", "contact", "associations", "status", "createdAt"])}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div>
+          </div>
+        </div>, document.body,
+      )}
 
       {isFormOpen && createPortal(
         <div
@@ -804,13 +751,15 @@ export default function ReferralsPage() {
             <header className="referrals-modal-header">
               <div>
                 <span className="referrals-eyebrow">
-                  {editingReferral ? "UPDATE RECORD" : "NEW RECORD"}
+                  {editingReferral ? "REFERRAL DETAILS" : "OPPORTUNITY DETAILS"}
                 </span>
                 <h2 id="referrals-form-title">
                   {editingReferral ? "Edit referral" : "Add referral"}
                 </h2>
                 <p>
-                  Capture referral details and connect the relevant records.
+                  {editingReferral
+                    ? "Update referral information and linked records."
+                    : "Choose a referral and connect the relevant records."}
                 </p>
               </div>
               <button
@@ -820,7 +769,7 @@ export default function ReferralsPage() {
                 onClick={closeForm}
                 disabled={saving}
               >
-                ×
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
               </button>
             </header>
 
@@ -996,6 +945,7 @@ export default function ReferralsPage() {
                   onClick={closeForm}
                   disabled={saving}
                 >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
                   Cancel
                 </button>
                 <button
@@ -1003,11 +953,8 @@ export default function ReferralsPage() {
                   className="referrals-primary-button"
                   disabled={saving || lookupsLoading}
                 >
-                  {saving
-                    ? "Saving…"
-                    : editingReferral
-                      ? "Save changes"
-                      : "Create referral"}
+                  {!saving && <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}
+                  {saving ? "Saving…" : editingReferral ? "Save changes" : "Create referral"}
                 </button>
               </footer>
             </form>

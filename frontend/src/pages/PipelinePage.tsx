@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type DragEvent,
   type FormEvent,
 } from "react";
 
@@ -188,6 +189,8 @@ export default function PipelinePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [currentTime, setCurrentTime] = useState<number | null>(null);
+  const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<LeadStatus | null>(null);
 
   const refresh = useCallback(() => {
     setRefreshKey((current) => current + 1);
@@ -255,27 +258,6 @@ export default function PipelinePage() {
 
   const totalLeads = leads.length;
 
-  const openLeads = leads.filter(
-    (lead) =>
-      lead.is_active && lead.status !== "WON" && lead.status !== "LOST",
-  ).length;
-
-  const wonLeads = leads.filter((lead) => lead.status === "WON").length;
-
-  const overdueFollowUps = leads.filter((lead) => {
-    if (!lead.is_active || !lead.next_action_at || currentTime === null) {
-      return false;
-    }
-
-    const followUpTime = new Date(lead.next_action_at).getTime();
-
-    return (
-      Number.isFinite(followUpTime) &&
-      followUpTime < currentTime &&
-      lead.status !== "WON" &&
-      lead.status !== "LOST"
-    );
-  }).length;
 
   async function handleStatusChange(
     lead: Lead,
@@ -316,6 +298,29 @@ export default function PipelinePage() {
     }
   }
 
+  async function handleDrop(
+    event: DragEvent<HTMLElement>,
+    targetStatus: LeadStatus,
+  ): Promise<void> {
+    event.preventDefault();
+    setDragOverStatus(null);
+
+    const leadId = event.dataTransfer.getData("text/plain") || draggingLeadId;
+    setDraggingLeadId(null);
+
+    if (!leadId) return;
+
+    const lead = leads.find((item) => item.id === leadId);
+    if (!lead || lead.status === targetStatus) return;
+
+    if (!ALLOWED_STATUS_TRANSITIONS[lead.status].includes(targetStatus)) {
+      setError(`A lead cannot move directly from ${formatLabel(lead.status)} to ${formatLabel(targetStatus)}. Choose one of its allowed next stages.`);
+      return;
+    }
+
+    await handleStatusChange(lead, targetStatus);
+  }
+
   function applySearch(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setSearch(searchInput.trim());
@@ -330,97 +335,55 @@ export default function PipelinePage() {
     <section className="pipeline-page">
       <header className="pipeline-header">
         <div>
-          <span className="pipeline-eyebrow">LEAD OPERATIONS</span>
-          <h1>Operational pipeline</h1>
+          <h1>Pipeline</h1>
           <p className="pipeline-subtitle">
-            Track every opportunity from first contact to outcome, and see
-            what needs attention next.
+            Track leads through every stage, manage opportunities, and keep the
+            next action visible.
           </p>
         </div>
 
-        <button
-          className="pipeline-secondary-button"
-          type="button"
-          onClick={refresh}
-          disabled={loading || updatingLeadId !== null}
-        >
-          <span aria-hidden="true">↻</span> Refresh
-        </button>
       </header>
 
-      <section className="pipeline-summary" aria-label="Pipeline summary">
-        <article className="pipeline-summary-card">
-          <span className="pipeline-summary-label">Matching leads</span>
-          <strong>{loading ? "—" : totalLeads}</strong>
-          <span className="pipeline-summary-hint">
-            Based on current filters
-          </span>
-        </article>
 
-        <article className="pipeline-summary-card">
-          <span className="pipeline-summary-label">Open opportunities</span>
-          <strong>{loading ? "—" : openLeads}</strong>
-          <span className="pipeline-summary-hint">
-            Active, excluding won and lost
-          </span>
-        </article>
+      <div className="pipeline-toolbar">
+        <form className="pipeline-search" onSubmit={applySearch}>
+          <label
+            className="pipeline-visually-hidden"
+            htmlFor="pipeline-search"
+          >
+            Search leads
+          </label>
 
-        <article className="pipeline-summary-card">
-          <span className="pipeline-summary-label">Won</span>
-          <strong>{loading ? "—" : wonLeads}</strong>
-          <span className="pipeline-summary-hint">
-            In the current result set
-          </span>
-        </article>
+          <input
+            id="pipeline-search"
+            type="search"
+            placeholder="Search contact, phone, email or next action"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
 
-        <article className="pipeline-summary-card pipeline-summary-attention">
-          <span className="pipeline-summary-label">Overdue follow-ups</span>
-          <strong>{loading ? "—" : overdueFollowUps}</strong>
-          <span className="pipeline-summary-hint">
-            Active leads past their follow-up date
-          </span>
-        </article>
-      </section>
+          <button type="submit" className="pipeline-primary-button">
+            Search
+          </button>
+        </form>
+
+        <label className="pipeline-filter">
+          <span>Lead visibility</span>
+          <select
+            value={activityFilter}
+            onChange={(event) =>
+              setActivityFilter(event.target.value as ActivityFilter)
+            }
+            disabled={loading}
+          >
+            <option value="active">Active leads</option>
+            <option value="inactive">Inactive leads</option>
+            <option value="all">All leads</option>
+          </select>
+        </label>
+      </div>
 
       <section className="pipeline-board-panel">
-        <div className="pipeline-toolbar">
-          <form className="pipeline-search" onSubmit={applySearch}>
-            <label
-              className="pipeline-visually-hidden"
-              htmlFor="pipeline-search"
-            >
-              Search leads
-            </label>
-
-            <input
-              id="pipeline-search"
-              type="search"
-              placeholder="Search contact, phone, email or next action"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-            />
-
-            <button type="submit" className="pipeline-primary-button">
-              Search
-            </button>
-          </form>
-
-          <label className="pipeline-filter">
-            <span>Lead visibility</span>
-            <select
-              value={activityFilter}
-              onChange={(event) =>
-                setActivityFilter(event.target.value as ActivityFilter)
-              }
-              disabled={loading}
-            >
-              <option value="active">Active leads</option>
-              <option value="inactive">Inactive leads</option>
-              <option value="all">All leads</option>
-            </select>
-          </label>
-        </div>
-
         {error && (
           <div className="pipeline-alert pipeline-alert-error" role="alert">
             <span>{error}</span>
@@ -488,9 +451,35 @@ export default function PipelinePage() {
 
               return (
                 <section
-                  className={`pipeline-column pipeline-column-${stage.status.toLowerCase()}`}
+                  className={[
+                    "pipeline-column",
+                    `pipeline-column-${stage.status.toLowerCase()}`,
+                    dragOverStatus === stage.status ? "pipeline-column-drop-target" : "",
+                  ].filter(Boolean).join(" ")}
                   key={stage.status}
                   aria-label={`${stage.label}: ${stageLeads.length} leads`}
+                  onDragOver={(event) => {
+                    if (!draggingLeadId) return;
+                    const draggedLead = leads.find((item) => item.id === draggingLeadId);
+                    const canMove = draggedLead && (
+                      draggedLead.status === stage.status ||
+                      ALLOWED_STATUS_TRANSITIONS[draggedLead.status].includes(stage.status)
+                    );
+                    if (canMove) {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverStatus(stage.status);
+                    } else {
+                      event.dataTransfer.dropEffect = "none";
+                      setDragOverStatus((current) => current === stage.status ? null : current);
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setDragOverStatus((current) => current === stage.status ? null : current);
+                    }
+                  }}
+                  onDrop={(event) => void handleDrop(event, stage.status)}
                 >
                   <header className="pipeline-column-header">
                     <div className="pipeline-column-title-row">
@@ -505,7 +494,8 @@ export default function PipelinePage() {
                   <div className="pipeline-column-cards">
                     {stageLeads.length === 0 ? (
                       <div className="pipeline-column-empty">
-                        No leads in this stage
+                        <span aria-hidden="true">＋</span>
+                        <span>{draggingLeadId ? `Drop here to move to ${stage.label}` : "No leads in this stage"}</span>
                       </div>
                     ) : (
                       stageLeads.map((lead) => {
@@ -530,10 +520,26 @@ export default function PipelinePage() {
 
                         return (
                           <article
-                            className="pipeline-lead-card"
+                            className={[
+                              "pipeline-lead-card",
+                              "pipeline-lead-card-draggable",
+                              draggingLeadId === lead.id ? "pipeline-lead-card-dragging" : "",
+                            ].filter(Boolean).join(" ")}
                             key={lead.id}
+                            draggable={updatingLeadId === null && ALLOWED_STATUS_TRANSITIONS[lead.status].length > 0}
+                            onDragStart={(event) => {
+                              setDraggingLeadId(lead.id);
+                              setDragOverStatus(null);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", lead.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingLeadId(null);
+                              setDragOverStatus(null);
+                            }}
                           >
                             <div className="pipeline-card-topline">
+                              <span className="pipeline-drag-hint" aria-hidden="true" title="Drag to move between stages">⠿</span>
                               <span
                                 className={`pipeline-interest pipeline-interest-${(
                                   lead.interest ?? "none"

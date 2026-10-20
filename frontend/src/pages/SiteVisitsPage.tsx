@@ -1,11 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { DataGrid, type Column, type SortColumn } from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 
 import { ApiError } from "../lib/api";
 import {
@@ -149,6 +152,13 @@ export default function SiteVisitsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] =
     useState<SiteVisitStatus | "">("");
+  const [searchInput, setSearchInput] = useState("");
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>([
+    "property", "customer", "scheduledAt", "status", "notes",
+  ]);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
 
   // Loading and submission state.
   const [loading, setLoading] = useState(true);
@@ -278,6 +288,31 @@ const [followUpSubmitting, setFollowUpSubmitting] = useState(false);
   useEffect(() => {
     void loadOptions();
   }, [loadOptions]);
+
+  useEffect(() => {
+    const updateDensity = () => setCompactGrid(window.innerWidth >= 1600);
+    updateDensity();
+    window.addEventListener("resize", updateDensity, { passive: true });
+    return () => window.removeEventListener("resize", updateDensity);
+  }, []);
+
+  useEffect(() => {
+    if (!columnMenuPosition) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setColumnMenuPosition(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [columnMenuPosition]);
+
+  const openColumnMenu = useCallback((event: { currentTarget: HTMLButtonElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 240;
+    setColumnMenuPosition((current) => current ? null : {
+      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 300)),
+      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+    });
+  }, []);
 
   // Match the Properties page modal behavior.
   useEffect(() => {
@@ -569,405 +604,238 @@ async function handleFollowUpSubmit(
     leads.map((lead) => [lead.id, lead]),
   );
 
-  // These summary values describe the currently loaded page.
-  const now = Date.now();
+  const filteredVisits = useMemo(() => {
+    const query = searchInput.trim().toLowerCase();
+    if (!query) return visits;
+    return visits.filter((visit) => {
+      const property = propertyById.get(visit.property_id);
+      const lead = visit.lead_id ? leadById.get(visit.lead_id) : undefined;
+      const customer = visit.customer_profile_id ? customerById.get(visit.customer_profile_id) : undefined;
+      const person = customer ? customerLabel(customer) : lead ? `Lead ${lead.id.slice(0, 8)}` : "";
+      return [property ? propertyLabel(property) : visit.property_id, person,
+        dateLabel(visit.scheduled_at), timeLabel(visit.scheduled_at),
+        statusLabel(visit.status), visit.notes ?? ""]
+        .join(" ").toLowerCase().includes(query);
+    });
+  }, [visits, searchInput, propertyById, leadById, customerById]);
 
-  const upcomingCount = visits.filter(
-    (visit) =>
-      visit.status === "SCHEDULED" &&
-      new Date(visit.scheduled_at).getTime() >= now,
-  ).length;
+  const sortedVisits = useMemo(() => {
+    if (!sortColumns.length) return filteredVisits;
+    return [...filteredVisits].sort((left, right) => {
+      for (const sort of sortColumns) {
+        const value = (visit: SiteVisit): string | number => {
+          const property = propertyById.get(visit.property_id);
+          const lead = visit.lead_id ? leadById.get(visit.lead_id) : undefined;
+          const customer = visit.customer_profile_id ? customerById.get(visit.customer_profile_id) : undefined;
+          switch (sort.columnKey) {
+            case "property": return property ? propertyLabel(property) : visit.property_id;
+            case "customer": return customer ? customerLabel(customer) : lead ? `Lead ${lead.id}` : "";
+            case "scheduledAt": return new Date(visit.scheduled_at).getTime() || 0;
+            case "status": return statusLabel(visit.status);
+            case "notes": return visit.notes ?? "";
+            default: return "";
+          }
+        };
+        const a = value(left); const b = value(right);
+        const comparison = typeof a === "number" && typeof b === "number"
+          ? a - b
+          : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+        if (comparison) return sort.direction === "DESC" ? -comparison : comparison;
+      }
+      return 0;
+    });
+  }, [filteredVisits, sortColumns, propertyById, leadById, customerById]);
 
-  const completedCount = visits.filter(
-    (visit) => visit.status === "COMPLETED",
-  ).length;
+  const columns = useMemo<readonly Column<SiteVisit>[]>(() => [
+    {
+      key: "property",
+      name: "Property / Location",
+      minWidth: 210,
+      width: 300,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const property = propertyById.get(row.property_id);
+
+        return (
+          <div className="visits-grid-primary-cell">
+            <strong>{property ? propertyLabel(property) : `Property · ${row.property_id.slice(0, 8)}`}</strong>
+            <small>{property?.property_type?.replaceAll("_", " ") ?? "Property visit"}</small>
+          </div>
+        );
+      },
+    },
+    {
+      key: "customer",
+      name: "Lead / Customer",
+      minWidth: 150,
+      width: 190,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => {
+        const customer = row.customer_profile_id ? customerById.get(row.customer_profile_id) : undefined;
+        const lead = row.lead_id ? leadById.get(row.lead_id) : undefined;
+
+        return customer ? customerLabel(customer) : lead ? `Lead · ${lead.id.slice(0, 8)}` : "—";
+      },
+    },
+    {
+      key: "scheduledAt",
+      name: "Date & Time",
+      minWidth: 140,
+      width: 165,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <div className="visits-grid-primary-cell">
+          <strong>{dateLabel(row.scheduled_at)}</strong>
+          <small>{timeLabel(row.scheduled_at)}{row.ends_at ? ` – ${timeLabel(row.ends_at)}` : ""}</small>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      name: "Status",
+      minWidth: 125,
+      width: 130,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <span className={`visits-grid-status visits-grid-status-${row.status.toLowerCase().replaceAll("_", "-")}`}>
+          {statusLabel(row.status)}
+        </span>
+      ),
+    },
+    {
+      key: "notes",
+      name: "Notes",
+      minWidth: 160,
+      width: 240,
+      resizable: true,
+      sortable: true,
+      renderCell: ({ row }) => (
+        <span className="visits-grid-notes" title={row.notes || "No notes"}>
+          {row.notes || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      name: "Actions",
+      width: 160,
+      minWidth: 145,
+      sortable: false,
+      resizable: false,
+      renderCell: ({ row }) => (
+        <div className="visits-grid-actions">
+          {row.status === "SCHEDULED" && (
+            <button
+              type="button"
+              className="visits-grid-action-button"
+              onClick={() => openAttendanceForm(row)}
+              disabled={attendanceSubmitting}
+            >
+              Record attendance
+            </button>
+          )}
+          {row.status === "COMPLETED" && row.outcome === "FOLLOW_UP_REQUIRED" && row.lead_id && !row.has_follow_up && (
+            <button
+              type="button"
+              className="visits-grid-action-button visits-grid-action-primary"
+              onClick={() => openFollowUpForm(row)}
+              disabled={followUpSubmitting}
+            >
+              Create follow-up
+            </button>
+          )}
+          {row.status !== "SCHEDULED" && !(row.status === "COMPLETED" && row.outcome === "FOLLOW_UP_REQUIRED" && row.lead_id && !row.has_follow_up) && (
+            <span className="visits-grid-muted">—</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "configure",
+      name: "",
+      width: "1fr",
+      minWidth: 44,
+      sortable: false,
+      resizable: false,
+      renderHeaderCell: () => (
+        <button
+          className="visits-configure-columns-button"
+          type="button"
+          onClick={openColumnMenu}
+          aria-label="Configure table columns"
+          title="Configure columns"
+          aria-expanded={columnMenuPosition !== null}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M9 4v16M15 4v16" />
+          </svg>
+        </button>
+      ),
+      renderCell: () => null,
+    },
+  ], [propertyById, customerById, leadById, attendanceSubmitting, followUpSubmitting, openColumnMenu, columnMenuPosition]);
+
+  const visibleColumns = useMemo(() => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)), [columns, visibleColumnKeys]);
 
   return (
     <main className="site-visits-page">
       <header className="site-visits-header">
-        <div>
-          <span className="site-visits-eyebrow">
-            PROPERTY OPERATIONS
-          </span>
-
+        <div className="site-visits-heading-copy">
           <h1>Site visits</h1>
-
-          <p className="site-visits-subtitle">
-            Manage property appointments and keep every
-            customer visit on track.
-          </p>
+          <p>Manage property appointments and keep every customer visit on track.</p>
         </div>
-
-        <button
-          type="button"
-          className="site-visits-primary-button"
-          onClick={openForm}
-        >
-          <span aria-hidden="true">＋</span>
-          Schedule visit
+        <button type="button" className="site-visits-primary-button" onClick={openForm}>
+          <span aria-hidden="true">＋</span> Schedule visit
         </button>
       </header>
 
-      <section
-        className="site-visits-summary-grid"
-        aria-label="Site visit summary"
-      >
-        <article className="site-visits-summary-card">
-          <span
-            className="site-visits-summary-icon"
-            aria-hidden="true"
-          >
-            ◷
-          </span>
+      {message && <div className="site-visits-alert site-visits-alert-success" role="status"><span>{message}</span><button type="button" aria-label="Dismiss success message" onClick={() => setMessage("")}>×</button></div>}
+      {loadError && <div className="site-visits-alert site-visits-alert-error" role="alert"><span>{loadError}</span><button type="button" onClick={() => void loadVisits()}>Retry</button></div>}
+      {optionsError && <div className="site-visits-alert site-visits-alert-error" role="alert"><span>Form options could not be loaded: {optionsError}</span><button type="button" onClick={() => void loadOptions()}>Retry</button></div>}
 
-          <div>
-            <p>All visits</p>
-            <strong>{total}</strong>
+      <div className="visits-filterbar">
+        <label className="visits-search-field">
+          <span className="site-visits-visually-hidden">Search site visits</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input type="search" value={searchInput} maxLength={320} placeholder="Search property, customer, date, status or notes" onChange={(event) => setSearchInput(event.target.value)} />
+          {searchInput && <button type="button" aria-label="Clear search" onClick={() => setSearchInput("")}>×</button>}
+        </label>
+        <label className="visits-filter-field"><span>Status</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as SiteVisitStatus | ""); setPage(1); }}>
+          {STATUSES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+        </select></label>
+        <button type="button" className="site-visits-secondary-button" onClick={() => void loadVisits()} disabled={loading}>{loading ? "Refreshing…" : "↻ Refresh"}</button>
+      </div>
+
+      <section className="visits-grid-shell" aria-label="Site visits">
+        {loading && visits.length === 0 ? <div className="visits-grid-state" role="status"><span className="site-visits-spinner"/>Loading site visits…</div> : loadError && visits.length === 0 ? <div className="visits-grid-state">Unable to load site visits. Use Retry above.</div> : <DataGrid
+          className="visits-react-data-grid"
+          aria-label="Site visits directory"
+          columns={visibleColumns}
+          rows={sortedVisits}
+          rowKeyGetter={(row) => row.id}
+          rowHeight={compactGrid ? 48 : 62}
+          headerRowHeight={52}
+          defaultColumnOptions={{ resizable: true, sortable: true }}
+          sortColumns={sortColumns}
+          onSortColumnsChange={setSortColumns}
+          style={{ height: Math.min(52 + sortedVisits.length * (compactGrid ? 48 : 62), Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)), minHeight: 52 + Math.min(sortedVisits.length, 1) * (compactGrid ? 48 : 62) }}
+          renderers={{ noRowsFallback: <div className="visits-grid-no-rows">{searchInput || statusFilter ? "No site visits match these filters." : "No site visits yet. Schedule your first visit to get started."}</div> }}
+        />}
+        <footer className="visits-grid-footer" aria-live="polite">
+          <div className="visits-grid-footer-count"><strong>{total.toLocaleString("en-IN")}</strong> {total === 1 ? "visit" : "visits"} in your workspace <span>Showing {total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)}</span></div>
+          <div className="visits-grid-footer-right">
+            {totalPages > 1 && <div className="visits-pagination-controls"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((current) => current + 1)}>Next</button></div>}
+            <span className="visits-grid-footer-status"><span className="visits-grid-footer-status-dot" aria-hidden="true"/>{loading ? "Updating records" : "You're all caught up"}</span>
           </div>
-        </article>
-
-        <article className="site-visits-summary-card">
-          <span
-            className="site-visits-summary-icon"
-            aria-hidden="true"
-          >
-            ▣
-          </span>
-
-          <div>
-            <p>Upcoming on this page</p>
-            <strong>{upcomingCount}</strong>
-          </div>
-        </article>
-
-        <article className="site-visits-summary-card">
-          <span
-            className="site-visits-summary-icon"
-            aria-hidden="true"
-          >
-            ✓
-          </span>
-
-          <div>
-            <p>Completed on this page</p>
-            <strong>{completedCount}</strong>
-          </div>
-        </article>
+        </footer>
       </section>
 
-      {message && (
-        <div
-          className="site-visits-alert site-visits-alert-success"
-          role="status"
-        >
-          <span>{message}</span>
-
-          <button
-            type="button"
-            aria-label="Dismiss success message"
-            onClick={() => setMessage("")}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {loadError && (
-        <div
-          className="site-visits-alert site-visits-alert-error"
-          role="alert"
-        >
-          <span>{loadError}</span>
-
-          <button
-            type="button"
-            onClick={() => void loadVisits()}
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {optionsError && (
-        <div
-          className="site-visits-alert site-visits-alert-error"
-          role="alert"
-        >
-          <span>
-            Form options could not be loaded: {optionsError}
-          </span>
-
-          <button
-            type="button"
-            onClick={() => void loadOptions()}
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      <section className="site-visits-panel">
-        <header className="site-visits-panel-heading">
-          <div>
-            <h2>Scheduled appointments</h2>
-            <p>
-              Review appointments saved in your workspace.
-            </p>
-          </div>
-
-          <div className="site-visits-toolbar">
-            <label>
-              <span className="site-visits-visually-hidden">
-                Filter by status
-              </span>
-
-              <select
-                value={statusFilter}
-                onChange={(event) => {
-                  setStatusFilter(
-                    event.target.value as
-                      | SiteVisitStatus
-                      | "",
-                  );
-                  setPage(1);
-                }}
-              >
-                {STATUSES.map((item) => (
-                  <option
-                    key={item.value}
-                    value={item.value}
-                  >
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <button
-              type="button"
-              className="site-visits-secondary-button"
-              onClick={() => void loadVisits()}
-              disabled={loading}
-            >
-              {loading ? "Refreshing…" : "↻ Refresh"}
-            </button>
-          </div>
-        </header>
-
-        {loading ? (
-          <div
-            className="site-visits-state"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="site-visits-spinner" />
-            <p>Loading site visits…</p>
-          </div>
-        ) : !loadError && visits.length === 0 ? (
-          <div className="site-visits-empty">
-            <div
-              className="site-visits-empty-icon"
-              aria-hidden="true"
-            >
-              ▦
-            </div>
-
-            <h3>
-              {statusFilter
-                ? "No visits match this status"
-                : "No site visits yet"}
-            </h3>
-
-            <p>
-              {statusFilter
-                ? "Try another status filter or view all appointments."
-                : "Schedule your first property visit and it will appear here."}
-            </p>
-
-            <button
-              type="button"
-              className="site-visits-primary-button"
-              onClick={
-                statusFilter
-                  ? () => setStatusFilter("")
-                  : openForm
-              }
-            >
-              {statusFilter
-                ? "Clear filter"
-                : "Schedule your first visit"}
-            </button>
-          </div>
-        ) : !loadError ? (
-          <>
-            <div className="site-visits-table-wrap">
-              <table className="site-visits-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Property</th>
-                    <th scope="col">Lead / customer</th>
-                    <th scope="col">Date &amp; time</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Notes</th>
-                    <th scope="col">Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {visits.map((visit) => {
-                    const property = propertyById.get(
-                      visit.property_id,
-                    );
-
-                    const lead = visit.lead_id
-                      ? leadById.get(visit.lead_id)
-                      : undefined;
-
-                    const customer =
-                      visit.customer_profile_id
-                        ? customerById.get(
-                            visit.customer_profile_id,
-                          )
-                        : undefined;
-
-                    const who = customer
-                      ? customerLabel(customer)
-                      : lead
-                        ? `Lead · ${lead.id.slice(0, 8)}`
-                        : visit.customer_profile_id
-                          ? `Customer · ${visit.customer_profile_id.slice(0, 8)}`
-                          : visit.lead_id
-                            ? `Lead · ${visit.lead_id.slice(0, 8)}`
-                            : "—";
-
-                    return (
-                      <tr key={visit.id}>
-                        <td>
-                          <strong>
-                            {property
-                              ? propertyLabel(property)
-                              : `Property · ${visit.property_id.slice(0, 8)}`}
-                          </strong>
-
-                          <small>
-                            {property?.property_type?.replaceAll(
-                              "_",
-                              " ",
-                            ) ?? "Property visit"}
-                          </small>
-                        </td>
-
-                        <td>{who}</td>
-
-                        <td>
-                          <strong>
-                            {dateLabel(visit.scheduled_at)}
-                          </strong>
-
-                          <small>
-                            {timeLabel(visit.scheduled_at)}
-                            {visit.ends_at
-                              ? ` – ${timeLabel(visit.ends_at)}`
-                              : ""}
-                          </small>
-                        </td>
-
-                        <td>
-                          <span
-                            className={`site-visits-status site-visits-status-${visit.status
-                              .toLowerCase()
-                              .replaceAll("_", "-")}`}
-                          >
-                            {statusLabel(visit.status)}
-                          </span>
-                        </td>
-
-                        <td className="site-visits-notes">
-                          {visit.notes || "—"}
-                        </td>
-
-                        <td>
-                          {visit.status === "SCHEDULED" && (
-                            <button
-                              type="button"
-                              className="site-visits-secondary-button"
-                              onClick={() => openAttendanceForm(visit)}
-                              disabled={attendanceSubmitting}
-                            >
-                              Record attendance
-                            </button>
-                          )}
-
-                          {visit.status === "COMPLETED" &&
-                            visit.outcome === "FOLLOW_UP_REQUIRED" &&
-                            visit.lead_id &&
-                            !visit.has_follow_up && (
-                              <button
-                                type="button"
-                                className="site-visits-primary-button"
-                                onClick={() => openFollowUpForm(visit)}
-                                disabled={followUpSubmitting}
-                              >
-                                Create follow-up
-                              </button>
-                            )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <footer className="site-visits-pagination">
-              <p>
-                Showing{" "}
-                <strong>
-                  {total === 0
-                    ? 0
-                    : (page - 1) * PAGE_SIZE + 1}
-                  –
-                  {Math.min(page * PAGE_SIZE, total)}
-                </strong>{" "}
-                of <strong>{total}</strong> visits
-              </p>
-
-              <div>
-                <button
-                  type="button"
-                  className="site-visits-secondary-button"
-                  disabled={page <= 1 || loading}
-                  onClick={() =>
-                    setPage((current) => current - 1)
-                  }
-                >
-                  Previous
-                </button>
-
-                <span>
-                  Page {page}
-                  {totalPages ? ` of ${totalPages}` : ""}
-                </span>
-
-                <button
-                  type="button"
-                  className="site-visits-secondary-button"
-                  disabled={
-                    page >= totalPages ||
-                    loading ||
-                    totalPages === 0
-                  }
-                  onClick={() =>
-                    setPage((current) => current + 1)
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            </footer>
-          </>
-        ) : null}
-      </section>
+      {columnMenuPosition && createPortal(<div className="visits-column-menu-layer" onPointerDown={() => setColumnMenuPosition(null)} role="presentation"><div className="visits-column-menu" style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }} role="dialog" aria-label="Configure table columns" onPointerDown={(event) => event.stopPropagation()}><div className="visits-column-menu-heading"><div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div><button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button></div>{[{key:"property",label:"Property / Location"},{key:"customer",label:"Lead / Customer"},{key:"scheduledAt",label:"Date & Time"},{key:"status",label:"Status"},{key:"notes",label:"Notes"}].map((column) => <label className="visits-column-option" key={column.key}><input type="checkbox" checked={visibleColumnKeys.includes(column.key)} onChange={(event) => setVisibleColumnKeys((current) => event.target.checked ? [...current, column.key] : current.filter((key) => key !== column.key))}/><span>{column.label}</span></label>)}<div className="visits-column-menu-footer"><button type="button" onClick={() => setVisibleColumnKeys(["property","customer","scheduledAt","status","notes"])}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div></div></div>, document.body)}
 
       {isFormOpen &&
         createPortal(
