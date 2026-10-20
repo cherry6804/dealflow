@@ -1,4 +1,3 @@
-
 """FastAPI routes for tenant-scoped automation rules and execution audits."""
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from app.automation_rules.service import (
     list_automation_rules,
     update_automation_rule,
 )
+from app.billing.entitlements import require_entitlement_with_permission
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.session import get_db_session
@@ -62,11 +62,14 @@ def _not_found() -> HTTPException:
 def create_automation_rule_endpoint(
     payload: AutomationRuleCreateRequest,
     tenant_context: TenantContext = Depends(
-        require_permission("automation.create")
+        require_entitlement_with_permission(
+            "workflow_automation",
+            "automation.create",
+        )
     ),
     db: Session = Depends(get_db_session),
 ) -> AutomationRuleResponse:
-    """Create a draft automation rule."""
+    """Create a draft automation rule when the plan includes automation."""
     try:
         rule = create_automation_rule(
             db,
@@ -75,12 +78,14 @@ def create_automation_rule_endpoint(
             payload=payload,
         )
         return _commit_and_refresh(db, rule)
+
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The automation rule could not be saved.",
         ) from exc
+
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(
@@ -181,7 +186,7 @@ def list_automation_executions_endpoint(
                 detail="Event type cannot be blank.",
             )
 
-    # Always apply the organization filter, regardless of other query filters.
+    # Always apply the organization filter, regardless of other filters.
     filters = [
         AutomationExecution.organization_id
         == tenant_context.organization_id
@@ -213,6 +218,7 @@ def list_automation_executions_endpoint(
             .offset((page - 1) * page_size)
             .limit(page_size)
         ).all()
+
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -282,25 +288,30 @@ def update_automation_rule_endpoint(
             user_id=tenant_context.membership.user_id,
             payload=payload,
         )
+
         if rule is None:
             db.rollback()
             raise _not_found()
 
         return _commit_and_refresh(db, rule)
+
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
     except HTTPException:
         raise
+
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The automation rule could not be updated.",
         ) from exc
+
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(
@@ -316,11 +327,14 @@ def update_automation_rule_endpoint(
 def activate_automation_rule_endpoint(
     rule_id: UUID,
     tenant_context: TenantContext = Depends(
-        require_permission("automation.update")
+        require_entitlement_with_permission(
+            "workflow_automation",
+            "automation.update",
+        )
     ),
     db: Session = Depends(get_db_session),
 ) -> AutomationRuleResponse:
-    """Activate a validated rule configuration."""
+    """Activate a validated rule when the plan includes automation."""
     try:
         rule = activate_automation_rule(
             db,
@@ -328,19 +342,23 @@ def activate_automation_rule_endpoint(
             rule_id=rule_id,
             user_id=tenant_context.membership.user_id,
         )
+
         if rule is None:
             db.rollback()
             raise _not_found()
 
         return _commit_and_refresh(db, rule)
+
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
     except HTTPException:
         raise
+
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(
@@ -360,7 +378,7 @@ def disable_automation_rule_endpoint(
     ),
     db: Session = Depends(get_db_session),
 ) -> AutomationRuleResponse:
-    """Disable an active or draft rule."""
+    """Disable an active or draft rule, including after a plan downgrade."""
     try:
         rule = disable_automation_rule(
             db,
@@ -368,19 +386,23 @@ def disable_automation_rule_endpoint(
             rule_id=rule_id,
             user_id=tenant_context.membership.user_id,
         )
+
         if rule is None:
             db.rollback()
             raise _not_found()
 
         return _commit_and_refresh(db, rule)
+
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
     except HTTPException:
         raise
+
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(
