@@ -23,7 +23,7 @@ from app.api.documents import router as documents_router
 from app.api.automation_rules import router as automation_rules_router
 from app.api.notifications import router as notifications_router
 from app.api.billing_webhooks import router as billing_webhooks_router
-
+from app.api.billing_audit import router as billing_audit_router
 from app.billing.providers.registry import BillingProviderRegistry
 from app.errors import register_error_handlers
 from app.logging import configure_logging
@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(automation_rules_router)
     app.include_router(notifications_router)
     app.include_router(billing_webhooks_router)
+    app.include_router(billing_audit_router)
 
     logger = logging.getLogger(__name__)
     logger.info("DealFlow API application initialized")

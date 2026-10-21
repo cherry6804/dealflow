@@ -41,6 +41,9 @@ from app.db.models.deal_negotiation import (
     DealNegotiation,
     DealNegotiationHistory,
 )
+from app.db.models.billing_reconciliation_record import (
+    BillingReconciliationRecord,
+)
 from app.db.models.notification import Notification
 from app.db.models.document import Document
 from app.db.models.payment_milestone import PaymentMilestone
