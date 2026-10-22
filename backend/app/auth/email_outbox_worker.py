@@ -1,5 +1,5 @@
 
-"""Standalone worker for encrypted email outbox delivery."""
+"""Standalone worker for encrypted authentication email delivery."""
 
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
 
-from app.auth.email_delivery import send_verification_email
+from app.auth.email_delivery import (
+    send_password_reset_email,
+    send_verification_email,
+)
 from app.auth.email_outbox import (
     EmailOutboxPayloadError,
     decrypt_email_payload,
@@ -18,7 +21,6 @@ from app.auth.email_outbox import (
 from app.config import get_settings
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.session import SessionLocal
-
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +93,20 @@ def process_one_email() -> bool:
 
     try:
         payload = decrypt_email_payload(encrypted_payload)
-        send_verification_email(
-            recipient=payload["recipient"],
-            token=payload["token"],
-        )
+
+        if payload["kind"] == "email_verification":
+            send_verification_email(
+                recipient=payload["recipient"],
+                token=payload["token"],
+            )
+        elif payload["kind"] == "password_reset":
+            send_password_reset_email(
+                recipient=payload["recipient"],
+                token=payload["token"],
+            )
+        else:
+            # Defensive check; decrypt_email_payload already validates kind.
+            raise EmailOutboxPayloadError("Unsupported email payload kind.")
     except EmailOutboxPayloadError:
         update_if_owned(
             {

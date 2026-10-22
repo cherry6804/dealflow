@@ -1,8 +1,22 @@
+
 """Authentication request and response schemas for DealFlow."""
 
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _normalize_email(value: str) -> str:
+    normalized = value.strip().lower()
+    if (
+        not normalized
+        or "@" not in normalized
+        or normalized.startswith("@")
+        or normalized.endswith("@")
+        or "." not in normalized.rsplit("@", 1)[-1]
+    ):
+        raise ValueError("Enter a valid email address.")
+    return normalized
 
 
 class LoginRequest(BaseModel):
@@ -14,10 +28,7 @@ class LoginRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized or "@" not in normalized:
-            raise ValueError("Enter a valid email address.")
-        return normalized
+        return _normalize_email(value)
 
 
 class SignupRequest(BaseModel):
@@ -31,16 +42,7 @@ class SignupRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if (
-            not normalized
-            or "@" not in normalized
-            or normalized.startswith("@")
-            or normalized.endswith("@")
-            or "." not in normalized.rsplit("@", 1)[-1]
-        ):
-            raise ValueError("Enter a valid email address.")
-        return normalized
+        return _normalize_email(value)
 
     @field_validator("display_name", "organization_name")
     @classmethod
@@ -102,19 +104,34 @@ class ResendVerificationRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if (
-            not normalized
-            or "@" not in normalized
-            or normalized.startswith("@")
-            or normalized.endswith("@")
-            or "." not in normalized.rsplit("@", 1)[-1]
-        ):
-            raise ValueError("Enter a valid email address.")
-        return normalized
+        return _normalize_email(value)
 
 
 class ResendVerificationResponse(BaseModel):
     """Generic response that does not disclose account existence."""
+
+    message: str
+
+
+class PasswordResetRequest(BaseModel):
+    """Request a password-reset email."""
+
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email(value)
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    """Submit a reset token and a new password."""
+
+    token: str = Field(min_length=1, max_length=512)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class PasswordResetResponse(BaseModel):
+    """Generic password-reset response."""
 
     message: str

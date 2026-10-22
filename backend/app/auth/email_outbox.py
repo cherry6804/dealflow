@@ -1,11 +1,10 @@
 
-"""Encrypted transactional outbox for verification email jobs."""
+"""Encrypted transactional outbox for authentication email jobs."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
@@ -24,8 +23,7 @@ class EmailOutboxPayloadError(RuntimeError):
 
 def _fernet() -> Fernet:
     """Return the configured authenticated-encryption instance."""
-    settings = get_settings()
-    secret = settings.email_outbox_encryption_key
+    secret = get_settings().email_outbox_encryption_key
 
     if secret is None or not secret.get_secret_value().strip():
         raise EmailOutboxConfigurationError(
@@ -40,20 +38,22 @@ def _fernet() -> Fernet:
         ) from exc
 
 
-def enqueue_verification_email(
+def _enqueue_email(
     db: Session,
     *,
+    kind: str,
     recipient: str,
     token: str,
     now: datetime | None = None,
 ) -> EmailOutboxMessage:
-    """Add an encrypted verification email job to the current transaction."""
+    if kind not in {"email_verification", "password_reset"}:
+        raise ValueError("Unsupported authentication email kind.")
     if not recipient.strip() or not token:
-        raise ValueError("Recipient and verification token are required.")
+        raise ValueError("Recipient and token are required.")
 
     payload = {
-        "kind": "email_verification",
-        "recipient": recipient,
+        "kind": kind,
+        "recipient": recipient.strip(),
         "token": token,
     }
     encrypted_payload = _fernet().encrypt(
@@ -71,14 +71,44 @@ def enqueue_verification_email(
     return message
 
 
-def decrypt_email_payload(
-    encrypted_payload: str,
-) -> dict[str, str]:
-    """Decrypt and validate a queued email payload."""
+def enqueue_verification_email(
+    db: Session,
+    *,
+    recipient: str,
+    token: str,
+    now: datetime | None = None,
+) -> EmailOutboxMessage:
+    """Queue an encrypted verification email in the current transaction."""
+    return _enqueue_email(
+        db,
+        kind="email_verification",
+        recipient=recipient,
+        token=token,
+        now=now,
+    )
+
+
+def enqueue_password_reset_email(
+    db: Session,
+    *,
+    recipient: str,
+    token: str,
+    now: datetime | None = None,
+) -> EmailOutboxMessage:
+    """Queue an encrypted password-reset email in the current transaction."""
+    return _enqueue_email(
+        db,
+        kind="password_reset",
+        recipient=recipient,
+        token=token,
+        now=now,
+    )
+
+
+def decrypt_email_payload(encrypted_payload: str) -> dict[str, str]:
+    """Decrypt and validate a queued authentication email payload."""
     try:
-        plaintext = _fernet().decrypt(
-            encrypted_payload.encode("ascii")
-        )
+        plaintext = _fernet().decrypt(encrypted_payload.encode("ascii"))
         payload = json.loads(plaintext.decode("utf-8"))
     except (
         InvalidToken,
@@ -93,7 +123,7 @@ def decrypt_email_payload(
 
     if (
         not isinstance(payload, dict)
-        or payload.get("kind") != "email_verification"
+        or payload.get("kind") not in {"email_verification", "password_reset"}
         or not isinstance(payload.get("recipient"), str)
         or not payload["recipient"].strip()
         or not isinstance(payload.get("token"), str)
@@ -138,11 +168,6 @@ def mark_email_failed(
         message.status = "failed"
         return
 
-    # Exponential backoff: 2, 4, 8... seconds, capped at one hour.
     delay_seconds = min(2 ** message.attempts, 3600)
-    from datetime import timedelta
-
     message.status = "pending"
-    message.available_at = current_time + timedelta(
-        seconds=delay_seconds
-    )
+    message.available_at = current_time + timedelta(seconds=delay_seconds)

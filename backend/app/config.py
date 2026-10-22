@@ -48,6 +48,21 @@ class Settings(BaseSettings):
         BASE_DIR / "var" / "private_mailbox"
     )
 
+    # Password recovery
+    password_reset_token_lifetime_minutes: int = Field(
+        default=30,
+        gt=0,
+        le=1440,
+    )
+    password_reset_request_cooldown_seconds: int = Field(
+        default=60,
+        gt=0,
+    )
+    password_reset_max_requests_per_hour: int = Field(
+        default=5,
+        gt=0,
+    )
+
     # Email outbox encryption.
     # Configure EMAIL_OUTBOX_ENCRYPTION_KEY in the root .env.
     # Do not log or expose this secret.
