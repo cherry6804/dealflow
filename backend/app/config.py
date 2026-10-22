@@ -1,9 +1,10 @@
+
 """Application configuration for DealFlow."""
 
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
         "postgresql+psycopg://postgres@localhost:5432/dealflow"
     )
 
+    # Authentication and session settings
     auth_session_lifetime_hours: int = 12
     auth_cookie_name: str = "dealflow_session"
     auth_cookie_secure: bool = False
@@ -26,8 +28,36 @@ class Settings(BaseSettings):
     auth_cookie_samesite: str = "lax"
     auth_cookie_path: str = "/"
 
+    # Email verification
+    email_verification_token_lifetime_minutes: int = Field(
+        default=30,
+        gt=0,
+        le=1440,
+    )
+    email_verification_resend_cooldown_seconds: int = Field(
+        default=60,
+        gt=0,
+    )
+    email_verification_max_resends_per_hour: int = Field(
+        default=5,
+        gt=0,
+    )
+    email_verification_base_url: str = "http://localhost:5173"
+    email_verification_delivery_mode: str = "development"
+    email_verification_outbox_dir: Path = (
+        BASE_DIR / "var" / "private_mailbox"
+    )
+
+    # Email outbox encryption.
+    # Configure EMAIL_OUTBOX_ENCRYPTION_KEY in the root .env.
+    # Do not log or expose this secret.
+    email_outbox_encryption_key: SecretStr | None = None
+    email_outbox_batch_size: int = Field(default=20, gt=0, le=500)
+    email_outbox_max_attempts: int = Field(default=8, gt=0, le=100)
+    email_outbox_lease_seconds: int = Field(default=120, gt=0)
+    email_outbox_poll_seconds: float = Field(default=2.0, gt=0, le=300)
+
     # Private local storage for uploaded import source files.
-    # Keep this outside directories served as static/public assets.
     upload_storage_dir: Path = BASE_DIR / "var" / "private_uploads"
     upload_max_file_size_bytes: int = Field(
         default=10 * 1024 * 1024,
@@ -35,7 +65,6 @@ class Settings(BaseSettings):
     )
 
     # Private object storage for business documents.
-    # This is separate from import-source storage.
     object_storage_backend: str = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
 

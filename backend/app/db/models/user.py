@@ -1,10 +1,11 @@
+
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import TYPE_CHECKING
+
 from app.db.base import Base
 
 if TYPE_CHECKING:
@@ -44,6 +45,13 @@ class User(Base):
         Boolean,
         nullable=False,
         default=True,
+    )
+
+    is_email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
     )
 
     created_at: Mapped[datetime] = mapped_column(
