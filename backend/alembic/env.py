@@ -55,6 +55,7 @@ from app.db.models.plan_entitlement import PlanEntitlement
 from app.db.models.billing_webhook_event import BillingWebhookEvent
 from app.db.models.email_verification_token import EmailVerificationToken
 from app.db.models.email_outbox_message import EmailOutboxMessage
+from app.db.models.password_reset_token import PasswordResetToken
 
 config = context.config
 

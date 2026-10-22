@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,16 +14,27 @@ from app.auth.cookie import (
     set_session_cookie,
 )
 from app.auth.dependencies import get_current_user
-from app.auth.email_outbox import enqueue_verification_email
+from app.auth.email_outbox import (
+    enqueue_password_reset_email,
+    enqueue_verification_email,
+)
 from app.auth.email_verification import (
     consume_verification_token,
     create_verification_token,
 )
 from app.auth.login import authenticate_user
 from app.auth.password import hash_password
+from app.auth.password_reset import (
+    consume_password_reset_token,
+    create_password_reset_token,
+    invalidate_password_reset_tokens,
+)
 from app.auth.schemas import (
     LoginRequest,
     LoginResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
+    PasswordResetResponse,
     ResendVerificationRequest,
     ResendVerificationResponse,
     SignupRequest,
@@ -33,7 +44,9 @@ from app.auth.schemas import (
 )
 from app.auth.service import create_session, revoke_session
 from app.config import get_settings
+from app.db.models.auth_session import AuthSession
 from app.db.models.email_verification_token import EmailVerificationToken
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -46,6 +59,13 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 RESEND_GENERIC_MESSAGE = (
     "If the account exists and needs verification, "
     "a verification email will be sent when eligible."
+)
+PASSWORD_RESET_GENERIC_MESSAGE = (
+    "If an eligible account exists for this email, "
+    "a password-reset email will be sent when eligible."
+)
+PASSWORD_RESET_INVALID_MESSAGE = (
+    "This password-reset link is invalid or has expired."
 )
 
 
@@ -60,10 +80,9 @@ def signup(
     db: Session = Depends(get_db_session),
 ) -> SignupResponse:
     """Create a pending user, workspace, verification token, and email job."""
-    del response  # Signup deliberately does not set an authentication cookie.
+    del response
 
     normalized_email = payload.email.strip().lower()
-
     existing_user = db.scalar(
         select(User.id).where(User.email == normalized_email)
     )
@@ -92,10 +111,7 @@ def signup(
         is_active=True,
         is_email_verified=False,
     )
-    organization = Organization(
-        name=payload.organization_name,
-        is_active=True,
-    )
+    organization = Organization(name=payload.organization_name, is_active=True)
 
     try:
         db.add_all([user, organization])
@@ -118,10 +134,6 @@ def signup(
         db.flush()
 
         _, raw_token = create_verification_token(db, user=user)
-
-        # The encrypted email job is committed atomically with the user,
-        # workspace, membership, role assignment, and verification token.
-        # No email is delivered inside the signup request.
         enqueue_verification_email(
             db,
             recipient=user.email,
@@ -131,7 +143,6 @@ def signup(
         db.commit()
         db.refresh(user)
         db.refresh(organization)
-
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -147,10 +158,7 @@ def signup(
 
     return SignupResponse(
         user=user,
-        organization={
-            "id": organization.id,
-            "name": organization.name,
-        },
+        organization={"id": organization.id, "name": organization.name},
         verification_required=True,
     )
 
@@ -173,7 +181,6 @@ def verify_email(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This verification link is invalid or has expired.",
             )
-
         db.commit()
     except HTTPException:
         raise
@@ -209,9 +216,7 @@ def resend_verification(
         )
 
         if user is None or not user.is_active or user.is_email_verified:
-            return ResendVerificationResponse(
-                message=RESEND_GENERIC_MESSAGE
-            )
+            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
         recent_count = (
             db.scalar(
@@ -236,23 +241,15 @@ def resend_verification(
             created_at = latest_token.created_at
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
-
             cooldown_end = created_at + timedelta(
                 seconds=settings.email_verification_resend_cooldown_seconds
             )
             if now < cooldown_end:
-                return ResendVerificationResponse(
-                    message=RESEND_GENERIC_MESSAGE
-                )
+                return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
         if recent_count >= settings.email_verification_max_resends_per_hour:
-            return ResendVerificationResponse(
-                message=RESEND_GENERIC_MESSAGE
-            )
+            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
-        # Invalidate outstanding tokens and queue the replacement job in
-        # the same transaction. If enqueueing fails, rollback restores the
-        # previous token state and removes the newly created token.
         outstanding_tokens = db.scalars(
             select(EmailVerificationToken)
             .where(
@@ -261,26 +258,164 @@ def resend_verification(
             )
             .with_for_update()
         ).all()
-
         for old_token in outstanding_tokens:
             old_token.used_at = now
 
         _, raw_token = create_verification_token(db, user=user, now=now)
-
         enqueue_verification_email(
             db,
             recipient=user.email,
             token=raw_token,
             now=now,
         )
-
         db.commit()
-
     except Exception:
         db.rollback()
         raise
 
     return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=PasswordResetResponse,
+    status_code=status.HTTP_200_OK,
+)
+def request_password_reset(
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db_session),
+) -> PasswordResetResponse:
+    """Queue a password-reset email without disclosing account existence."""
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=1)
+    normalized_email = str(payload.email).strip().lower()
+
+    try:
+        user = db.scalar(
+            select(User)
+            .where(User.email == normalized_email)
+            .with_for_update()
+        )
+
+        # Unknown, inactive, and otherwise ineligible accounts receive the
+        # same public response as eligible accounts.
+        if user is None or not user.is_active:
+            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
+
+        recent_count = (
+            db.scalar(
+                select(func.count())
+                .select_from(PasswordResetToken)
+                .where(
+                    PasswordResetToken.user_id == user.id,
+                    PasswordResetToken.created_at >= cutoff,
+                )
+            )
+            or 0
+        )
+
+        latest_token = db.scalar(
+            select(PasswordResetToken)
+            .where(PasswordResetToken.user_id == user.id)
+            .order_by(PasswordResetToken.created_at.desc())
+            .limit(1)
+        )
+
+        if latest_token is not None:
+            created_at = latest_token.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            cooldown_end = created_at + timedelta(
+                seconds=settings.password_reset_request_cooldown_seconds
+            )
+            if now < cooldown_end:
+                return PasswordResetResponse(
+                    message=PASSWORD_RESET_GENERIC_MESSAGE
+                )
+
+        if recent_count >= settings.password_reset_max_requests_per_hour:
+            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
+
+        # Invalidate older outstanding reset tokens before creating a new one.
+        invalidate_password_reset_tokens(db, user.id, now=now)
+        _, raw_token = create_password_reset_token(db, user.id, now=now)
+        enqueue_password_reset_email(
+            db,
+            recipient=user.email,
+            token=raw_token,
+            now=now,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=PasswordResetResponse,
+    status_code=status.HTTP_200_OK,
+)
+def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    db: Session = Depends(get_db_session),
+) -> PasswordResetResponse:
+    """Reset a password and revoke all existing sessions atomically."""
+    now = datetime.now(timezone.utc)
+
+    try:
+        reset_record = consume_password_reset_token(
+            db,
+            token=payload.token,
+            now=now,
+        )
+        if reset_record is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=PASSWORD_RESET_INVALID_MESSAGE,
+            )
+
+        user = db.scalar(
+            select(User)
+            .where(User.id == reset_record.user_id)
+            .with_for_update()
+        )
+        if user is None or not user.is_active:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=PASSWORD_RESET_INVALID_MESSAGE,
+            )
+
+        user.password_hash = hash_password(payload.new_password)
+
+        # The consumed token is already marked used. Invalidate all other
+        # outstanding reset tokens for this user in the same transaction.
+        invalidate_password_reset_tokens(db, user.id, now=now)
+
+        db.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.user_id == user.id,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+    return PasswordResetResponse(
+        message="Your password has been reset. You can now sign in."
+    )
 
 
 @router.post(
@@ -295,7 +430,6 @@ def login(
 ) -> LoginResponse:
     """Authenticate a verified user and create a server-side session."""
     settings = get_settings()
-
     user = authenticate_user(
         db=db,
         email=payload.email,
@@ -318,13 +452,8 @@ def login(
     expires_at = datetime.now(timezone.utc) + timedelta(
         hours=settings.auth_session_lifetime_hours
     )
-
     try:
-        _, token = create_session(
-            db=db,
-            user=user,
-            expires_at=expires_at,
-        )
+        _, token = create_session(db=db, user=user, expires_at=expires_at)
         db.commit()
     except Exception:
         db.rollback()
@@ -336,7 +465,6 @@ def login(
         expires_at=expires_at,
         settings=settings,
     )
-
     return LoginResponse(user=user)
 
 

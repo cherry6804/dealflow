@@ -3,8 +3,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,17 +17,43 @@ class Settings(BaseSettings):
 
     app_name: str = "DealFlow API"
     app_version: str = "0.1.0"
+    app_environment: Literal["development", "test", "staging", "production"] = (
+        "development"
+    )
     database_url: str = (
         "postgresql+psycopg://postgres@localhost:5432/dealflow"
     )
 
     # Authentication and session settings
-    auth_session_lifetime_hours: int = 12
+    auth_session_lifetime_hours: int = Field(default=12, gt=0, le=720)
     auth_cookie_name: str = "dealflow_session"
     auth_cookie_secure: bool = False
     auth_cookie_httponly: bool = True
-    auth_cookie_samesite: str = "lax"
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     auth_cookie_path: str = "/"
+
+    @model_validator(mode="after")
+    def validate_auth_cookie_security(self) -> "Settings":
+        """Enforce secure cookie configuration."""
+        if (
+            self.auth_cookie_samesite == "none"
+            and not self.auth_cookie_secure
+        ):
+            raise ValueError(
+                "SameSite=None cookies require Secure cookies."
+            )
+
+        if self.app_environment == "production":
+            if not self.auth_cookie_secure:
+                raise ValueError(
+                    "AUTH_COOKIE_SECURE must be true in production."
+                )
+            if not self.auth_cookie_httponly:
+                raise ValueError(
+                    "AUTH_COOKIE_HTTPONLY must be true in production."
+                )
+
+        return self
 
     # Email verification
     email_verification_token_lifetime_minutes: int = Field(
@@ -46,6 +73,21 @@ class Settings(BaseSettings):
     email_verification_delivery_mode: str = "development"
     email_verification_outbox_dir: Path = (
         BASE_DIR / "var" / "private_mailbox"
+    )
+
+    # Password recovery
+    password_reset_token_lifetime_minutes: int = Field(
+        default=30,
+        gt=0,
+        le=1440,
+    )
+    password_reset_request_cooldown_seconds: int = Field(
+        default=60,
+        gt=0,
+    )
+    password_reset_max_requests_per_hour: int = Field(
+        default=5,
+        gt=0,
     )
 
     # Email outbox encryption.
