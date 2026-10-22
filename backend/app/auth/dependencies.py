@@ -1,3 +1,4 @@
+
 """Authentication and current-user dependencies for DealFlow."""
 
 from dataclasses import dataclass
@@ -60,6 +61,12 @@ def get_current_user_context(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required.",
+        )
+
+    if not user.is_email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required.",
         )
 
     return CurrentUserContext(user=user)

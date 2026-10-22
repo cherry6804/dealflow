@@ -54,6 +54,8 @@ from app.db.models.billing_webhook_event import BillingWebhookEvent
 from app.db.models.billing_reconciliation_record import (
     BillingReconciliationRecord,
 )
+from app.db.models.email_verification_token import EmailVerificationToken
+from app.db.models.email_outbox_message import EmailOutboxMessage
 
 __all__ = [
     "AuditEvent",
@@ -99,4 +101,6 @@ __all__ = [
     "Subscription",
     "BillingWebhookEvent",
     "BillingReconciliationRecord",
+    "EmailVerificationToken",
+    "EmailOutboxMessage",
 ]
