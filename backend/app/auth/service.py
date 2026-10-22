@@ -47,7 +47,7 @@ def get_active_session(
     db: Session,
     token: str,
 ) -> AuthSession | None:
-    """Return an active session for a raw session token."""
+    """Return an active, unexpired session for a raw session token."""
     if not token:
         return None
 
@@ -68,9 +68,7 @@ def get_active_session(
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-    now = datetime.now(timezone.utc)
-
-    if expires_at <= now:
+    if expires_at <= datetime.now(timezone.utc):
         return None
 
     return session
@@ -80,11 +78,13 @@ def revoke_session(
     db: Session,
     token: str,
 ) -> bool:
-    """Revoke a session.
+    """Stage session revocation in the caller's transaction.
 
     Returns True when an existing, non-revoked session was found and
-    revoked. Returns False when the session does not exist or is already
-    revoked.
+    marked for revocation. Returns False when the session does not exist
+    or has already been revoked.
+
+    The caller owns the transaction and must commit or roll it back.
     """
     if not token:
         return False
@@ -101,7 +101,6 @@ def revoke_session(
         return False
 
     session.revoked_at = datetime.now(timezone.utc)
-
-    db.commit()
+    db.flush()
 
     return True
