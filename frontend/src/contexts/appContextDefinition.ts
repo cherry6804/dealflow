@@ -1,6 +1,10 @@
+
 import { createContext } from "react";
 
-import type { AuthenticatedUser } from "../services/authApi";
+import type {
+  AuthenticatedUser,
+  SignupResponse,
+} from "../services/authApi";
 import type { Organization } from "../services/organizationApi";
 
 export type AuthStatus =
@@ -17,6 +21,7 @@ export interface AppContextValue {
   error: string | null;
   selectOrganization: (organizationId: string) => void;
   refreshOrganizations: () => Promise<void>;
+  refreshSession: (signupResponse?: SignupResponse) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
