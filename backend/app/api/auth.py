@@ -104,8 +104,6 @@ def signup(
             hours=settings.auth_session_lifetime_hours
         )
 
-        # Session creation participates in this transaction. Commit only
-        # after the user, workspace, membership, role, and session are staged.
         _, token = create_session(
             db=db,
             user=user,
@@ -204,22 +202,26 @@ def logout(
 ) -> None:
     """Revoke the current session and clear the authentication cookie."""
     settings = get_settings()
-
     token = get_session_cookie(
         request=request,
         settings=settings,
     )
 
-    if token:
-        revoke_session(
-            db=db,
-            token=token,
+    try:
+        if token:
+            revoke_session(
+                db=db,
+                token=token,
+            )
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        clear_session_cookie(
+            response=response,
+            settings=settings,
         )
-
-    clear_session_cookie(
-        response=response,
-        settings=settings,
-    )
 
 
 @router.get(
