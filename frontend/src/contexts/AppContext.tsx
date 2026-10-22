@@ -1,3 +1,4 @@
+
 import {
   useCallback,
   useEffect,
@@ -7,7 +8,11 @@ import {
 } from "react";
 
 import { ApiError, setCurrentOrganizationId } from "../lib/api";
-import { authApi, type AuthenticatedUser } from "../services/authApi";
+import {
+  authApi,
+  type AuthenticatedUser,
+  type SignupResponse,
+} from "../services/authApi";
 import {
   organizationApi,
   type Organization,
@@ -31,25 +36,73 @@ export function AppProvider({ children }: AppProviderProps) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
-  const refreshOrganizations = useCallback(async () => {
-    const availableOrganizations = await organizationApi.list();
+  const applyOrganizations = useCallback(
+    (available: Organization[], preferredId?: string | null) => {
+      setOrganizations(available);
 
-    setOrganizations(availableOrganizations);
+      const nextId =
+        available.find((organization) => organization.id === preferredId)?.id ??
+        available.find(
+          (organization) => organization.id === selectedOrganizationId,
+        )?.id ??
+        available[0]?.id ??
+        null;
 
-    setSelectedOrganizationId((currentId) => {
-      const currentStillAvailable = availableOrganizations.some(
-        (organization) => organization.id === currentId,
-      );
-
-      const nextId = currentStillAvailable
-        ? currentId
-        : (availableOrganizations[0]?.id ?? null);
-
+      setSelectedOrganizationId(nextId);
       setCurrentOrganizationId(nextId);
+    },
+    [selectedOrganizationId],
+  );
 
-      return nextId;
-    });
-  }, []);
+  const refreshOrganizations = useCallback(async () => {
+    const available = await organizationApi.list();
+    applyOrganizations(available);
+  }, [applyOrganizations]);
+
+  const refreshSession = useCallback(
+    async (signupResponse?: SignupResponse) => {
+      setError(null);
+
+      try {
+        let currentUser: AuthenticatedUser;
+        let preferredOrganizationId: string | null = null;
+
+        if (signupResponse) {
+          currentUser = signupResponse.user;
+          preferredOrganizationId = signupResponse.organization.id;
+          setUser(currentUser);
+        } else {
+          const response = await authApi.getCurrentUser();
+          currentUser = response.user;
+          setUser(currentUser);
+        }
+
+        const available = await organizationApi.list();
+        applyOrganizations(available, preferredOrganizationId);
+        setStatus("authenticated");
+      } catch (cause) {
+        setCurrentOrganizationId(null);
+        setUser(null);
+        setOrganizations([]);
+        setSelectedOrganizationId(null);
+
+        if (cause instanceof ApiError && cause.status === 401) {
+          setStatus("unauthenticated");
+          setError(null);
+          return;
+        }
+
+        setStatus("error");
+        const message =
+          cause instanceof Error
+            ? cause.message
+            : "Unable to initialize your workspace.";
+        setError(message);
+        throw cause;
+      }
+    },
+    [applyOrganizations],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -57,50 +110,38 @@ export function AppProvider({ children }: AppProviderProps) {
     async function restoreSession() {
       try {
         const response = await authApi.getCurrentUser();
-
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         setUser(response.user);
 
-        const availableOrganizations = await organizationApi.list();
+        const available = await organizationApi.list();
+        if (cancelled) return;
 
-        if (cancelled) {
-          return;
-        }
-
-        setOrganizations(availableOrganizations);
-
-        const initialOrganizationId =
-          availableOrganizations[0]?.id ?? null;
-
-        setSelectedOrganizationId(initialOrganizationId);
-        setCurrentOrganizationId(initialOrganizationId);
+        setOrganizations(available);
+        const initialId = available[0]?.id ?? null;
+        setSelectedOrganizationId(initialId);
+        setCurrentOrganizationId(initialId);
         setStatus("authenticated");
         setError(null);
       } catch (cause) {
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         setCurrentOrganizationId(null);
+        setUser(null);
         setOrganizations([]);
         setSelectedOrganizationId(null);
 
         if (cause instanceof ApiError && cause.status === 401) {
-          setUser(null);
           setStatus("unauthenticated");
           setError(null);
-          return;
+        } else {
+          setStatus("error");
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Unable to initialize your workspace.",
+          );
         }
-
-        setStatus("error");
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Unable to initialize your workspace.",
-        );
       }
     }
 
@@ -113,11 +154,7 @@ export function AppProvider({ children }: AppProviderProps) {
 
   const selectOrganization = useCallback(
     (organizationId: string) => {
-      const organizationExists = organizations.some(
-        (organization) => organization.id === organizationId,
-      );
-
-      if (!organizationExists) {
+      if (!organizations.some((organization) => organization.id === organizationId)) {
         return;
       }
 
@@ -154,6 +191,7 @@ export function AppProvider({ children }: AppProviderProps) {
       error,
       selectOrganization,
       refreshOrganizations,
+      refreshSession,
       signOut,
     }),
     [
@@ -164,6 +202,7 @@ export function AppProvider({ children }: AppProviderProps) {
       error,
       selectOrganization,
       refreshOrganizations,
+      refreshSession,
       signOut,
     ],
   );

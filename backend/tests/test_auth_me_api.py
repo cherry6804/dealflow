@@ -87,6 +87,7 @@ def create_user(
         session.close()
 
 
+
 def create_session_for_user(user: User) -> str:
     """Create an authenticated session for a test user."""
     session = TestingSessionLocal()
@@ -103,9 +104,13 @@ def create_session_for_user(user: User) -> str:
             expires_at=expires_at,
         )
 
+        # Persist the test session before the API request reads it.
+        session.commit()
+
         return token
     finally:
         session.close()
+
 
 
 def test_me_returns_authenticated_user() -> None:

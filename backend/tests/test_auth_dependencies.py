@@ -114,6 +114,7 @@ def create_user(
         session.close()
 
 
+
 def create_session_for_user(
     user: User,
     expires_at: datetime | None = None,
@@ -134,11 +135,15 @@ def create_session_for_user(
 
         if revoked_at is not None:
             auth_session.revoked_at = revoked_at
-            session.commit()
+
+        # Test helpers own their transaction because create_session()
+        # intentionally does not commit.
+        session.commit()
 
         return token
     finally:
         session.close()
+
 
 
 def test_get_current_user_context_accepts_valid_session() -> None:

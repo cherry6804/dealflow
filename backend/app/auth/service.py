@@ -1,3 +1,4 @@
+
 """Server-side authentication session services for DealFlow."""
 
 from datetime import datetime, timezone
@@ -18,11 +19,13 @@ def create_session(
     user: User,
     expires_at: datetime,
 ) -> tuple[AuthSession, str]:
-    """Create a server-side authentication session.
+    """Stage a server-side session in the caller's transaction.
 
-    Returns the persisted session and the raw session token. The raw token
-    must only be delivered to the authenticated client and must never be
-    persisted or logged.
+    Returns the session and its raw token. The raw token must only be
+    delivered to the authenticated client and must never be persisted or
+    logged.
+
+    The caller owns the transaction and must commit or roll it back.
     """
     token = generate_session_token()
     token_hash = hash_session_token(token)
@@ -34,7 +37,7 @@ def create_session(
     )
 
     db.add(session)
-    db.commit()
+    db.flush()
     db.refresh(session)
 
     return session, token

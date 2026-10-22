@@ -135,6 +135,7 @@ def create_membership(
         return membership
 
 
+
 def create_session_for_user(user: User) -> str:
     """Create an authenticated session for a test user."""
     with TestingSessionLocal() as session:
@@ -146,7 +147,11 @@ def create_session_for_user(user: User) -> str:
             expires_at=expires_at,
         )
 
+        # Persist the test session before the request uses another DB session.
+        session.commit()
+
         return token
+
 
 
 def test_tenant_context_accepts_active_membership() -> None:

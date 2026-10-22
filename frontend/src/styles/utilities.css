@@ -1,0 +1,117 @@
+
+/* DealFlow CRM — Small reusable utilities */
+
+.u-min-w-0 {
+  min-width: 0;
+}
+
+.u-w-full {
+  width: 100%;
+}
+
+.u-flex {
+  display: flex;
+}
+
+.u-inline-flex {
+  display: inline-flex;
+}
+
+.u-grid {
+  display: grid;
+}
+
+.u-flex-wrap {
+  flex-wrap: wrap;
+}
+
+.u-flex-1 {
+  flex: 1 1 0%;
+}
+
+.u-items-center {
+  align-items: center;
+}
+
+.u-justify-between {
+  justify-content: space-between;
+}
+
+.u-gap-1 {
+  gap: var(--df-space-1);
+}
+
+.u-gap-2 {
+  gap: var(--df-space-2);
+}
+
+.u-gap-3 {
+  gap: var(--df-space-3);
+}
+
+.u-gap-4 {
+  gap: var(--df-space-4);
+}
+
+.u-text-muted {
+  color: var(--df-muted);
+}
+
+.u-text-secondary {
+  color: var(--df-ink-soft);
+}
+
+.u-text-danger {
+  color: var(--df-danger);
+}
+
+.u-text-success {
+  color: var(--df-success);
+}
+
+.u-text-xs {
+  font-size: var(--df-text-xs);
+}
+
+.u-text-sm {
+  font-size: var(--df-text-sm);
+}
+
+.u-font-medium {
+  font-weight: 500;
+}
+
+.u-font-semibold {
+  font-weight: 600;
+}
+
+.u-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.u-break-word {
+  overflow-wrap: anywhere;
+}
+
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.u-hidden {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .u-mobile-hidden {
+    display: none !important;
+  }
+}
