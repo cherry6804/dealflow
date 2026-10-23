@@ -6,6 +6,13 @@ import { ApiError } from "../../../lib/api";
 import { authApi } from "../../../services/authApi";
 import { useAppContext } from "../../../contexts/useAppContext";
 
+interface LoginLocationState {
+  from?: {
+    pathname?: string;
+  };
+  notice?: string;
+}
+
 export default function LoginPage() {
   const { status, refreshSession } = useAppContext();
   const navigate = useNavigate();
@@ -16,9 +23,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const destination = (
-    location.state as { from?: { pathname?: string } } | null
-  )?.from?.pathname;
+  const locationState = location.state as LoginLocationState | null;
+  const destination = locationState?.from?.pathname;
+  const notice = locationState?.notice;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,7 +33,11 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      await authApi.login({ email: email.trim(), password });
+      await authApi.login({
+        email: email.trim(),
+        password,
+      });
+
       await refreshSession();
       navigate(destination || "/", { replace: true });
     } catch (cause) {
@@ -44,18 +55,30 @@ export default function LoginPage() {
     <main className="auth-page">
       <section className="auth-card" aria-labelledby="login-heading">
         <Link to="/login" className="auth-brand">
-          <span className="brand-mark" aria-hidden="true">D</span>
+          <span className="brand-mark" aria-hidden="true">
+            D
+          </span>
           <span className="brand-copy">
             <span className="brand-name">DealFlow</span>
-            <span className="brand-subtitle">Real estate workspace</span>
+            <span className="brand-subtitle">
+              Real estate workspace
+            </span>
           </span>
         </Link>
 
         <div className="auth-heading">
           <span className="page-eyebrow">WELCOME BACK</span>
           <h1 id="login-heading">Sign in to DealFlow</h1>
-          <p>Access your workspace and keep your business moving.</p>
+          <p>
+            Access your workspace and keep your business moving.
+          </p>
         </div>
+
+        {notice && (
+          <div className="feedback feedback-success" role="status">
+            {notice}
+          </div>
+        )}
 
         {error && (
           <div className="feedback feedback-error" role="alert">
@@ -92,12 +115,16 @@ export default function LoginPage() {
             />
           </label>
 
+          <p className="auth-footnote">
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+
           <button
             className="button button-primary button-lg button-block"
             type="submit"
             disabled={submitting || status === "loading"}
           >
-            {submitting ? "Signing in…" : "Sign in"}
+            {submitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
 

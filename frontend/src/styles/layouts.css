@@ -928,3 +928,274 @@ body {
     width: min(280px, calc(100vw - 28px));
   }
 }
+
+
+/* =========================================================
+   Workspace responsive fixes
+   Scope: active WorkspaceLayout only
+   ========================================================= */
+
+/* Tablet and mobile: use the sidebar as an independent drawer. */
+@media (max-width: 900px) {
+  .workspace-shell .workspace-sidebar,
+  .workspace-shell .workspace-sidebar.is-collapsed {
+    width: min(var(--df-sidebar-expanded, 248px), calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
+  }
+
+  .workspace-shell .workspace-main,
+  .workspace-shell.sidebar-is-collapsed .workspace-main {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .workspace-shell .workspace-menu-button {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+  }
+
+  .workspace-shell .workspace-topbar {
+    min-width: 0;
+    gap: 10px;
+    padding-inline: 14px;
+  }
+
+  .workspace-shell .workspace-topbar-context {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .workspace-shell .workspace-topbar-search {
+    display: flex;
+    flex: 1 1 180px;
+    min-width: 100px;
+    max-width: 360px;
+  }
+
+  .workspace-shell .workspace-topbar-actions {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .workspace-shell .workspace-account {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .workspace-shell .workspace-account-button {
+    max-width: 100%;
+  }
+
+  .workspace-shell .workspace-content {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+/* Phones: keep essential controls visible and usable. */
+@media (max-width: 640px) {
+  .workspace-shell .workspace-topbar {
+    min-height: var(--df-topbar-height, 56px);
+    height: auto;
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .workspace-shell .workspace-topbar-context {
+    display: none;
+  }
+
+  .workspace-shell .workspace-topbar-search {
+    display: flex;
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    gap: 6px;
+  }
+
+  .workspace-shell .workspace-topbar-search input {
+    width: 100%;
+    min-width: 0;
+    font-size: 16px;
+  }
+
+  .workspace-shell .workspace-topbar-search kbd {
+    display: none;
+  }
+
+  .workspace-shell .workspace-topbar-actions {
+    gap: 2px;
+  }
+
+  .workspace-shell .workspace-icon-button {
+    flex: 0 0 36px;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+  }
+
+  .workspace-shell .workspace-notification-button {
+    display: inline-grid;
+  }
+
+  .workspace-shell .workspace-account-button {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 4px;
+  }
+
+  .workspace-shell .workspace-account-button > span,
+  .workspace-shell .workspace-account-button > svg:last-child {
+    display: none;
+  }
+
+  .workspace-shell .workspace-account-button > :first-child {
+    flex: 0 0 auto;
+  }
+
+  .workspace-shell .workspace-content {
+    padding: 16px 10px 22px;
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .workspace-shell .workspace-sidebar {
+    z-index: 1002;
+  }
+
+  .workspace-shell .workspace-sidebar-backdrop {
+    z-index: 1001;
+  }
+}
+
+/* Very narrow phones: preserve access to search and account controls. */
+@media (max-width: 380px) {
+  .workspace-shell .workspace-topbar {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .workspace-shell .workspace-menu-button,
+  .workspace-shell .workspace-icon-button {
+    flex-shrink: 0;
+  }
+
+  .workspace-shell .workspace-topbar-search {
+    min-width: 0;
+  }
+
+  .workspace-shell .workspace-topbar-search > svg,
+  .workspace-shell .workspace-topbar-search > .lucide-search {
+    flex: 0 0 auto;
+  }
+
+  .workspace-shell .workspace-account-button {
+    padding: 2px;
+  }
+}
+
+/* Honor reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-shell .workspace-sidebar,
+  .workspace-shell .workspace-main,
+  .workspace-shell .workspace-sidebar-backdrop {
+    transition: none !important;
+  }
+}
+
+
+/* Desktop sidebar collapse control should not appear in the mobile drawer. */
+@media (max-width: 900px) {
+  .workspace-shell .workspace-desktop-collapse-button {
+    display: none !important;
+  }
+
+  .workspace-shell .workspace-sidebar-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .workspace-shell .workspace-user-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .workspace-shell .workspace-user-copy strong,
+  .workspace-shell .workspace-user-copy small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-shell .workspace-signout-button {
+    flex: 0 0 auto;
+  }
+}
+
+/* Keep the profile avatar visible and clickable on phones. */
+@media (max-width: 640px) {
+  .workspace-shell .workspace-topbar-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .workspace-shell .workspace-account {
+    display: block;
+    flex: 0 0 auto;
+    min-width: 36px;
+  }
+
+  .workspace-shell .workspace-profile-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    padding: 3px;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .workspace-shell .workspace-profile-trigger .workspace-avatar {
+    display: inline-flex;
+    flex: 0 0 30px;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin: 0;
+  }
+
+  .workspace-shell .workspace-profile-trigger .workspace-account-name,
+  .workspace-shell .workspace-profile-trigger > svg {
+    display: none;
+  }
+
+  .workspace-shell .workspace-account-menu {
+    position: absolute;
+    right: 0;
+    left: auto;
+    width: min(300px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    z-index: 1100;
+  }
+
+  .workspace-shell .workspace-notification-menu {
+    right: 0;
+    left: auto;
+    width: min(300px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    z-index: 1100;
+  }
+}

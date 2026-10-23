@@ -17,9 +17,10 @@ class Settings(BaseSettings):
 
     app_name: str = "DealFlow API"
     app_version: str = "0.1.0"
-    app_environment: Literal["development", "test", "staging", "production"] = (
-        "development"
-    )
+    app_environment: Literal[
+        "development", "test", "staging", "production"
+    ] = "development"
+
     database_url: str = (
         "postgresql+psycopg://postgres@localhost:5432/dealflow"
     )
@@ -69,10 +70,21 @@ class Settings(BaseSettings):
         default=5,
         gt=0,
     )
+
+    # Frontend base URL used by verification and password-reset links.
     email_verification_base_url: str = "http://localhost:5173"
-    email_verification_delivery_mode: str = "development"
-    email_verification_outbox_dir: Path = (
-        BASE_DIR / "var" / "private_mailbox"
+
+    # SMTP email delivery
+    # Gmail defaults: smtp.gmail.com:587 with STARTTLS.
+    email_smtp_host: str = "smtp.gmail.com"
+    email_smtp_port: int = Field(default=587, gt=0, le=65535)
+    email_smtp_username: SecretStr | None = None
+    email_smtp_password: SecretStr | None = None
+    email_from_address: str = ""
+    email_smtp_timeout_seconds: int = Field(
+        default=20,
+        gt=0,
+        le=120,
     )
 
     # Password recovery
@@ -90,14 +102,18 @@ class Settings(BaseSettings):
         gt=0,
     )
 
-    # Email outbox encryption.
+    # Encrypted transactional email outbox.
     # Configure EMAIL_OUTBOX_ENCRYPTION_KEY in the root .env.
-    # Do not log or expose this secret.
+    # Never log or expose this secret.
     email_outbox_encryption_key: SecretStr | None = None
     email_outbox_batch_size: int = Field(default=20, gt=0, le=500)
     email_outbox_max_attempts: int = Field(default=8, gt=0, le=100)
     email_outbox_lease_seconds: int = Field(default=120, gt=0)
-    email_outbox_poll_seconds: float = Field(default=2.0, gt=0, le=300)
+    email_outbox_poll_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=300,
+    )
 
     # Private local storage for uploaded import source files.
     upload_storage_dir: Path = BASE_DIR / "var" / "private_uploads"
