@@ -16,25 +16,11 @@ from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
 from app.db.session import SessionLocal
 from sqlalchemy import select
+from app.authz.permissions import OWNER_ROLE_PERMISSION_KEYS
 
 OWNER_ROLE_NAME = "DealFlow Owner"
 
-REQUIRED_PERMISSIONS = (
-    "contacts.create",
-    "contacts.read",
-    "contacts.update",
-    "leads.create",
-    "leads.read",
-    "leads.update",
-    "properties.create",
-    "properties.read",
-    "properties.update",
-    "requirements.create",
-    "requirements.read",
-    "requirements.update",
-    "imports.upload",
-)
-
+REQUIRED_PERMISSIONS = OWNER_ROLE_PERMISSION_KEYS
 
 def main() -> None:
     print("\nDealFlow initial owner setup")
