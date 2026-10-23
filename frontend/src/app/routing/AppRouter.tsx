@@ -56,6 +56,7 @@ export default function AppRouter() {
       <Route element={<PublicLayout />}>
         <Route element={<PublicOnly />}>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
         </Route>
 
         {/* Password recovery remains accessible without an active session. */}
@@ -67,13 +68,6 @@ export default function AppRouter() {
           path="/reset-password"
           element={<ResetPasswordPage />}
         />
-
-        {/*
-          Signup is intentionally outside PublicOnly.
-          Successful signup authenticates the user, so PublicOnly could
-          otherwise redirect before the onboarding page is reached.
-        */}
-        <Route path="/signup" element={<SignupPage />} />
       </Route>
 
       {/* Authenticated workspace */}
