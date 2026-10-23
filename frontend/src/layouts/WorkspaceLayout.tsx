@@ -17,7 +17,6 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
-  Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -28,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import "../styles/workspace-layout-responsive.css";
 
 import { useAppContext } from "../contexts/useAppContext";
 import WorkspaceCustomizer from "./workspace/WorkspaceCustomizer";
@@ -102,6 +102,7 @@ export default function WorkspaceLayout() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [organizationMenuOpen, setOrganizationMenuOpen] =
     useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -110,8 +111,6 @@ export default function WorkspaceLayout() {
       ...DEFAULT_WORKSPACE_PREFERENCES,
     });
 
-  // Preferences are loaded separately for each user/organization pair.
-  // Do not save until the corresponding preferences have finished loading.
   const [loadedPreferenceKey, setLoadedPreferenceKey] = useState("");
 
   const organizationMenuRef = useRef<HTMLDivElement>(null);
@@ -157,10 +156,19 @@ export default function WorkspaceLayout() {
     setSidebarOpen(false);
     setAccountOpen(false);
     setOrganizationMenuOpen(false);
+    setNotificationOpen(false);
   }, [location.pathname, organizationKey]);
 
   useEffect(() => {
-    if (!sidebarOpen && !customizerOpen) return;
+    if (
+      !sidebarOpen &&
+      !customizerOpen &&
+      !accountOpen &&
+      !organizationMenuOpen &&
+      !notificationOpen
+    ) {
+      return;
+    }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -169,6 +177,7 @@ export default function WorkspaceLayout() {
       setCustomizerOpen(false);
       setAccountOpen(false);
       setOrganizationMenuOpen(false);
+      setNotificationOpen(false);
     }
 
     window.addEventListener("keydown", handleEscape);
@@ -176,7 +185,13 @@ export default function WorkspaceLayout() {
     return () => {
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [sidebarOpen, customizerOpen]);
+  }, [
+    sidebarOpen,
+    customizerOpen,
+    accountOpen,
+    organizationMenuOpen,
+    notificationOpen,
+  ]);
 
   useEffect(() => {
     function handleOutsidePointerDown(event: PointerEvent) {
@@ -196,6 +211,14 @@ export default function WorkspaceLayout() {
         !accountMenuRef.current.contains(target)
       ) {
         setAccountOpen(false);
+      }
+
+      if (
+        target instanceof Element &&
+        !target.closest(".workspace-notification-menu") &&
+        !target.closest(".workspace-notification-button")
+      ) {
+        setNotificationOpen(false);
       }
     }
 
@@ -343,6 +366,7 @@ export default function WorkspaceLayout() {
                   onClick={() => {
                     setOrganizationMenuOpen((open) => !open);
                     setAccountOpen(false);
+                    setNotificationOpen(false);
                   }}
                   onKeyDown={(event) => {
                     if (
@@ -359,6 +383,7 @@ export default function WorkspaceLayout() {
                     {selectedOrganization?.name ??
                       "Select organization"}
                   </span>
+
                   <ChevronDown
                     size={15}
                     aria-hidden="true"
@@ -402,7 +427,9 @@ export default function WorkspaceLayout() {
                             size={16}
                             aria-hidden="true"
                           />
+
                           <span>{organization.name}</span>
+
                           {selected && (
                             <Check
                               size={16}
@@ -459,6 +486,7 @@ export default function WorkspaceLayout() {
                   strokeWidth={1.8}
                   aria-hidden="true"
                 />
+
                 <span>{label}</span>
               </NavLink>
             ),
@@ -481,12 +509,13 @@ export default function WorkspaceLayout() {
               strokeWidth={1.8}
               aria-hidden="true"
             />
+
             <span>Customize workspace</span>
           </button>
 
           <button
             type="button"
-            className="workspace-nav-link workspace-collapse-button"
+            className="workspace-nav-link workspace-collapse-button workspace-desktop-collapse-button"
             onClick={() =>
               updatePreferences({
                 ...preferences,
@@ -549,17 +578,32 @@ export default function WorkspaceLayout() {
           <button
             type="button"
             className="workspace-icon-button workspace-menu-button"
-            aria-label="Open navigation"
+            aria-label={
+              sidebarOpen ? "Close navigation" : "Open navigation"
+            }
             aria-expanded={sidebarOpen}
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => setSidebarOpen((open) => !open)}
           >
-            <Menu size={20} aria-hidden="true" />
+            {sidebarOpen ? (
+              <PanelLeftOpen
+                size={20}
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+            ) : (
+              <PanelLeftClose
+                size={20}
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+            )}
           </button>
 
           <div className="workspace-topbar-context">
             <span className="workspace-topbar-eyebrow">
               WORKSPACE
             </span>
+
             <span className="workspace-topbar-title">
               {selectedOrganization?.name ?? "DealFlow"}
             </span>
@@ -567,6 +611,7 @@ export default function WorkspaceLayout() {
 
           <div className="workspace-topbar-search">
             <Search size={17} aria-hidden="true" />
+
             <input
               type="search"
               aria-label="Search workspace"
@@ -578,6 +623,7 @@ export default function WorkspaceLayout() {
                 }
               }}
             />
+
             <kbd aria-hidden="true">/</kbd>
           </div>
 
@@ -597,6 +643,7 @@ export default function WorkspaceLayout() {
                   onClick={() => {
                     setOrganizationMenuOpen((open) => !open);
                     setAccountOpen(false);
+                    setNotificationOpen(false);
                   }}
                 >
                   <Building2 size={18} aria-hidden="true" />
@@ -606,9 +653,7 @@ export default function WorkspaceLayout() {
                   <div className="workspace-account-menu workspace-organization-menu">
                     <div className="workspace-account-details">
                       <strong>Switch workspace</strong>
-                      <small>
-                        Select an organization
-                      </small>
+                      <small>Select an organization</small>
                     </div>
 
                     {organizations.map((organization) => {
@@ -634,7 +679,9 @@ export default function WorkspaceLayout() {
                             size={16}
                             aria-hidden="true"
                           />
+
                           <span>{organization.name}</span>
+
                           {selected && (
                             <Check
                               size={16}
@@ -654,12 +701,34 @@ export default function WorkspaceLayout() {
               className="workspace-icon-button workspace-notification-button"
               aria-label="Notifications"
               title="Notifications"
+              aria-haspopup="dialog"
+              aria-expanded={notificationOpen}
               onClick={() => {
-                // Connect to the real notification feature when available.
+                setNotificationOpen((open) => !open);
+                setAccountOpen(false);
+                setOrganizationMenuOpen(false);
               }}
             >
               <Bell size={18} aria-hidden="true" />
             </button>
+
+            {notificationOpen && (
+              <div
+                className="workspace-account-menu workspace-notification-menu"
+                role="dialog"
+                aria-label="Notifications"
+              >
+                <div className="workspace-account-details">
+                  <strong>Notifications</strong>
+                  <small>No notifications to show yet.</small>
+                </div>
+
+                <p className="workspace-notification-empty">
+                  New workspace updates will appear here when
+                  notifications are available.
+                </p>
+              </div>
+            )}
 
             <div
               className="workspace-account"
@@ -668,12 +737,16 @@ export default function WorkspaceLayout() {
               <button
                 ref={accountTriggerRef}
                 type="button"
-                className="workspace-account-button"
+                className="workspace-account-button workspace-profile-trigger"
+                aria-label={`Account menu for ${
+                  user?.display_name || user?.email || "user"
+                }`}
                 aria-haspopup="menu"
                 aria-expanded={accountOpen}
                 onClick={() => {
                   setAccountOpen((open) => !open);
                   setOrganizationMenuOpen(false);
+                  setNotificationOpen(false);
                 }}
               >
                 <span
@@ -682,11 +755,13 @@ export default function WorkspaceLayout() {
                 >
                   {avatar}
                 </span>
+
                 <span className="workspace-account-name">
                   {user?.display_name ||
                     user?.email ||
                     "Account"}
                 </span>
+
                 <ChevronDown
                   size={15}
                   aria-hidden="true"
@@ -703,6 +778,7 @@ export default function WorkspaceLayout() {
                     <strong>
                       {user?.display_name || "Account"}
                     </strong>
+
                     <small>{user?.email}</small>
                   </div>
 
@@ -713,6 +789,7 @@ export default function WorkspaceLayout() {
                     disabled={signingOut}
                   >
                     <LogOut size={16} aria-hidden="true" />
+
                     {signingOut
                       ? "Signing out…"
                       : "Sign out"}

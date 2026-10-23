@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -105,8 +106,10 @@ def process_one_email() -> bool:
                 token=payload["token"],
             )
         else:
-            # Defensive check; decrypt_email_payload already validates kind.
-            raise EmailOutboxPayloadError("Unsupported email payload kind.")
+            raise EmailOutboxPayloadError(
+                "Unsupported email payload kind."
+            )
+
     except EmailOutboxPayloadError:
         update_if_owned(
             {
@@ -118,25 +121,19 @@ def process_one_email() -> bool:
         )
         logger.error("Email outbox payload validation failed")
         return True
+
     except Exception as exc:
-        # Never log exception text: it may contain sensitive information.
-        attempts = 0
         with SessionLocal() as db:
-            try:
-                current = db.scalar(
-                    select(EmailOutboxMessage).where(
-                        EmailOutboxMessage.id == message_id,
-                        EmailOutboxMessage.status == "processing",
-                        EmailOutboxMessage.claim_token == claim_token,
-                    )
+            current = db.scalar(
+                select(EmailOutboxMessage).where(
+                    EmailOutboxMessage.id == message_id,
+                    EmailOutboxMessage.status == "processing",
+                    EmailOutboxMessage.claim_token == claim_token,
                 )
-                if current is not None:
-                    attempts = current.attempts
-            finally:
-                db.close()
+            )
+            attempts = current.attempts if current is not None else 0
 
         if attempts == 0:
-            # The claim expired or was replaced. Do not overwrite it.
             return True
 
         if attempts >= settings.email_outbox_max_attempts:
@@ -157,7 +154,10 @@ def process_one_email() -> bool:
             }
 
         update_if_owned(values)
-        logger.warning("Email outbox delivery attempt failed")
+        logger.warning(
+            "Email outbox delivery attempt failed (%s)",
+            type(exc).__name__,
+        )
         return True
 
     sent = update_if_owned(
@@ -178,21 +178,31 @@ def process_one_email() -> bool:
     return True
 
 
-def run_worker() -> None:
-    """Poll for email jobs until the process is stopped."""
+def run_worker(
+    stop_event: threading.Event | None = None,
+) -> None:
+    """Process queued emails until a shutdown signal is received."""
     settings = get_settings()
+    stop_signal = stop_event or threading.Event()
+
     logger.info("Email outbox worker started")
 
-    while True:
-        try:
-            if not process_one_email():
-                time.sleep(settings.email_outbox_poll_seconds)
-        except KeyboardInterrupt:
-            logger.info("Email outbox worker stopped")
-            return
-        except Exception:
-            logger.error("Email outbox worker encountered an internal error")
-            time.sleep(settings.email_outbox_poll_seconds)
+    try:
+        while not stop_signal.is_set():
+            try:
+                if not process_one_email():
+                    stop_signal.wait(
+                        timeout=settings.email_outbox_poll_seconds
+                    )
+            except Exception:
+                logger.error(
+                    "Email outbox worker encountered an internal error"
+                )
+                stop_signal.wait(
+                    timeout=settings.email_outbox_poll_seconds
+                )
+    finally:
+        logger.info("Email outbox worker stopped")
 
 
 if __name__ == "__main__":

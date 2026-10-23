@@ -9,6 +9,8 @@ import WorkspaceLayout from "../../layouts/WorkspaceLayout";
 
 import LoginPage from "../../features/auth/pages/LoginPage";
 import SignupPage from "../../features/auth/pages/SignupPage";
+import ForgotPasswordPage from "../../features/auth/pages/ForgotPasswordPage";
+import ResetPasswordPage from "../../features/auth/pages/ResetPasswordPage";
 import OnboardingPage from "../../features/onboarding/pages/OnboardingPage";
 
 import TodayPage from "../../pages/TodayPage";
@@ -37,7 +39,9 @@ function ModulePlaceholder({
   return (
     <section className="module-placeholder">
       <div className="module-placeholder__content">
-        <span className="module-placeholder__eyebrow">DEALFLOW WORKSPACE</span>
+        <span className="module-placeholder__eyebrow">
+          DEALFLOW WORKSPACE
+        </span>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -53,6 +57,16 @@ export default function AppRouter() {
         <Route element={<PublicOnly />}>
           <Route path="/login" element={<LoginPage />} />
         </Route>
+
+        {/* Password recovery remains accessible without an active session. */}
+        <Route
+          path="/forgot-password"
+          element={<ForgotPasswordPage />}
+        />
+        <Route
+          path="/reset-password"
+          element={<ResetPasswordPage />}
+        />
 
         {/*
           Signup is intentionally outside PublicOnly.

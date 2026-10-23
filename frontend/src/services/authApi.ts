@@ -33,6 +33,19 @@ export interface LoginInput {
   password: string;
 }
 
+export interface PasswordResetRequest {
+  email: string;
+}
+
+export interface PasswordResetConfirmRequest {
+  token: string;
+  new_password: string;
+}
+
+export interface PasswordResetResponse {
+  message: string;
+}
+
 export const authApi = {
   signup(input: SignupInput): Promise<SignupResponse> {
     return api.post<SignupResponse>("/auth/signup", input);
@@ -48,5 +61,23 @@ export const authApi = {
 
   logout(): Promise<void> {
     return api.post<void>("/auth/logout");
+  },
+
+  requestPasswordReset(
+    input: PasswordResetRequest,
+  ): Promise<PasswordResetResponse> {
+    return api.post<PasswordResetResponse>(
+      "/auth/password-reset/request",
+      input,
+    );
+  },
+
+  confirmPasswordReset(
+    input: PasswordResetConfirmRequest,
+  ): Promise<PasswordResetResponse> {
+    return api.post<PasswordResetResponse>(
+      "/auth/password-reset/confirm",
+      input,
+    );
   },
 };
