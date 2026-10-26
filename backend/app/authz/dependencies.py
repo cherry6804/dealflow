@@ -19,20 +19,9 @@ from app.tenant.dependencies import TenantContext, get_tenant_context
 def require_permission(
     permission_key: str,
 ) -> Callable[..., TenantContext]:
-    """
-    Create a FastAPI dependency that requires a specific permission.
-
-    Authorization is evaluated server-side from the verified tenant
-    membership and its assigned roles and permissions.
-
-    The client cannot provide or override roles or permissions.
-
-    Successful and denied authorization decisions are recorded through
-    an independent audit transaction.
-    """
+    """Require a permission granted by a role in the selected tenant."""
 
     normalized_permission_key = permission_key.strip()
-
     if not normalized_permission_key:
         raise ValueError("Permission key cannot be empty.")
 
@@ -40,7 +29,7 @@ def require_permission(
         tenant_context: TenantContext = Depends(get_tenant_context),
         db: Session = Depends(get_db_session),
     ) -> TenantContext:
-        """Require the configured permission for the current tenant."""
+        """Authorize against the selected organization's membership."""
 
         statement = (
             select(Permission.id)
@@ -48,16 +37,11 @@ def require_permission(
                 RolePermission,
                 RolePermission.permission_id == Permission.id,
             )
-            .join(
-                Role,
-                Role.id == RolePermission.role_id,
-            )
-            .join(
-                MembershipRole,
-                MembershipRole.role_id == Role.id,
-            )
+            .join(Role, Role.id == RolePermission.role_id)
+            .join(MembershipRole, MembershipRole.role_id == Role.id)
             .where(
                 MembershipRole.membership_id == tenant_context.membership.id,
+                Role.organization_id == tenant_context.organization_id,
                 Permission.key == normalized_permission_key,
                 Permission.is_active.is_(True),
                 Role.is_active.is_(True),
@@ -66,28 +50,25 @@ def require_permission(
         )
 
         permission_id = db.scalar(statement)
-
-        if permission_id is None:
-            persist_authorization_audit_event(
-                user_id=tenant_context.membership.user_id,
-                organization_id=tenant_context.organization_id,
-                action=normalized_permission_key,
-                decision=AuditDecision.DENIED,
-                permission_key=normalized_permission_key,
-            )
-
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied.",
-            )
+        decision = (
+            AuditDecision.ALLOWED
+            if permission_id is not None
+            else AuditDecision.DENIED
+        )
 
         persist_authorization_audit_event(
             user_id=tenant_context.membership.user_id,
             organization_id=tenant_context.organization_id,
             action=normalized_permission_key,
-            decision=AuditDecision.ALLOWED,
+            decision=decision,
             permission_key=normalized_permission_key,
         )
+
+        if permission_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied.",
+            )
 
         return tenant_context
 

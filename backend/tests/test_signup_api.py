@@ -1,7 +1,5 @@
-
 """Focused integration tests for account signup and workspace provisioning."""
 
-import uuid
 from collections.abc import Generator
 
 from cryptography.fernet import Fernet
@@ -88,20 +86,6 @@ def configure_outbox_encryption(monkeypatch) -> None:
     monkeypatch.setattr(email_outbox, "get_settings", lambda: test_settings)
 
 
-def seed_owner_role() -> Role:
-    with TestingSessionLocal() as db:
-        role = Role(
-            id=uuid.uuid4(),
-            name="DealFlow Owner",
-            description="Workspace owner role for tests.",
-            is_active=True,
-        )
-        db.add(role)
-        db.commit()
-        db.refresh(role)
-        return role
-
-
 def signup_payload(
     *,
     email: str = "owner@example.com",
@@ -115,10 +99,10 @@ def signup_payload(
     }
 
 
+
 def test_signup_creates_pending_account_and_encrypted_email_job(
     monkeypatch,
 ) -> None:
-    role = seed_owner_role()
     configure_outbox_encryption(monkeypatch)
 
     response = client.post(
@@ -126,7 +110,7 @@ def test_signup_creates_pending_account_and_encrypted_email_job(
         json=signup_payload(email="  OWNER@EXAMPLE.COM  "),
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
     body = response.json()
     assert body["user"]["email"] == "owner@example.com"
     assert body["user"]["display_name"] == "Workspace Owner"
@@ -162,10 +146,19 @@ def test_signup_creates_pending_account_and_encrypted_email_job(
         )
         assert membership is not None
 
+        owner_role = db.scalar(
+            select(Role).where(
+                Role.organization_id == organization.id,
+                Role.name == "DealFlow Owner",
+                Role.is_active.is_(True),
+            )
+        )
+        assert owner_role is not None
+
         assignment = db.scalar(
             select(MembershipRole).where(
                 MembershipRole.membership_id == membership.id,
-                MembershipRole.role_id == role.id,
+                MembershipRole.role_id == owner_role.id,
             )
         )
         assert assignment is not None
@@ -186,11 +179,13 @@ def test_signup_creates_pending_account_and_encrypted_email_job(
             db.scalars(select(EmailOutboxMessage)).all()
         )
         assert len(jobs) == 1
+
         job = jobs[0]
         assert job.status == "pending"
         assert job.attempts == 0
 
-        # Neither the recipient nor the raw token is stored in plaintext.
+        # The recipient and raw verification token must not be stored
+        # in plaintext in the persisted email job.
         assert "owner@example.com" not in job.encrypted_payload
         assert verification.token_hash not in job.encrypted_payload
 
@@ -203,7 +198,6 @@ def test_signup_creates_pending_account_and_encrypted_email_job(
 
 
 def test_signup_duplicate_email_is_rejected(monkeypatch) -> None:
-    seed_owner_role()
     configure_outbox_encryption(monkeypatch)
 
     first = client.post(
@@ -224,22 +218,57 @@ def test_signup_duplicate_email_is_rejected(monkeypatch) -> None:
         assert len(list(db.scalars(select(EmailOutboxMessage)).all())) == 1
 
 
-def test_signup_requires_owner_role_to_be_seeded() -> None:
+def test_signup_provisions_scoped_owner_without_global_seed(monkeypatch) -> None:
+    configure_outbox_encryption(monkeypatch)
     response = client.post(
         "/api/v1/auth/signup",
-        json=signup_payload(),
+        json=signup_payload(
+            email="unseeded.owner@example.com",
+            organization_name="Unseeded Workspace",
+        ),
     )
 
-    assert response.status_code == 503
-
+    assert response.status_code == 201, response.text
     with TestingSessionLocal() as db:
-        assert db.scalar(select(User.id)) is None
-        assert db.scalar(select(Organization.id)) is None
-        assert db.scalar(select(EmailOutboxMessage.id)) is None
+        user = db.scalar(
+            select(User).where(User.email == "unseeded.owner@example.com")
+        )
+        organization = db.scalar(
+            select(Organization).where(Organization.name == "Unseeded Workspace")
+        )
+        assert user is not None
+        assert organization is not None
+        membership = db.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.organization_id == organization.id,
+                Membership.is_active.is_(True),
+            )
+        )
+        assert membership is not None
+        owner_role = db.scalar(
+            select(Role).where(
+                Role.organization_id == organization.id,
+                Role.name == "DealFlow Owner",
+                Role.is_active.is_(True),
+            )
+        )
+        assert owner_role is not None
+        assert db.scalar(
+            select(MembershipRole).where(
+                MembershipRole.membership_id == membership.id,
+                MembershipRole.role_id == owner_role.id,
+            )
+        ) is not None
+        assert db.scalar(
+            select(Role).where(
+                Role.organization_id.is_(None),
+                Role.name == "DealFlow Owner",
+            )
+        ) is None
 
 
 def test_signup_rejects_short_password() -> None:
-    seed_owner_role()
     payload = signup_payload()
     payload["password"] = "short"
 
@@ -258,7 +287,6 @@ def test_signup_rejects_short_password() -> None:
 def test_signup_rolls_back_everything_when_enqueue_fails(
     monkeypatch,
 ) -> None:
-    seed_owner_role()
     configure_outbox_encryption(monkeypatch)
 
     def fail_enqueue(*args, **kwargs):
@@ -296,3 +324,54 @@ def test_verification_token_hash_helper_is_deterministic() -> None:
 
     assert hash_verification_token(token) == hash_verification_token(token)
     assert hash_verification_token(token) != token
+
+def test_signup_provisions_organization_scoped_owner(
+    monkeypatch,
+) -> None:
+    configure_outbox_encryption(monkeypatch)
+
+    response = client.post(
+        "/api/v1/auth/signup",
+        json=signup_payload(),
+    )
+
+    assert response.status_code == 201, response.text
+
+    with TestingSessionLocal() as db:
+        user = db.scalar(
+            select(User).where(User.email == "owner@example.com")
+        )
+        organization = db.scalar(
+            select(Organization).where(
+                Organization.name == "Example Realty"
+            )
+        )
+
+        assert user is not None
+        assert organization is not None
+
+        membership = db.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.organization_id == organization.id,
+                Membership.is_active.is_(True),
+            )
+        )
+        assert membership is not None
+
+        owner_role = db.scalar(
+            select(Role).where(
+                Role.organization_id == organization.id,
+                Role.name == "DealFlow Owner",
+                Role.is_active.is_(True),
+            )
+        )
+        assert owner_role is not None
+
+        assignment = db.scalar(
+            select(MembershipRole).where(
+                MembershipRole.membership_id == membership.id,
+                MembershipRole.role_id == owner_role.id,
+            )
+        )
+        assert assignment is not None

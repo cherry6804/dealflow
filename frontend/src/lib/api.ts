@@ -294,6 +294,13 @@ export const api = {
     });
   },
 
+  put<T>(path: string, body: unknown): Promise<T> {
+    return request<T>(path, {
+      method: "PUT",
+      body,
+    });
+  },
+
   patch<T>(path: string, body: unknown): Promise<T> {
     return request<T>(path, {
       method: "PATCH",

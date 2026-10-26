@@ -70,6 +70,7 @@ def create_membership(
     return membership
 
 
+
 def grant_permission(
     db: Session,
     *,
@@ -87,7 +88,11 @@ def grant_permission(
         permission.is_active = True
         db.flush()
 
-    role = Role(name=f"Deals Test Role {uuid4()}", is_active=True)
+    role = Role(
+        name=f"Deals Test Role {uuid4()}",
+        organization_id=membership.organization_id,
+        is_active=True,
+    )
     db.add(role)
     db.flush()
 
@@ -104,6 +109,7 @@ def grant_permission(
         )
     )
     db.flush()
+
 
 
 def create_authorized_user(

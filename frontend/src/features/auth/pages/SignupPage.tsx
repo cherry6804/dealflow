@@ -1,14 +1,15 @@
 
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, Mail } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../../lib/api";
-import { useAppContext } from "../../../contexts/useAppContext";
 import { authApi } from "../../../services/authApi";
 
 export default function SignupPage() {
-  const { status } = useAppContext();
+  const [searchParams] = useSearchParams();
+  const invitationToken = searchParams.get("invitation")?.trim() ?? "";
+  const isInvitationSignup = invitationToken.length > 0;
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -23,6 +24,8 @@ export default function SignupPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
+
     setError(null);
 
     if (password.length < 12 || password.length > 128) {
@@ -35,22 +38,33 @@ export default function SignupPage() {
       return;
     }
 
-    if (organizationName.trim().length < 2) {
+    if (!isInvitationSignup && organizationName.trim().length < 2) {
       setError("Enter a workspace name with at least 2 characters.");
       return;
     }
 
     setSubmitting(true);
 
-    try {
-      await authApi.signup({
-        display_name: displayName.trim(),
-        email: email.trim().toLowerCase(),
-        organization_name: organizationName.trim(),
-        password,
-      });
+    const normalizedEmail = email.trim().toLowerCase();
 
-      setVerificationEmail(email.trim().toLowerCase());
+    try {
+      if (isInvitationSignup) {
+        await authApi.signupFromInvitation({
+          display_name: displayName.trim(),
+          email: normalizedEmail,
+          password,
+          invitation_token: invitationToken,
+        });
+      } else {
+        await authApi.signup({
+          display_name: displayName.trim(),
+          email: normalizedEmail,
+          organization_name: organizationName.trim(),
+          password,
+        });
+      }
+
+      setVerificationEmail(normalizedEmail);
       setPassword("");
       setConfirmPassword("");
     } catch (cause) {
@@ -83,42 +97,40 @@ export default function SignupPage() {
             <span className="page-eyebrow">ONE LAST STEP</span>
             <h1 id="signup-heading">Verify your email</h1>
             <p>
-              Your signup request was received. If the verification email was
-              successfully queued, you should receive a message at:
+              Follow the verification link sent to
+              {" "}
+              <strong>{verificationEmail}</strong>.
             </p>
-            <p>
-              <strong>{verificationEmail}</strong>
-            </p>
-            <p>
-              Open the verification link in that email before signing in.
-              Check your spam folder if it does not arrive.
-            </p>
-
             <div className="feedback" role="status">
               <CheckCircle2 size={18} />
               Account registration submitted.
             </div>
-
+            <p>
+              After verification, sign in and open your invitation link again
+              to join the workspace.
+            </p>
             <Link
               to="/login"
               className="button button-primary button-lg button-block"
             >
               Continue to sign in
             </Link>
-
-            <p className="auth-footnote">
-              If you do not receive the email, you can request another
-              verification email from the sign-in flow when that option is
-              available.
-            </p>
           </div>
         ) : (
           <>
             <div className="auth-heading">
-              <span className="page-eyebrow">GET STARTED</span>
-              <h1 id="signup-heading">Create your workspace</h1>
+              <span className="page-eyebrow">
+                {isInvitationSignup ? "JOIN YOUR TEAM" : "GET STARTED"}
+              </span>
+              <h1 id="signup-heading">
+                {isInvitationSignup
+                  ? "Create your account"
+                  : "Create your workspace"}
+              </h1>
               <p>
-                Bring your leads, contacts, and deals together in one place.
+                {isInvitationSignup
+                  ? "Register using the email address that received your invitation."
+                  : "Bring your leads, contacts, and deals together in one place."}
               </p>
             </div>
 
@@ -158,26 +170,25 @@ export default function SignupPage() {
                 />
               </label>
 
-              <label className="form-field">
-                <span className="form-label">Workspace name</span>
-                <input
-                  className="input"
-                  name="organization_name"
-                  autoComplete="organization"
-                  placeholder="e.g. Skyline Realty"
-                  value={organizationName}
-                  onChange={(event) =>
-                    setOrganizationName(event.target.value)
-                  }
-                  required
-                  minLength={2}
-                  maxLength={200}
-                  disabled={submitting}
-                />
-                <span className="form-hint">
-                  Use your company or real estate agency name.
-                </span>
-              </label>
+              {!isInvitationSignup && (
+                <label className="form-field">
+                  <span className="form-label">Workspace name</span>
+                  <input
+                    className="input"
+                    name="organization_name"
+                    autoComplete="organization"
+                    placeholder="e.g. Skyline Realty"
+                    value={organizationName}
+                    onChange={(event) =>
+                      setOrganizationName(event.target.value)
+                    }
+                    required
+                    minLength={2}
+                    maxLength={200}
+                    disabled={submitting}
+                  />
+                </label>
+              )}
 
               <label className="form-field">
                 <span className="form-label">Password</span>
@@ -219,17 +230,18 @@ export default function SignupPage() {
               <button
                 className="button button-primary button-lg button-block"
                 type="submit"
-                disabled={submitting || status === "loading"}
+                disabled={submitting}
               >
-                {submitting ? "Creating account..." : "Create workspace"}
+                {submitting
+                  ? "Creating account..."
+                  : isInvitationSignup
+                    ? "Create account"
+                    : "Create workspace"}
               </button>
             </form>
 
             <p className="auth-footnote">
               Already have an account? <Link to="/login">Sign in</Link>
-            </p>
-            <p className="auth-footnote">
-              Your workspace is private to your organization.
             </p>
           </>
         )}

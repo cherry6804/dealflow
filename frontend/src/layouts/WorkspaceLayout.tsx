@@ -1,35 +1,38 @@
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Bell,
+  Bot,
   Building2,
   CalendarCheck,
   Check,
   ChevronDown,
   CircleDollarSign,
+  ClipboardList,
   ContactRound,
   FileText,
+  Handshake,
   LayoutDashboard,
   LogOut,
+  MapPin,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Settings,
   SlidersHorizontal,
+  Upload,
+  UserRound,
   Users,
   Workflow,
+  BriefcaseBusiness,
+  BellRing,
   X,
 } from "lucide-react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
-import "../styles/workspace-layout-responsive.css";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAppContext } from "../contexts/useAppContext";
+import "../styles/workspace-layout-responsive.css";
 import WorkspaceCustomizer from "./workspace/WorkspaceCustomizer";
 import {
   DEFAULT_WORKSPACE_PREFERENCES,
@@ -43,13 +46,24 @@ const navigation = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Leads", to: "/leads", icon: Users },
   { label: "Contacts", to: "/contacts", icon: ContactRound },
-  { label: "Requirements", to: "/requirements", icon: FileText },
+  { label: "Customers", to: "/customers", icon: UserRound },
+  { label: "Requirements", to: "/requirements", icon: ClipboardList },
   { label: "Pipeline", to: "/pipeline", icon: Workflow },
-  { label: "Deals", to: "/deals", icon: Building2 },
+  { label: "Deals", to: "/deals", icon: Handshake },
+  { label: "Properties", to: "/properties", icon: Building2 },
+  { label: "Referrals", to: "/referrals", icon: BriefcaseBusiness },
+  { label: "Site Visits", to: "/site-visits", icon: MapPin },
   { label: "Follow-ups", to: "/follow-ups", icon: CalendarCheck },
   { label: "Commissions", to: "/commissions", icon: CircleDollarSign },
   { label: "Documents", to: "/documents", icon: FileText },
+  { label: "Imports", to: "/imports", icon: Upload },
+  { label: "Automation Rules", to: "/automation-rules", icon: Bot },
   { label: "Activity", to: "/automation-history", icon: Activity },
+  {
+    label: "Notifications",
+    to: "/notification-preferences",
+    icon: BellRing,
+  },
   { label: "Settings", to: "/settings", icon: Settings },
 ] as const;
 
@@ -61,22 +75,17 @@ function getOrderedNavigation(order: string[]) {
   return [...navigation].sort((a, b) => {
     const aRank = rank.get(a.label) ?? Number.MAX_SAFE_INTEGER;
     const bRank = rank.get(b.label) ?? Number.MAX_SAFE_INTEGER;
+
     return aRank - bRank;
   });
 }
 
-function getInitials(
-  name?: string | null,
-  email?: string | null,
-) {
+function getInitials(name?: string | null, email?: string | null) {
   const value = name?.trim() || email?.trim() || "U";
   return value.charAt(0).toUpperCase();
 }
 
-function getPreferenceKey(
-  organizationId: string,
-  userId: string,
-) {
+function getPreferenceKey(organizationId: string, userId: string) {
   return `${organizationId}::${userId}`;
 }
 
@@ -90,9 +99,11 @@ export default function WorkspaceLayout() {
   } = useAppContext();
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   const userKey = String(user?.id ?? user?.email ?? "");
   const organizationKey = String(selectedOrganization?.id ?? "");
+
   const preferenceKey =
     userKey && organizationKey
       ? getPreferenceKey(organizationKey, userKey)
@@ -100,27 +111,29 @@ export default function WorkspaceLayout() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [organizationMenuOpen, setOrganizationMenuOpen] =
-    useState(false);
+  const [organizationMenuOpen, setOrganizationMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
 
-  const [preferences, setPreferences] =
-    useState<WorkspacePreferences>({
-      ...DEFAULT_WORKSPACE_PREFERENCES,
-    });
+  const [preferences, setPreferences] = useState<WorkspacePreferences>({
+    ...DEFAULT_WORKSPACE_PREFERENCES,
+  });
 
   const [loadedPreferenceKey, setLoadedPreferenceKey] = useState("");
 
-  const organizationMenuRef = useRef<HTMLDivElement>(null);
+  const sidebarOrganizationMenuRef = useRef<HTMLDivElement>(null);
+  const topbarOrganizationMenuRef = useRef<HTMLDivElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-  const organizationTriggerRef = useRef<HTMLButtonElement>(null);
-  const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!preferenceKey) {
-      setPreferences({ ...DEFAULT_WORKSPACE_PREFERENCES });
+      setPreferences({
+        ...DEFAULT_WORKSPACE_PREFERENCES,
+        navigationOrder: [...moduleNames],
+      });
       setLoadedPreferenceKey("");
       return;
     }
@@ -128,7 +141,7 @@ export default function WorkspaceLayout() {
     setLoadedPreferenceKey("");
 
     setPreferences(
-      loadWorkspacePreferences(organizationKey, userKey),
+      loadWorkspacePreferences(organizationKey, userKey, [...moduleNames]),
     );
 
     setLoadedPreferenceKey(preferenceKey);
@@ -139,11 +152,7 @@ export default function WorkspaceLayout() {
       return;
     }
 
-    saveWorkspacePreferences(
-      organizationKey,
-      userKey,
-      preferences,
-    );
+    saveWorkspacePreferences(organizationKey, userKey, preferences);
   }, [
     preferences,
     preferenceKey,
@@ -157,59 +166,73 @@ export default function WorkspaceLayout() {
     setAccountOpen(false);
     setOrganizationMenuOpen(false);
     setNotificationOpen(false);
+    setSearchValue("");
   }, [location.pathname, organizationKey]);
 
   useEffect(() => {
-    if (
-      !sidebarOpen &&
-      !customizerOpen &&
-      !accountOpen &&
-      !organizationMenuOpen &&
-      !notificationOpen
-    ) {
-      return;
-    }
-
     function handleEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape") {
+        return;
+      }
 
       setSidebarOpen(false);
       setCustomizerOpen(false);
       setAccountOpen(false);
       setOrganizationMenuOpen(false);
       setNotificationOpen(false);
+
+      if (document.activeElement === searchInputRef.current) {
+        setSearchValue("");
+        searchInputRef.current?.blur();
+      }
+    }
+
+    function handleSearchShortcut(event: KeyboardEvent) {
+      const target = event.target;
+
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+      if (
+        event.key === "/" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !isTyping
+      ) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
     }
 
     window.addEventListener("keydown", handleEscape);
+    window.addEventListener("keydown", handleSearchShortcut);
 
     return () => {
       window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("keydown", handleSearchShortcut);
     };
-  }, [
-    sidebarOpen,
-    customizerOpen,
-    accountOpen,
-    organizationMenuOpen,
-    notificationOpen,
-  ]);
+  }, []);
 
   useEffect(() => {
     function handleOutsidePointerDown(event: PointerEvent) {
       const target = event.target;
 
-      if (!(target instanceof Node)) return;
+      if (!(target instanceof Node)) {
+        return;
+      }
 
-      if (
-        organizationMenuRef.current &&
-        !organizationMenuRef.current.contains(target)
-      ) {
+      const insideOrganizationMenu =
+        sidebarOrganizationMenuRef.current?.contains(target) ||
+        topbarOrganizationMenuRef.current?.contains(target);
+
+      if (!insideOrganizationMenu) {
         setOrganizationMenuOpen(false);
       }
 
-      if (
-        accountMenuRef.current &&
-        !accountMenuRef.current.contains(target)
-      ) {
+      if (!accountMenuRef.current?.contains(target)) {
         setAccountOpen(false);
       }
 
@@ -222,16 +245,10 @@ export default function WorkspaceLayout() {
       }
     }
 
-    document.addEventListener(
-      "pointerdown",
-      handleOutsidePointerDown,
-    );
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
 
     return () => {
-      document.removeEventListener(
-        "pointerdown",
-        handleOutsidePointerDown,
-      );
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
     };
   }, []);
 
@@ -241,13 +258,18 @@ export default function WorkspaceLayout() {
   );
 
   const visibleNavigation = orderedNavigation.filter(
-    (item) => !preferences.hiddenModules.includes(item.label),
+    (item) =>
+      !preferences.hiddenModules.includes(item.label) &&
+      !preferences.pinnedModules.includes(item.label),
   );
 
-  const avatar = getInitials(
-    user?.display_name,
-    user?.email,
+  const pinnedNavigation = orderedNavigation.filter(
+    (item) =>
+      !preferences.hiddenModules.includes(item.label) &&
+      preferences.pinnedModules.includes(item.label),
   );
+
+  const avatar = getInitials(user?.display_name, user?.email);
 
   function updatePreferences(next: WorkspacePreferences) {
     setPreferences(next);
@@ -258,11 +280,16 @@ export default function WorkspaceLayout() {
       resetWorkspacePreferences(organizationKey, userKey);
     }
 
-    setPreferences({ ...DEFAULT_WORKSPACE_PREFERENCES });
+    setPreferences({
+      ...DEFAULT_WORKSPACE_PREFERENCES,
+      navigationOrder: [...moduleNames],
+    });
   }
 
   function handleOrganizationSelect(organizationId: string) {
-    if (!organizationId) return;
+    if (!organizationId) {
+      return;
+    }
 
     setOrganizationMenuOpen(false);
 
@@ -271,8 +298,41 @@ export default function WorkspaceLayout() {
     }
   }
 
+  function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const query = searchValue.trim();
+
+    if (!query) {
+      searchInputRef.current?.focus();
+      return;
+    }
+
+    // This is navigation assistance, not a backend/global record search.
+    // Do not imply that results have been searched across the database.
+    const normalizedQuery = query.toLowerCase();
+
+    const match = navigation.find(
+      (item) =>
+        item.label.toLowerCase() === normalizedQuery ||
+        item.label.toLowerCase().includes(normalizedQuery),
+    );
+
+    if (match) {
+      navigate(match.to);
+      setSearchValue("");
+      searchInputRef.current?.blur();
+      return;
+    }
+
+    // Keep the entered text visible so it is not silently discarded.
+    // Global record search requires a dedicated search API/workflow.
+  }
+
   async function handleSignOut() {
-    if (signingOut) return;
+    if (signingOut) {
+      return;
+    }
 
     setSigningOut(true);
     setAccountOpen(false);
@@ -283,6 +343,28 @@ export default function WorkspaceLayout() {
     } finally {
       setSigningOut(false);
     }
+  }
+
+  function renderNavigationItem(
+    item: (typeof navigation)[number],
+  ) {
+    const Icon = item.icon;
+
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={item.to === "/"}
+        onClick={() => setSidebarOpen(false)}
+        className={({ isActive }) =>
+          `workspace-nav-link${isActive ? " is-active" : ""}`
+        }
+        title={preferences.sidebarCollapsed ? item.label : undefined}
+      >
+        <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+        <span>{item.label}</span>
+      </NavLink>
+    );
   }
 
   return (
@@ -317,16 +399,13 @@ export default function WorkspaceLayout() {
         aria-label="Workspace sidebar"
       >
         <div className="workspace-brand">
-          <span
-            className="workspace-brand-mark"
-            aria-hidden="true"
-          >
+          <span className="workspace-brand-mark" aria-hidden="true">
             D
           </span>
 
           <span className="workspace-brand-copy">
-            <strong>DealFlow</strong>
-            <small>Real estate workspace</small>
+            <strong>Dealsflo</strong>
+            <small>Real estate operations</small>
           </span>
 
           <button
@@ -340,9 +419,7 @@ export default function WorkspaceLayout() {
         </div>
 
         <div className="workspace-org-area">
-          <span className="workspace-org-label">
-            WORKSPACE
-          </span>
+          <span className="workspace-org-label">WORKSPACE</span>
 
           <div className="workspace-org-select">
             <Building2 size={17} aria-hidden="true" />
@@ -350,44 +427,27 @@ export default function WorkspaceLayout() {
             {organizations.length > 1 ? (
               <div
                 className="workspace-org-picker"
-                ref={organizationMenuRef}
+                ref={sidebarOrganizationMenuRef}
               >
                 <button
-                  ref={organizationTriggerRef}
                   type="button"
                   className="workspace-org-trigger"
                   aria-label="Select organization"
                   aria-haspopup="listbox"
                   aria-expanded={organizationMenuOpen}
                   title={
-                    selectedOrganization?.name ??
-                    "Select organization"
+                    selectedOrganization?.name ?? "Select organization"
                   }
                   onClick={() => {
                     setOrganizationMenuOpen((open) => !open);
                     setAccountOpen(false);
                     setNotificationOpen(false);
                   }}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "ArrowDown" ||
-                      event.key === "Enter" ||
-                      event.key === " "
-                    ) {
-                      event.preventDefault();
-                      setOrganizationMenuOpen(true);
-                    }
-                  }}
                 >
                   <span>
-                    {selectedOrganization?.name ??
-                      "Select organization"}
+                    {selectedOrganization?.name ?? "Select organization"}
                   </span>
-
-                  <ChevronDown
-                    size={15}
-                    aria-hidden="true"
-                  />
+                  <ChevronDown size={15} aria-hidden="true" />
                 </button>
 
                 {organizationMenuOpen && (
@@ -402,8 +462,7 @@ export default function WorkspaceLayout() {
 
                     {organizations.map((organization) => {
                       const selected =
-                        organization.id ===
-                        selectedOrganization?.id;
+                        organization.id === selectedOrganization?.id;
 
                       return (
                         <button
@@ -418,23 +477,13 @@ export default function WorkspaceLayout() {
                             .filter(Boolean)
                             .join(" ")}
                           onClick={() =>
-                            handleOrganizationSelect(
-                              organization.id,
-                            )
+                            handleOrganizationSelect(organization.id)
                           }
                         >
-                          <Building2
-                            size={16}
-                            aria-hidden="true"
-                          />
-
+                          <Building2 size={16} aria-hidden="true" />
                           <span>{organization.name}</span>
-
                           {selected && (
-                            <Check
-                              size={16}
-                              aria-hidden="true"
-                            />
+                            <Check size={16} aria-hidden="true" />
                           )}
                         </button>
                       );
@@ -445,52 +494,24 @@ export default function WorkspaceLayout() {
             ) : (
               <span
                 className="workspace-org-single"
-                title={
-                  selectedOrganization?.name ??
-                  "Your workspace"
-                }
+                title={selectedOrganization?.name ?? "Your workspace"}
               >
-                {selectedOrganization?.name ??
-                  "Your workspace"}
+                {selectedOrganization?.name ?? "Your workspace"}
               </span>
             )}
           </div>
         </div>
 
-        <nav
-          className="workspace-navigation"
-          aria-label="Main navigation"
-        >
-          <span className="workspace-nav-caption">
-            WORKSPACE
-          </span>
-
-          {visibleNavigation.map(
-            ({ label, to, icon: Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === "/"}
-                onClick={() => setSidebarOpen(false)}
-                className={({ isActive }) =>
-                  `workspace-nav-link${isActive ? " is-active" : ""}`
-                }
-                title={
-                  preferences.sidebarCollapsed
-                    ? label
-                    : undefined
-                }
-              >
-                <Icon
-                  size={18}
-                  strokeWidth={1.8}
-                  aria-hidden="true"
-                />
-
-                <span>{label}</span>
-              </NavLink>
-            ),
+        <nav className="workspace-navigation" aria-label="Main navigation">
+          {pinnedNavigation.length > 0 && (
+            <>
+              <span className="workspace-nav-caption">PINNED</span>
+              {pinnedNavigation.map(renderNavigationItem)}
+            </>
           )}
+
+          <span className="workspace-nav-caption">WORKSPACE</span>
+          {visibleNavigation.map(renderNavigationItem)}
         </nav>
 
         <div className="workspace-sidebar-tools">
@@ -509,7 +530,6 @@ export default function WorkspaceLayout() {
               strokeWidth={1.8}
               aria-hidden="true"
             />
-
             <span>Customize workspace</span>
           </button>
 
@@ -538,7 +558,6 @@ export default function WorkspaceLayout() {
             ) : (
               <PanelLeftClose size={18} aria-hidden="true" />
             )}
-
             <span>
               {preferences.sidebarCollapsed
                 ? "Expand sidebar"
@@ -548,10 +567,7 @@ export default function WorkspaceLayout() {
         </div>
 
         <div className="workspace-sidebar-footer">
-          <span
-            className="workspace-avatar"
-            aria-hidden="true"
-          >
+          <span className="workspace-avatar" aria-hidden="true">
             {avatar}
           </span>
 
@@ -578,60 +594,48 @@ export default function WorkspaceLayout() {
           <button
             type="button"
             className="workspace-icon-button workspace-menu-button"
-            aria-label={
-              sidebarOpen ? "Close navigation" : "Open navigation"
-            }
+            aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen((open) => !open)}
           >
             {sidebarOpen ? (
-              <PanelLeftOpen
-                size={20}
-                strokeWidth={1.8}
-                aria-hidden="true"
-              />
+              <PanelLeftOpen size={20} strokeWidth={1.8} aria-hidden="true" />
             ) : (
-              <PanelLeftClose
-                size={20}
-                strokeWidth={1.8}
-                aria-hidden="true"
-              />
+              <PanelLeftClose size={20} strokeWidth={1.8} aria-hidden="true" />
             )}
           </button>
 
           <div className="workspace-topbar-context">
-            <span className="workspace-topbar-eyebrow">
-              WORKSPACE
-            </span>
-
+            <span className="workspace-topbar-eyebrow">DEALSFLO</span>
             <span className="workspace-topbar-title">
-              {selectedOrganization?.name ?? "DealFlow"}
+              {selectedOrganization?.name ?? "Your workspace"}
             </span>
           </div>
 
-          <div className="workspace-topbar-search">
+          <form
+            className="workspace-topbar-search"
+            role="search"
+            onSubmit={handleSearchSubmit}
+          >
             <Search size={17} aria-hidden="true" />
 
             <input
+              ref={searchInputRef}
               type="search"
-              aria-label="Search workspace"
-              placeholder="Search leads, contacts, properties..."
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.currentTarget.value = "";
-                  event.currentTarget.blur();
-                }
-              }}
+              aria-label="Find a workspace module"
+              placeholder="Find a page..."
+              value={searchValue}
+              onChange={(event) => setSearchValue(event.target.value)}
             />
 
             <kbd aria-hidden="true">/</kbd>
-          </div>
+          </form>
 
           <div className="workspace-topbar-actions">
             {organizations.length > 1 && (
               <div
                 className="workspace-topbar-organization"
-                ref={organizationMenuRef}
+                ref={topbarOrganizationMenuRef}
               >
                 <button
                   type="button"
@@ -658,35 +662,22 @@ export default function WorkspaceLayout() {
 
                     {organizations.map((organization) => {
                       const selected =
-                        organization.id ===
-                        selectedOrganization?.id;
+                        organization.id === selectedOrganization?.id;
 
                       return (
                         <button
                           type="button"
                           key={organization.id}
                           className="workspace-organization-option"
-                          aria-current={
-                            selected ? "true" : undefined
-                          }
+                          aria-current={selected ? "true" : undefined}
                           onClick={() =>
-                            handleOrganizationSelect(
-                              organization.id,
-                            )
+                            handleOrganizationSelect(organization.id)
                           }
                         >
-                          <Building2
-                            size={16}
-                            aria-hidden="true"
-                          />
-
+                          <Building2 size={16} aria-hidden="true" />
                           <span>{organization.name}</span>
-
                           {selected && (
-                            <Check
-                              size={16}
-                              aria-label="Selected"
-                            />
+                            <Check size={16} aria-label="Selected" />
                           )}
                         </button>
                       );
@@ -724,18 +715,21 @@ export default function WorkspaceLayout() {
                 </div>
 
                 <p className="workspace-notification-empty">
-                  New workspace updates will appear here when
-                  notifications are available.
+                  Workspace notifications will appear here when the
+                  notification feed is connected.
                 </p>
+
+                <NavLink
+                  to="/notification-preferences"
+                  onClick={() => setNotificationOpen(false)}
+                >
+                  Notification settings
+                </NavLink>
               </div>
             )}
 
-            <div
-              className="workspace-account"
-              ref={accountMenuRef}
-            >
+            <div className="workspace-account" ref={accountMenuRef}>
               <button
-                ref={accountTriggerRef}
                 type="button"
                 className="workspace-account-button workspace-profile-trigger"
                 aria-label={`Account menu for ${
@@ -749,23 +743,15 @@ export default function WorkspaceLayout() {
                   setNotificationOpen(false);
                 }}
               >
-                <span
-                  className="workspace-avatar"
-                  aria-hidden="true"
-                >
+                <span className="workspace-avatar" aria-hidden="true">
                   {avatar}
                 </span>
 
                 <span className="workspace-account-name">
-                  {user?.display_name ||
-                    user?.email ||
-                    "Account"}
+                  {user?.display_name || user?.email || "Account"}
                 </span>
 
-                <ChevronDown
-                  size={15}
-                  aria-hidden="true"
-                />
+                <ChevronDown size={15} aria-hidden="true" />
               </button>
 
               {accountOpen && (
@@ -775,10 +761,7 @@ export default function WorkspaceLayout() {
                   aria-label="Account menu"
                 >
                   <div className="workspace-account-details">
-                    <strong>
-                      {user?.display_name || "Account"}
-                    </strong>
-
+                    <strong>{user?.display_name || "Account"}</strong>
                     <small>{user?.email}</small>
                   </div>
 
@@ -789,10 +772,7 @@ export default function WorkspaceLayout() {
                     disabled={signingOut}
                   >
                     <LogOut size={16} aria-hidden="true" />
-
-                    {signingOut
-                      ? "Signing out…"
-                      : "Sign out"}
+                    {signingOut ? "Signing out…" : "Sign out"}
                   </button>
                 </div>
               )}

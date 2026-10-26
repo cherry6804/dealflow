@@ -1,16 +1,15 @@
 
 import {
   Check,
-  GripVertical,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronDown,
+  ChevronUp,
+  Pin,
+  PinOff,
   RotateCcw,
   X,
 } from "lucide-react";
 
-import type {
-  WorkspacePreferences,
-} from "./workspacePreferences";
+import type { WorkspacePreferences } from "./workspacePreferences";
 
 interface WorkspaceCustomizerProps {
   open: boolean;
@@ -33,9 +32,16 @@ export default function WorkspaceCustomizer({
     return null;
   }
 
-  function update(
-    changes: Partial<WorkspacePreferences>,
-  ) {
+  const orderedModules = [
+    ...preferences.navigationOrder.filter((module) =>
+      availableModules.includes(module),
+    ),
+    ...availableModules.filter(
+      (module) => !preferences.navigationOrder.includes(module),
+    ),
+  ];
+
+  function update(changes: Partial<WorkspacePreferences>) {
     onChange({
       ...preferences,
       ...changes,
@@ -54,15 +60,26 @@ export default function WorkspaceCustomizer({
     update({ hiddenModules: [...hidden] });
   }
 
+  function togglePinned(module: string) {
+    const pinned = new Set(preferences.pinnedModules);
+
+    if (pinned.has(module)) {
+      pinned.delete(module);
+    } else {
+      pinned.add(module);
+    }
+
+    update({ pinnedModules: [...pinned] });
+  }
+
   function moveModule(module: string, direction: -1 | 1) {
-    const order = [...preferences.navigationOrder];
+    const order = [...orderedModules];
     const currentIndex = order.indexOf(module);
-
-    if (currentIndex < 0) return;
-
     const nextIndex = currentIndex + direction;
 
-    if (nextIndex < 0 || nextIndex >= order.length) return;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= order.length) {
+      return;
+    }
 
     [order[currentIndex], order[nextIndex]] = [
       order[nextIndex],
@@ -89,12 +106,8 @@ export default function WorkspaceCustomizer({
       >
         <header className="workspace-customizer-header">
           <div>
-            <h2 id="workspace-customizer-title">
-              Customize workspace
-            </h2>
-            <p>
-              Arrange your workspace to suit the way you work.
-            </p>
+            <h2 id="workspace-customizer-title">Customize workspace</h2>
+            <p>Arrange your workspace for the way your team works.</p>
           </div>
 
           <button
@@ -114,23 +127,16 @@ export default function WorkspaceCustomizer({
             <button
               type="button"
               className="workspace-setting-row"
+              aria-pressed={preferences.sidebarCollapsed}
               onClick={() =>
                 update({
                   sidebarCollapsed: !preferences.sidebarCollapsed,
                 })
               }
             >
-              {preferences.sidebarCollapsed ? (
-                <PanelLeftOpen size={18} />
-              ) : (
-                <PanelLeftClose size={18} />
-              )}
-
               <span>
                 <strong>Collapse sidebar</strong>
-                <small>
-                  Keep more room for your records and dashboards.
-                </small>
+                <small>Make more room for your records.</small>
               </span>
 
               <span
@@ -147,55 +153,51 @@ export default function WorkspaceCustomizer({
           <section className="workspace-setting-section">
             <h3>Navigation modules</h3>
             <p className="workspace-setting-description">
-              Hide optional modules and arrange the order. Access
-              permissions are not changed by these preferences.
+              Reorder modules, pin frequently used pages, or hide optional
+              links. These settings do not grant or revoke permissions.
             </p>
 
             <div className="workspace-module-list">
-              {availableModules.map((module) => {
-                const hidden =
-                  preferences.hiddenModules.includes(module);
-
-                const index =
-                  preferences.navigationOrder.indexOf(module);
+              {orderedModules.map((module, index) => {
+                const hidden = preferences.hiddenModules.includes(module);
+                const pinned = preferences.pinnedModules.includes(module);
 
                 return (
-                  <div
-                    className="workspace-module-row"
-                    key={module}
-                  >
-                    <GripVertical
-                      size={16}
-                      className="workspace-module-grip"
-                      aria-hidden="true"
-                    />
-
-                    <span className="workspace-module-name">
-                      {module}
-                    </span>
+                  <div className="workspace-module-row" key={module}>
+                    <span className="workspace-module-name">{module}</span>
 
                     <button
                       type="button"
                       className="workspace-order-button"
                       aria-label={`Move ${module} up`}
-                      disabled={index <= 0}
+                      disabled={index === 0}
                       onClick={() => moveModule(module, -1)}
                     >
-                      ↑
+                      <ChevronUp size={16} />
                     </button>
 
                     <button
                       type="button"
                       className="workspace-order-button"
                       aria-label={`Move ${module} down`}
-                      disabled={
-                        index < 0 ||
-                        index >=
-                          preferences.navigationOrder.length - 1
-                      }
+                      disabled={index === orderedModules.length - 1}
                       onClick={() => moveModule(module, 1)}
                     >
-                      ↓
+                      <ChevronDown size={16} />
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`workspace-order-button ${
+                        pinned ? "is-pinned" : ""
+                      }`}
+                      aria-label={
+                        pinned ? `Unpin ${module}` : `Pin ${module}`
+                      }
+                      aria-pressed={pinned}
+                      onClick={() => togglePinned(module)}
+                    >
+                      {pinned ? <PinOff size={15} /> : <Pin size={15} />}
                     </button>
 
                     <button
@@ -203,11 +205,7 @@ export default function WorkspaceCustomizer({
                       className={`workspace-module-visibility ${
                         hidden ? "" : "is-visible"
                       }`}
-                      aria-label={
-                        hidden
-                          ? `Show ${module}`
-                          : `Hide ${module}`
-                      }
+                      aria-label={hidden ? `Show ${module}` : `Hide ${module}`}
                       aria-pressed={!hidden}
                       onClick={() => toggleHidden(module)}
                     >
@@ -233,16 +231,10 @@ export default function WorkspaceCustomizer({
                   type="button"
                   key={value}
                   className={`workspace-density-option ${
-                    preferences.tableDensity === value
-                      ? "is-selected"
-                      : ""
+                    preferences.tableDensity === value ? "is-selected" : ""
                   }`}
-                  aria-pressed={
-                    preferences.tableDensity === value
-                  }
-                  onClick={() =>
-                    update({ tableDensity: value })
-                  }
+                  aria-pressed={preferences.tableDensity === value}
+                  onClick={() => update({ tableDensity: value })}
                 >
                   <span className={`density-preview ${value}`}>
                     <span />

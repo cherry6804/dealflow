@@ -1,4 +1,3 @@
-
 """Standalone worker for encrypted authentication email delivery."""
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from sqlalchemy import or_, select, update
 
 from app.auth.email_delivery import (
     send_password_reset_email,
+    send_team_invitation_email,
     send_verification_email,
 )
 from app.auth.email_outbox import (
@@ -102,6 +102,11 @@ def process_one_email() -> bool:
             )
         elif payload["kind"] == "password_reset":
             send_password_reset_email(
+                recipient=payload["recipient"],
+                token=payload["token"],
+            )
+        elif payload["kind"] == "team_invitation":
+            send_team_invitation_email(
                 recipient=payload["recipient"],
                 token=payload["token"],
             )

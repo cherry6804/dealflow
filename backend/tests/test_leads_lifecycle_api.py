@@ -97,12 +97,14 @@ def create_membership(
 def create_role(
     db: Session,
     *,
+    organization_id: UUID | None = None,
     name: str | None = None,
     is_active: bool = True,
 ) -> Role:
-    """Create a unique global test role."""
+    """Create a unique test role, optionally scoped to an organization."""
     role = Role(
         name=name or f"Test Role-{uuid4()}",
+        organization_id=organization_id,
         is_active=is_active,
     )
     db.add(role)
@@ -193,6 +195,7 @@ def create_authorized_user(
 
     role = create_role(
         db,
+        organization_id=organization.id,
         is_active=role_is_active,
     )
 
@@ -1975,7 +1978,7 @@ def test_role_is_global_and_tenant_assignment_is_membership_scoped() -> None:
         db.commit()
 
         assert role.id is not None
-        assert not hasattr(role, "organization_id")
+        assert role.organization_id is None
 
         assert assignment_a.role_id == role.id
         assert assignment_b.role_id == role.id
@@ -2012,7 +2015,7 @@ def test_reassign_owner_to_another_active_same_tenant_member() -> None:
             organization=organization,
         )
 
-        role = create_role(db)
+        role = create_role(db, organization_id=organization.id)
         assign_role_to_membership(
             db,
             membership=membership,
@@ -2099,7 +2102,7 @@ def test_invalid_owner_reassignment_preserves_existing_owner() -> None:
             organization=other_organization,
         )
 
-        role = create_role(db)
+        role = create_role(db, organization_id=organization.id)
         assign_role_to_membership(
             db,
             membership=membership,
@@ -2186,7 +2189,7 @@ def test_owner_can_be_member_of_multiple_organizations() -> None:
             organization=organization_b,
         )
 
-        role = create_role(db)
+        role = create_role(db, organization_id=organization_a.id)
         assign_role_to_membership(
             db,
             membership=actor_membership,

@@ -350,26 +350,41 @@ def test_duplicate_permission_key_is_rejected() -> None:
             session.commit()
 
 
-def test_duplicate_role_name_is_rejected() -> None:
-    """Role names must be globally unique."""
-    with TestingSessionLocal() as session:
-        create_role(
-            session,
-            name="Manager",
-        )
-        session.commit()
 
-        duplicate_role = Role(
+def test_role_names_can_be_reused_across_organizations() -> None:
+    """Different organizations can use the same role name."""
+    with TestingSessionLocal() as session:
+        organization_a = create_organization(session)
+        organization_b = create_organization(session)
+
+        manager_role_a = Role(
             id=uuid.uuid4(),
             name="Manager",
-            description="Duplicate role",
+            organization_id=organization_a.id,
+            description="Organization A Manager",
+            is_active=True,
+        )
+        manager_role_b = Role(
+            id=uuid.uuid4(),
+            name="Manager",
+            organization_id=organization_b.id,
+            description="Organization B Manager",
             is_active=True,
         )
 
-        session.add(duplicate_role)
+        session.add_all([manager_role_a, manager_role_b])
+        session.commit()
 
-        with pytest.raises(IntegrityError):
-            session.commit()
+        stored_role_a = session.get(Role, manager_role_a.id)
+        stored_role_b = session.get(Role, manager_role_b.id)
+
+        assert stored_role_a is not None
+        assert stored_role_b is not None
+
+        assert stored_role_a.name == stored_role_b.name == "Manager"
+        assert stored_role_a.organization_id == organization_a.id
+        assert stored_role_b.organization_id == organization_b.id
+        assert stored_role_a.organization_id != stored_role_b.organization_id
 
 
 def test_duplicate_role_permission_is_rejected() -> None:

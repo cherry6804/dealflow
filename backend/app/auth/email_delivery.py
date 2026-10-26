@@ -1,5 +1,5 @@
 
-"""SMTP delivery for DealFlow authentication emails."""
+"""SMTP delivery for DealFlow authentication and team invitation emails."""
 
 import logging
 import smtplib
@@ -28,13 +28,21 @@ def build_password_reset_url(token: str) -> str:
     return f"{base_url}/reset-password?{urlencode({'token': token})}"
 
 
+def build_team_invitation_url(token: str) -> str:
+    """Build the frontend team-invitation acceptance URL."""
+    settings = get_settings()
+    base_url = settings.email_verification_base_url.rstrip("/")
+
+    return f"{base_url}/accept-invitation?{urlencode({'token': token})}"
+
+
 def _send_email(
     *,
     recipient: str,
     subject: str,
     body: str,
 ) -> None:
-    """Send an authentication email using configured SMTP settings."""
+    """Send an email using the configured SMTP settings."""
     settings = get_settings()
 
     username = (
@@ -75,7 +83,7 @@ def _send_email(
             server.send_message(message)
 
     except (OSError, smtplib.SMTPException) as exc:
-        # Do not log SMTP exception details, credentials, or email content.
+        # Never log credentials, message contents, or SMTP exception details.
         logger.error(
             "Authentication email delivery failed (%s)",
             type(exc).__name__,
@@ -119,5 +127,24 @@ def send_password_reset_email(
             f"{build_password_reset_url(token)}\n\n"
             "If you did not request this reset, "
             "you can ignore this email."
+        ),
+    )
+
+
+def send_team_invitation_email(
+    *,
+    recipient: str,
+    token: str,
+) -> None:
+    """Send a team invitation using the configured SMTP adapter."""
+    _send_email(
+        recipient=recipient,
+        subject="You're invited to join a DealFlow team",
+        body=(
+            "You have been invited to join a DealFlow organization.\n\n"
+            "Sign in using the invited email address and accept the invitation:\n"
+            f"{build_team_invitation_url(token)}\n\n"
+            "The invitation expires after seven days. "
+            "If you were not expecting this invitation, you can ignore it."
         ),
     )
