@@ -80,20 +80,24 @@ def create_membership(
     return membership
 
 
+
 def create_role(
     db: Session,
     *,
+    organization_id: UUID | None = None,
     name: str | None = None,
     is_active: bool = True,
 ) -> Role:
-    """Create a unique test role."""
+    """Create a role, scoped to an organization when provided."""
     role = Role(
         name=name or f"Test Role-{uuid4()}",
+        organization_id=organization_id,
         is_active=is_active,
     )
     db.add(role)
     db.flush()
     return role
+
 
 
 def get_or_create_permission(
@@ -174,7 +178,7 @@ def grant_permission(
 
     assert membership is not None
 
-    role = create_role(db)
+    role = create_role(db, organization_id=organization.id)
 
     permission = get_or_create_permission(
         db,
@@ -212,7 +216,7 @@ def create_authorized_user(
         organization=organization,
     )
 
-    role = create_role(db)
+    role = create_role(db, organization_id=organization.id)
 
     permission = get_or_create_permission(
         db,

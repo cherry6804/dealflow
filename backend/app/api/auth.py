@@ -1,4 +1,3 @@
-
 """Authentication API routes for DealFlow."""
 
 from datetime import datetime, timedelta, timezone
@@ -46,13 +45,13 @@ from app.auth.service import create_session, revoke_session
 from app.config import get_settings
 from app.db.models.auth_session import AuthSession
 from app.db.models.email_verification_token import EmailVerificationToken
-from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
-from app.db.models.role import Role
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.user import User
 from app.db.session import get_db_session
+from app.team.service import provision_default_organization_roles
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
@@ -60,10 +59,12 @@ RESEND_GENERIC_MESSAGE = (
     "If the account exists and needs verification, "
     "a verification email will be sent when eligible."
 )
+
 PASSWORD_RESET_GENERIC_MESSAGE = (
     "If an eligible account exists for this email, "
     "a password-reset email will be sent when eligible."
 )
+
 PASSWORD_RESET_INVALID_MESSAGE = (
     "This password-reset link is invalid or has expired."
 )
@@ -79,29 +80,20 @@ def signup(
     response: Response,
     db: Session = Depends(get_db_session),
 ) -> SignupResponse:
-    """Create a pending user, workspace, verification token, and email job."""
+    """Create a user, organization, Owner membership and verification email."""
     del response
 
     normalized_email = payload.email.strip().lower()
+
     existing_user = db.scalar(
-        select(User.id).where(User.email == normalized_email)
+        select(User.id).where(
+            func.lower(User.email) == normalized_email
+        )
     )
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
-        )
-
-    owner_role = db.scalar(
-        select(Role).where(
-            Role.name == "DealFlow Owner",
-            Role.is_active.is_(True),
-        )
-    )
-    if owner_role is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Signup is temporarily unavailable. Please try again later.",
         )
 
     user = User(
@@ -111,11 +103,21 @@ def signup(
         is_active=True,
         is_email_verified=False,
     )
-    organization = Organization(name=payload.organization_name, is_active=True)
+    organization = Organization(
+        name=payload.organization_name,
+        is_active=True,
+    )
 
     try:
         db.add_all([user, organization])
         db.flush()
+
+        # Provision the scoped roles inside the same transaction as signup.
+        # This does not assign the legacy global Owner role.
+        owner_role = provision_default_organization_roles(
+            db,
+            organization_id=organization.id,
+        )
 
         membership = Membership(
             user_id=user.id,
@@ -143,6 +145,7 @@ def signup(
         db.commit()
         db.refresh(user)
         db.refresh(organization)
+
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -158,7 +161,10 @@ def signup(
 
     return SignupResponse(
         user=user,
-        organization={"id": organization.id, "name": organization.name},
+        organization={
+            "id": organization.id,
+            "name": organization.name,
+        },
         verification_required=True,
     )
 
@@ -181,7 +187,9 @@ def verify_email(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This verification link is invalid or has expired.",
             )
+
         db.commit()
+
     except HTTPException:
         raise
     except Exception:
@@ -211,12 +219,14 @@ def resend_verification(
     try:
         user = db.scalar(
             select(User)
-            .where(User.email == normalized_email)
+            .where(func.lower(User.email) == normalized_email)
             .with_for_update()
         )
 
         if user is None or not user.is_active or user.is_email_verified:
-            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
+            return ResendVerificationResponse(
+                message=RESEND_GENERIC_MESSAGE
+            )
 
         recent_count = (
             db.scalar(
@@ -241,14 +251,19 @@ def resend_verification(
             created_at = latest_token.created_at
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
+
             cooldown_end = created_at + timedelta(
                 seconds=settings.email_verification_resend_cooldown_seconds
             )
             if now < cooldown_end:
-                return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
+                return ResendVerificationResponse(
+                    message=RESEND_GENERIC_MESSAGE
+                )
 
         if recent_count >= settings.email_verification_max_resends_per_hour:
-            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
+            return ResendVerificationResponse(
+                message=RESEND_GENERIC_MESSAGE
+            )
 
         outstanding_tokens = db.scalars(
             select(EmailVerificationToken)
@@ -258,10 +273,15 @@ def resend_verification(
             )
             .with_for_update()
         ).all()
+
         for old_token in outstanding_tokens:
             old_token.used_at = now
 
-        _, raw_token = create_verification_token(db, user=user, now=now)
+        _, raw_token = create_verification_token(
+            db,
+            user=user,
+            now=now,
+        )
         enqueue_verification_email(
             db,
             recipient=user.email,
@@ -269,6 +289,7 @@ def resend_verification(
             now=now,
         )
         db.commit()
+
     except Exception:
         db.rollback()
         raise
@@ -294,14 +315,14 @@ def request_password_reset(
     try:
         user = db.scalar(
             select(User)
-            .where(User.email == normalized_email)
+            .where(func.lower(User.email) == normalized_email)
             .with_for_update()
         )
 
-        # Unknown, inactive, and otherwise ineligible accounts receive the
-        # same public response as eligible accounts.
         if user is None or not user.is_active:
-            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
+            return PasswordResetResponse(
+                message=PASSWORD_RESET_GENERIC_MESSAGE
+            )
 
         recent_count = (
             db.scalar(
@@ -326,6 +347,7 @@ def request_password_reset(
             created_at = latest_token.created_at
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
+
             cooldown_end = created_at + timedelta(
                 seconds=settings.password_reset_request_cooldown_seconds
             )
@@ -335,11 +357,17 @@ def request_password_reset(
                 )
 
         if recent_count >= settings.password_reset_max_requests_per_hour:
-            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
+            return PasswordResetResponse(
+                message=PASSWORD_RESET_GENERIC_MESSAGE
+            )
 
-        # Invalidate older outstanding reset tokens before creating a new one.
         invalidate_password_reset_tokens(db, user.id, now=now)
-        _, raw_token = create_password_reset_token(db, user.id, now=now)
+
+        _, raw_token = create_password_reset_token(
+            db,
+            user.id,
+            now=now,
+        )
         enqueue_password_reset_email(
             db,
             recipient=user.email,
@@ -347,6 +375,7 @@ def request_password_reset(
             now=now,
         )
         db.commit()
+
     except Exception:
         db.rollback()
         raise
@@ -372,6 +401,7 @@ def confirm_password_reset(
             token=payload.token,
             now=now,
         )
+
         if reset_record is None:
             db.rollback()
             raise HTTPException(
@@ -384,6 +414,7 @@ def confirm_password_reset(
             .where(User.id == reset_record.user_id)
             .with_for_update()
         )
+
         if user is None or not user.is_active:
             db.rollback()
             raise HTTPException(
@@ -393,8 +424,6 @@ def confirm_password_reset(
 
         user.password_hash = hash_password(payload.new_password)
 
-        # The consumed token is already marked used. Invalidate all other
-        # outstanding reset tokens for this user in the same transaction.
         invalidate_password_reset_tokens(db, user.id, now=now)
 
         db.execute(
@@ -407,6 +436,7 @@ def confirm_password_reset(
         )
 
         db.commit()
+
     except HTTPException:
         raise
     except Exception:
@@ -430,6 +460,7 @@ def login(
 ) -> LoginResponse:
     """Authenticate a verified user and create a server-side session."""
     settings = get_settings()
+
     user = authenticate_user(
         db=db,
         email=payload.email,
@@ -452,8 +483,13 @@ def login(
     expires_at = datetime.now(timezone.utc) + timedelta(
         hours=settings.auth_session_lifetime_hours
     )
+
     try:
-        _, token = create_session(db=db, user=user, expires_at=expires_at)
+        _, token = create_session(
+            db=db,
+            user=user,
+            expires_at=expires_at,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -465,6 +501,7 @@ def login(
         expires_at=expires_at,
         settings=settings,
     )
+
     return LoginResponse(user=user)
 
 

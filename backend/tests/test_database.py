@@ -17,6 +17,6 @@ def test_postgresql_connection() -> None:
                 text("SELECT current_database()")
             ).scalar_one()
 
-        assert result == "dealflow"
+        assert result == "dealflow_test"
     finally:
         engine.dispose()

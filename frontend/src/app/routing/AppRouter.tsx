@@ -1,4 +1,5 @@
 
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import RequireAuth from "../guards/RequireAuth";
@@ -7,27 +8,74 @@ import PublicOnly from "../guards/PublicOnly";
 import PublicLayout from "../../layouts/PublicLayout";
 import WorkspaceLayout from "../../layouts/WorkspaceLayout";
 
-import LoginPage from "../../features/auth/pages/LoginPage";
-import SignupPage from "../../features/auth/pages/SignupPage";
-import ForgotPasswordPage from "../../features/auth/pages/ForgotPasswordPage";
-import ResetPasswordPage from "../../features/auth/pages/ResetPasswordPage";
-import OnboardingPage from "../../features/onboarding/pages/OnboardingPage";
+// Authentication pages
+const LoginPage = lazy(() => import("../../features/auth/pages/LoginPage"));
+const SignupPage = lazy(() => import("../../features/auth/pages/SignupPage"));
+const VerifyEmailPage = lazy(
+  () => import("../../features/auth/pages/VerifyEmailPage"),
+);
+const ForgotPasswordPage = lazy(
+  () => import("../../features/auth/pages/ForgotPasswordPage"),
+);
+const ResetPasswordPage = lazy(
+  () => import("../../features/auth/pages/ResetPasswordPage"),
+);
 
-import TodayPage from "../../pages/TodayPage";
-import LeadsPage from "../../pages/LeadsPage";
-import ContactsPage from "../../pages/ContactsPage";
-import CustomersPage from "../../pages/CustomersPage";
-import RequirementsPage from "../../pages/RequirementsPage";
-import PipelinePage from "../../pages/PipelinePage";
-import DealsPage from "../../pages/DealsPage";
-import ReferralsPage from "../../pages/ReferralsPage";
-import PropertiesPage from "../../pages/PropertiesPage";
-import SiteVisitsPage from "../../pages/SiteVisitsPage";
-import ImportsPage from "../../pages/ImportsPage";
-import DocumentsPage from "../../pages/DocumentsPage";
-import AutomationRulesPage from "../../pages/AutomationRulesPage";
-import AutomationHistoryPage from "../../pages/AutomationExecutionHistoryPage";
-import NotificationPreferencesPage from "../../pages/NotificationPreferencesPage";
+// Onboarding
+const OnboardingPage = lazy(
+  () => import("../../features/onboarding/pages/OnboardingPage"),
+);
+
+// CRM pages
+const TodayPage = lazy(() => import("../../pages/TodayPage"));
+const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
+const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
+const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
+const RequirementsPage = lazy(() => import("../../pages/RequirementsPage"));
+const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
+const DealsPage = lazy(() => import("../../pages/DealsPage"));
+const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
+const PropertiesPage = lazy(() => import("../../pages/PropertiesPage"));
+const SiteVisitsPage = lazy(() => import("../../pages/SiteVisitsPage"));
+
+// Operations
+const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
+const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
+const AutomationRulesPage = lazy(
+  () => import("../../pages/AutomationRulesPage"),
+);
+const AutomationHistoryPage = lazy(
+  () => import("../../pages/AutomationExecutionHistoryPage"),
+);
+const NotificationPreferencesPage = lazy(
+  () => import("../../pages/NotificationPreferencesPage"),
+);
+
+// Team and invitations
+const TeamAccessPage = lazy(
+  () => import("../../features/settings/pages/TeamAccessPage"),
+);
+const AcceptInvitationPage = lazy(
+  () => import("../../pages/AcceptInvitationPage"),
+);
+
+function PageLoadingFallback() {
+  return (
+    <div
+      className="module-placeholder"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading page"
+    >
+      <div className="module-placeholder__content">
+        <span className="module-placeholder__eyebrow">
+          DEALSFLO WORKSPACE
+        </span>
+        <p>Loading page...</p>
+      </div>
+    </div>
+  );
+}
 
 function ModulePlaceholder({
   title,
@@ -40,7 +88,7 @@ function ModulePlaceholder({
     <section className="module-placeholder">
       <div className="module-placeholder__content">
         <span className="module-placeholder__eyebrow">
-          DEALFLOW WORKSPACE
+          DEALSFLO WORKSPACE
         </span>
         <h1>{title}</h1>
         <p>{description}</p>
@@ -51,108 +99,129 @@ function ModulePlaceholder({
 
 export default function AppRouter() {
   return (
-    <Routes>
-      {/* Public pages */}
-      <Route element={<PublicLayout />}>
-        <Route element={<PublicOnly />}>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/signup" element={<SignupPage />} />
+    <Suspense fallback={<PageLoadingFallback />}>
+      <Routes>
+        {/* Public authentication pages */}
+        <Route element={<PublicLayout />}>
+          <Route element={<PublicOnly />}>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+          </Route>
+
+          <Route
+            path="/verify-email"
+            element={<VerifyEmailPage />}
+          />
+
+          <Route
+            path="/forgot-password"
+            element={<ForgotPasswordPage />}
+          />
+
+          <Route
+            path="/reset-password"
+            element={<ResetPasswordPage />}
+          />
         </Route>
 
-        {/* Password recovery remains accessible without an active session. */}
+        {/* Invitation links must work before sign-in */}
         <Route
-          path="/forgot-password"
-          element={<ForgotPasswordPage />}
+          path="/accept-invitation"
+          element={<AcceptInvitationPage />}
         />
-        <Route
-          path="/reset-password"
-          element={<ResetPasswordPage />}
-        />
-      </Route>
 
-      {/* Authenticated workspace */}
-      <Route element={<RequireAuth />}>
-        <Route element={<WorkspaceLayout />}>
-          <Route index element={<TodayPage />} />
+        {/* Authenticated workspace */}
+        <Route element={<RequireAuth />}>
+          <Route element={<WorkspaceLayout />}>
+            <Route index element={<TodayPage />} />
 
-          {/* Getting started */}
-          <Route path="/onboarding" element={<OnboardingPage />} />
+            {/* Getting started */}
+            <Route
+              path="/onboarding"
+              element={<OnboardingPage />}
+            />
 
-          {/* CRM */}
-          <Route path="/leads" element={<LeadsPage />} />
-          <Route path="/contacts" element={<ContactsPage />} />
-          <Route path="/customers" element={<CustomersPage />} />
-          <Route path="/requirements" element={<RequirementsPage />} />
-          <Route path="/pipeline" element={<PipelinePage />} />
-          <Route path="/deals" element={<DealsPage />} />
-          <Route path="/referrals" element={<ReferralsPage />} />
-          <Route path="/properties" element={<PropertiesPage />} />
-          <Route path="/site-visits" element={<SiteVisitsPage />} />
+            {/* CRM */}
+            <Route path="/leads" element={<LeadsPage />} />
+            <Route path="/contacts" element={<ContactsPage />} />
+            <Route path="/customers" element={<CustomersPage />} />
+            <Route
+              path="/requirements"
+              element={<RequirementsPage />}
+            />
+            <Route path="/pipeline" element={<PipelinePage />} />
+            <Route path="/deals" element={<DealsPage />} />
+            <Route path="/properties" element={<PropertiesPage />} />
+            <Route path="/referrals" element={<ReferralsPage />} />
+            <Route path="/site-visits" element={<SiteVisitsPage />} />
 
-          {/* Operations */}
-          <Route path="/imports" element={<ImportsPage />} />
-          <Route path="/documents" element={<DocumentsPage />} />
-          <Route
-            path="/automation-rules"
-            element={<AutomationRulesPage />}
-          />
-          <Route
-            path="/automation-history"
-            element={<AutomationHistoryPage />}
-          />
-          <Route
-            path="/notification-preferences"
-            element={<NotificationPreferencesPage />}
-          />
+            {/* Operations */}
+            <Route path="/imports" element={<ImportsPage />} />
+            <Route path="/documents" element={<DocumentsPage />} />
 
-          {/* Additional modules — replace placeholders as features are built */}
-          <Route
-            path="/follow-ups"
-            element={
-              <ModulePlaceholder
-                title="Follow-ups"
-                description="Manage upcoming follow-ups, overdue activities, and customer reminders."
-              />
-            }
-          />
+            <Route
+              path="/automation-rules"
+              element={<AutomationRulesPage />}
+            />
 
-          <Route
-            path="/commissions"
-            element={
-              <ModulePlaceholder
-                title="Commissions"
-                description="Track proposed, agreed, and paid deal commissions."
-              />
-            }
-          />
+            <Route
+              path="/automation-history"
+              element={<AutomationHistoryPage />}
+            />
 
-          <Route
-            path="/billing"
-            element={
-              <ModulePlaceholder
-                title="Billing"
-                description="Manage your subscription, invoices, and billing details."
-              />
-            }
-          />
+            <Route
+              path="/notification-preferences"
+              element={<NotificationPreferencesPage />}
+            />
 
-          <Route
-            path="/settings"
-            element={
-              <ModulePlaceholder
-                title="Settings"
-                description="Configure your workspace, organization, and account preferences."
-              />
-            }
-          />
+            {/* Organization and team settings */}
+            <Route path="/settings" element={<TeamAccessPage />} />
 
-          {/* Unknown workspace routes */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+            {/* Modules not yet implemented */}
+            <Route
+              path="/follow-ups"
+              element={
+                <ModulePlaceholder
+                  title="Follow-ups"
+                  description="Manage upcoming follow-ups, overdue activities, and customer reminders."
+                />
+              }
+            />
+
+            <Route
+              path="/commissions"
+              element={
+                <ModulePlaceholder
+                  title="Commissions"
+                  description="Track proposed, agreed, and paid deal commissions."
+                />
+              }
+            />
+
+            <Route
+              path="/billing"
+              element={
+                <ModulePlaceholder
+                  title="Billing"
+                  description="Manage your subscription, invoices, and billing details."
+                />
+              }
+            />
+
+            {/* Unknown workspace routes */}
+            <Route
+              path="*"
+              element={<Navigate to="/" replace />}
+            />
+          </Route>
         </Route>
-      </Route>
 
-      {/* Unknown public routes */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* Unknown public routes */}
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+      </Routes>
+    </Suspense>
   );
 }

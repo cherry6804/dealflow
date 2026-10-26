@@ -57,6 +57,7 @@ from app.db.models.billing_reconciliation_record import (
 from app.db.models.email_verification_token import EmailVerificationToken
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.models.password_reset_token import PasswordResetToken
+from app.db.models.team_invitation import TeamInvitation
 
 __all__ = [
     "AuditEvent",
@@ -105,4 +106,5 @@ __all__ = [
     "EmailVerificationToken",
     "EmailOutboxMessage",
     "PasswordResetToken",
+    "TeamInvitation"
 ]

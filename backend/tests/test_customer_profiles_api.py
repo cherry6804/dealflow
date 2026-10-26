@@ -89,6 +89,7 @@ def create_authorized_user(
     )
     role = Role(
         name=f"Test Role-{uuid4()}",
+        organization_id=organization.id,
         is_active=True,
     )
     db.add_all([membership, role])

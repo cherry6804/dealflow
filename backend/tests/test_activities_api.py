@@ -98,6 +98,7 @@ def grant_permission(
 
     role = Role(
         name=f"Activity API Role {uuid4()}",
+        organization_id=membership.organization_id,
         is_active=True,
     )
     db.add(role)

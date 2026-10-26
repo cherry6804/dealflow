@@ -1,6 +1,6 @@
 
 import { useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../../lib/api";
 import { authApi } from "../../../services/authApi";
@@ -13,10 +13,26 @@ interface LoginLocationState {
   notice?: string;
 }
 
+function safeInternalDestination(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+
+  // Prevent external redirects and protocol-relative URLs.
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin) return null;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 export default function LoginPage() {
   const { status, refreshSession } = useAppContext();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,11 +40,17 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   const locationState = location.state as LoginLocationState | null;
-  const destination = locationState?.from?.pathname;
+  const destination =
+    safeInternalDestination(searchParams.get("next")) ??
+    safeInternalDestination(locationState?.from?.pathname ?? null) ??
+    "/";
+
   const notice = locationState?.notice;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
+
     setError(null);
     setSubmitting(true);
 
@@ -39,7 +61,7 @@ export default function LoginPage() {
       });
 
       await refreshSession();
-      navigate(destination || "/", { replace: true });
+      navigate(destination, { replace: true });
     } catch (cause) {
       setError(
         cause instanceof ApiError
@@ -60,18 +82,14 @@ export default function LoginPage() {
           </span>
           <span className="brand-copy">
             <span className="brand-name">DealFlow</span>
-            <span className="brand-subtitle">
-              Real estate workspace
-            </span>
+            <span className="brand-subtitle">Real estate workspace</span>
           </span>
         </Link>
 
         <div className="auth-heading">
           <span className="page-eyebrow">WELCOME BACK</span>
           <h1 id="login-heading">Sign in to DealFlow</h1>
-          <p>
-            Access your workspace and keep your business moving.
-          </p>
+          <p>Access your workspace and keep your business moving.</p>
         </div>
 
         {notice && (

@@ -36,17 +36,15 @@ def create_user(
     display_name: str | None = None,
     is_active: bool = True,
 ) -> User:
-    """Create a unique active test user."""
+    """Create a unique test user."""
     user = User(
         email=email or f"user-{uuid4()}@example.com",
         display_name=display_name or f"Test User {uuid4()}",
         password_hash="test-password-hash",
         is_active=is_active,
     )
-
     db.add(user)
     db.flush()
-
     return user
 
 
@@ -56,15 +54,13 @@ def create_organization(
     name: str | None = None,
     is_active: bool = True,
 ) -> Organization:
-    """Create a unique active test organization."""
+    """Create a unique test organization."""
     organization = Organization(
         name=name or f"Test Organization-{uuid4()}",
         is_active=is_active,
     )
-
     db.add(organization)
     db.flush()
-
     return organization
 
 
@@ -81,28 +77,26 @@ def create_membership(
         organization_id=organization.id,
         is_active=is_active,
     )
-
     db.add(membership)
     db.flush()
-
     return membership
 
 
 def create_role(
     db: Session,
     *,
+    organization_id: UUID,
     name: str | None = None,
     is_active: bool = True,
 ) -> Role:
-    """Create a unique test role."""
+    """Create a role scoped to the organization under test."""
     role = Role(
         name=name or f"Test Role-{uuid4()}",
+        organization_id=organization_id,
         is_active=is_active,
     )
-
     db.add(role)
     db.flush()
-
     return role
 
 
@@ -117,10 +111,8 @@ def create_permission(
         key=key or f"test.permission.{uuid4()}",
         is_active=is_active,
     )
-
     db.add(permission)
     db.flush()
-
     return permission
 
 
@@ -135,10 +127,8 @@ def assign_role_to_membership(
         membership_id=membership.id,
         role_id=role.id,
     )
-
     db.add(membership_role)
     db.flush()
-
     return membership_role
 
 
@@ -153,23 +143,18 @@ def assign_permission_to_role(
         role_id=role.id,
         permission_id=permission.id,
     )
-
     db.add(role_permission)
     db.flush()
-
     return role_permission
 
 
-def create_test_app(
-    required_permission_key: str,
-) -> FastAPI:
+def create_test_app(required_permission_key: str) -> FastAPI:
     """Create a minimal FastAPI application for authorization testing."""
     app = FastAPI()
 
     def override_get_db_session():
         """Provide a database session to the test application."""
         db = TestingSessionLocal()
-
         try:
             yield db
         finally:
@@ -179,9 +164,9 @@ def create_test_app(
     app.dependency_overrides[get_db_session] = override_get_db_session
 
     def override_current_user() -> CurrentUserContext:
-        """Placeholder authentication dependency for this test app."""
+        """Require each test to supply its authenticated user."""
         raise RuntimeError(
-            "The current-user dependency must be overridden by the test.",
+            "The current-user dependency must be overridden by the test."
         )
 
     app.dependency_overrides[get_current_user_context] = override_current_user
@@ -189,7 +174,7 @@ def create_test_app(
     @app.get("/protected")
     def protected_endpoint(
         tenant_context: TenantContext = Depends(
-            require_permission(required_permission_key),
+            require_permission(required_permission_key)
         ),
     ) -> dict[str, str]:
         """Protected endpoint used to exercise authorization."""
@@ -206,10 +191,9 @@ def make_test_client(
     required_permission_key: str,
     *,
     user: User,
-) -> TestClient:
+):
     """Create a test client with the supplied authenticated user."""
     app = create_test_app(required_permission_key)
-
     app.dependency_overrides[get_current_user_context] = (
         lambda: CurrentUserContext(user=user)
     )
@@ -224,9 +208,7 @@ def add_tenant_header(
 ) -> None:
     """Set the tenant-selection header for the test client."""
     client.headers.update(
-        {
-            "X-Organization-ID": str(organization.id),
-        },
+        {"X-Organization-ID": str(organization.id)}
     )
 
 
@@ -251,7 +233,6 @@ def find_latest_audit_event(
         )
         .limit(1)
     )
-
     return db.scalar(statement)
 
 
@@ -271,43 +252,31 @@ def test_permission_dependency_grants_access_when_permission_exists() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         membership = create_membership(
             db,
             user=user,
             organization=organization,
         )
-
-        role = create_role(db)
-
-        permission = create_permission(
+        role = create_role(
             db,
-            key=permission_key,
+            organization_id=organization.id,
         )
+        permission = create_permission(db, key=permission_key)
 
         assign_role_to_membership(
             db,
             membership=membership,
             role=role,
         )
-
         assign_permission_to_role(
             db,
             role=role,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 200
@@ -322,7 +291,6 @@ def test_permission_dependency_grants_access_when_permission_exists() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.ALLOWED.value
         assert audit_event.action == permission_key
@@ -335,30 +303,19 @@ def test_permission_dependency_denies_missing_permission() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         create_membership(
             db,
             user=user,
             organization=organization,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 403
-        assert response.json() == {
-            "detail": "Permission denied.",
-        }
+        assert response.json() == {"detail": "Permission denied."}
 
         audit_event = find_latest_audit_event(
             db,
@@ -366,7 +323,6 @@ def test_permission_dependency_denies_missing_permission() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.DENIED.value
         assert audit_event.action == permission_key
@@ -379,15 +335,15 @@ def test_permission_dependency_denies_inactive_permission() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         membership = create_membership(
             db,
             user=user,
             organization=organization,
         )
-
-        role = create_role(db)
-
+        role = create_role(
+            db,
+            organization_id=organization.id,
+        )
         permission = create_permission(
             db,
             key=permission_key,
@@ -399,24 +355,15 @@ def test_permission_dependency_denies_inactive_permission() -> None:
             membership=membership,
             role=role,
         )
-
         assign_permission_to_role(
             db,
             role=role,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 403
@@ -427,7 +374,6 @@ def test_permission_dependency_denies_inactive_permission() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.DENIED.value
 
@@ -439,46 +385,32 @@ def test_permission_dependency_denies_inactive_role() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         membership = create_membership(
             db,
             user=user,
             organization=organization,
         )
-
         role = create_role(
             db,
+            organization_id=organization.id,
             is_active=False,
         )
-
-        permission = create_permission(
-            db,
-            key=permission_key,
-        )
+        permission = create_permission(db, key=permission_key)
 
         assign_role_to_membership(
             db,
             membership=membership,
             role=role,
         )
-
         assign_permission_to_role(
             db,
             role=role,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 403
@@ -489,7 +421,6 @@ def test_permission_dependency_denies_inactive_role() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.DENIED.value
 
@@ -501,7 +432,6 @@ def test_permission_dependency_allows_through_one_of_multiple_roles() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         membership = create_membership(
             db,
             user=user,
@@ -510,48 +440,35 @@ def test_permission_dependency_allows_through_one_of_multiple_roles() -> None:
 
         first_role = create_role(
             db,
+            organization_id=organization.id,
             name=f"First Role-{uuid4()}",
         )
-
         second_role = create_role(
             db,
+            organization_id=organization.id,
             name=f"Second Role-{uuid4()}",
         )
-
-        permission = create_permission(
-            db,
-            key=permission_key,
-        )
+        permission = create_permission(db, key=permission_key)
 
         assign_role_to_membership(
             db,
             membership=membership,
             role=first_role,
         )
-
         assign_role_to_membership(
             db,
             membership=membership,
             role=second_role,
         )
-
         assign_permission_to_role(
             db,
             role=second_role,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 200
@@ -562,7 +479,6 @@ def test_permission_dependency_allows_through_one_of_multiple_roles() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.ALLOWED.value
 
@@ -573,7 +489,6 @@ def test_permission_dependency_preserves_cross_organization_isolation() -> None:
 
     with TestingSessionLocal() as db:
         user = create_user(db)
-
         organization_a = create_organization(db)
         organization_b = create_organization(db)
 
@@ -582,46 +497,32 @@ def test_permission_dependency_preserves_cross_organization_isolation() -> None:
             user=user,
             organization=organization_a,
         )
-
         membership_b = create_membership(
             db,
             user=user,
             organization=organization_b,
         )
-
         role_b = create_role(
             db,
+            organization_id=organization_b.id,
             name=f"Organization B Role-{uuid4()}",
         )
-
-        permission = create_permission(
-            db,
-            key=permission_key,
-        )
+        permission = create_permission(db, key=permission_key)
 
         assign_role_to_membership(
             db,
             membership=membership_b,
             role=role_b,
         )
-
         assign_permission_to_role(
             db,
             role=role_b,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            permission_key,
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization_a,
-            )
-
+        with make_test_client(permission_key, user=user) as client:
+            add_tenant_header(client, organization_a)
             response = client.get("/protected")
 
         assert response.status_code == 403
@@ -632,7 +533,6 @@ def test_permission_dependency_preserves_cross_organization_isolation() -> None:
             organization_id=organization_a.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.DENIED.value
 
@@ -642,9 +542,7 @@ def test_permission_dependency_preserves_cross_organization_isolation() -> None:
             organization_id=organization_b.id,
             permission_key=permission_key,
         )
-
         assert organization_b_audit_event is None
-
         assert membership_a.organization_id == organization_a.id
 
 
@@ -655,43 +553,31 @@ def test_permission_key_whitespace_is_normalized() -> None:
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         membership = create_membership(
             db,
             user=user,
             organization=organization,
         )
-
-        role = create_role(db)
-
-        permission = create_permission(
+        role = create_role(
             db,
-            key=permission_key,
+            organization_id=organization.id,
         )
+        permission = create_permission(db, key=permission_key)
 
         assign_role_to_membership(
             db,
             membership=membership,
             role=role,
         )
-
         assign_permission_to_role(
             db,
             role=role,
             permission=permission,
         )
-
         db.commit()
 
-        with make_test_client(
-            f"  {permission_key}  ",
-            user=user,
-        ) as client:
-            add_tenant_header(
-                client,
-                organization,
-            )
-
+        with make_test_client(f"  {permission_key}  ", user=user) as client:
+            add_tenant_header(client, organization)
             response = client.get("/protected")
 
         assert response.status_code == 200
@@ -702,7 +588,6 @@ def test_permission_key_whitespace_is_normalized() -> None:
             organization_id=organization.id,
             permission_key=permission_key,
         )
-
         assert audit_event is not None
         assert audit_event.decision == AuditDecision.ALLOWED.value
         assert audit_event.permission_key == permission_key
@@ -714,7 +599,6 @@ def test_persist_authorization_audit_event_uses_independent_transaction() -> Non
     with TestingSessionLocal() as db:
         user = create_user(db)
         organization = create_organization(db)
-
         db.commit()
 
         event = persist_authorization_audit_event(
@@ -727,11 +611,7 @@ def test_persist_authorization_audit_event_uses_independent_transaction() -> Non
 
         assert event.id is not None
 
-        persisted = db.get(
-            AuditEvent,
-            event.id,
-        )
-
+        persisted = db.get(AuditEvent, event.id)
         assert persisted is not None
         assert persisted.decision == AuditDecision.ALLOWED.value
         assert persisted.permission_key == "lead.read"

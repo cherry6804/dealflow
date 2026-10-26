@@ -29,6 +29,9 @@ from app.api.automation_rules import router as automation_rules_router
 from app.api.notifications import router as notifications_router
 from app.api.billing_webhooks import router as billing_webhooks_router
 from app.api.billing_audit import router as billing_audit_router
+from app.api.team import router as team_router
+from app.api.invitation_signup import router as invitation_signup_router
+
 from app.auth.email_outbox_worker import run_worker
 from app.billing.providers.registry import BillingProviderRegistry
 from app.config import get_settings
@@ -113,6 +116,8 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     application.include_router(billing_webhooks_router)
     application.include_router(billing_audit_router)
+    application.include_router(team_router)
+    application.include_router(invitation_signup_router)
 
     @application.get("/health", tags=["system"])
     def health() -> dict[str, str]:

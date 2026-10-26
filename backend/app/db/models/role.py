@@ -1,8 +1,17 @@
+
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, Text, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -13,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class Role(Base):
-    """Represent a named authorization role."""
+    """Authorization role, either global or organization-scoped."""
 
     __tablename__ = "roles"
 
@@ -25,8 +34,13 @@ class Role(Base):
 
     name: Mapped[str] = mapped_column(
         String(100),
-        unique=True,
         nullable=False,
+    )
+
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
 
@@ -35,10 +49,18 @@ class Role(Base):
         nullable=True,
     )
 
+    is_system: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=True,
+        server_default="true",
     )
 
     created_at: Mapped[datetime] = mapped_column(
