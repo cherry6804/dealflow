@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -27,6 +27,42 @@ class AuthSession(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    sibvo_subject: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        index=True,
+    )
+
+    sibvo_organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+    )
+
+    sibvo_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        index=True,
+    )
+
+    sso_last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Latest SIBVO access snapshot (subscription status, plan version,
+    # product role, entitlements). SIBVO is authoritative for these values.
+    sibvo_access: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
     )
 
     token_hash: Mapped[str] = mapped_column(

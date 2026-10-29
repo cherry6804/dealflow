@@ -3,14 +3,20 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import RequireAuth from "../guards/RequireAuth";
-import PublicOnly from "../guards/PublicOnly";
 
 import PublicLayout from "../../layouts/PublicLayout";
 import WorkspaceLayout from "../../layouts/WorkspaceLayout";
 
 // Authentication pages
-const LoginPage = lazy(() => import("../../features/auth/pages/LoginPage"));
-const SignupPage = lazy(() => import("../../features/auth/pages/SignupPage"));
+const BillingAccessPage = lazy(
+  () => import("../../features/billing/pages/BillingAccessPage"),
+);
+const SibvoSignInRedirectPage = lazy(
+  () => import("../../features/auth/pages/SibvoSignInRedirectPage"),
+);
+const SignupRoutePage = lazy(
+  () => import("../../features/auth/pages/SignupRoutePage"),
+);
 const VerifyEmailPage = lazy(
   () => import("../../features/auth/pages/VerifyEmailPage"),
 );
@@ -19,6 +25,16 @@ const ForgotPasswordPage = lazy(
 );
 const ResetPasswordPage = lazy(
   () => import("../../features/auth/pages/ResetPasswordPage"),
+);
+
+// SIBVO single sign-on callback
+const SsoCallbackPage = lazy(
+  () => import("../../features/auth/pages/SsoCallbackPage"),
+);
+
+// Public next step when SIBVO denies Dealsflo access
+const AccessRequiredPage = lazy(
+  () => import("../../features/auth/pages/AccessRequiredPage"),
 );
 
 // Onboarding
@@ -31,12 +47,16 @@ const TodayPage = lazy(() => import("../../pages/TodayPage"));
 const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
 const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
-const RequirementsPage = lazy(() => import("../../pages/RequirementsPage"));
+const RequirementsPage = lazy(
+  () => import("../../pages/RequirementsPage"),
+);
 const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
 const DealsPage = lazy(() => import("../../pages/DealsPage"));
 const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
 const PropertiesPage = lazy(() => import("../../pages/PropertiesPage"));
-const SiteVisitsPage = lazy(() => import("../../pages/SiteVisitsPage"));
+const SiteVisitsPage = lazy(
+  () => import("../../pages/SiteVisitsPage"),
+);
 
 // Operations
 const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
@@ -101,12 +121,20 @@ export default function AppRouter() {
   return (
     <Suspense fallback={<PageLoadingFallback />}>
       <Routes>
+        {/* SIBVO SSO callback: must be accessible before Dealsflo sign-in */}
+        <Route
+          path="/sso/callback"
+          element={<SsoCallbackPage />}
+        />
+
         {/* Public authentication pages */}
         <Route element={<PublicLayout />}>
-          <Route element={<PublicOnly />}>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-          </Route>
+          <Route path="/login" element={<SibvoSignInRedirectPage />} />
+          <Route path="/signup" element={<SignupRoutePage />} />
+          <Route
+            path="/access-required"
+            element={<AccessRequiredPage />}
+          />
 
           <Route
             path="/verify-email"
@@ -151,9 +179,15 @@ export default function AppRouter() {
             />
             <Route path="/pipeline" element={<PipelinePage />} />
             <Route path="/deals" element={<DealsPage />} />
-            <Route path="/properties" element={<PropertiesPage />} />
+            <Route
+              path="/properties"
+              element={<PropertiesPage />}
+            />
             <Route path="/referrals" element={<ReferralsPage />} />
-            <Route path="/site-visits" element={<SiteVisitsPage />} />
+            <Route
+              path="/site-visits"
+              element={<SiteVisitsPage />}
+            />
 
             {/* Operations */}
             <Route path="/imports" element={<ImportsPage />} />
@@ -198,15 +232,7 @@ export default function AppRouter() {
               }
             />
 
-            <Route
-              path="/billing"
-              element={
-                <ModulePlaceholder
-                  title="Billing"
-                  description="Manage your subscription, invoices, and billing details."
-                />
-              }
-            />
+            <Route path="/billing" element={<BillingAccessPage />} />
 
             {/* Unknown workspace routes */}
             <Route

@@ -1,6 +1,6 @@
 """Authentication API routes for DealFlow."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select, update
@@ -12,7 +12,11 @@ from app.auth.cookie import (
     get_session_cookie,
     set_session_cookie,
 )
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import (
+    CurrentUserContext,
+    get_current_user,
+    get_current_user_context,
+)
 from app.auth.email_outbox import (
     enqueue_password_reset_email,
     enqueue_verification_email,
@@ -28,6 +32,7 @@ from app.auth.password_reset import (
     create_password_reset_token,
     invalidate_password_reset_tokens,
 )
+from app.auth.rate_limit import consume_login_attempt
 from app.auth.schemas import (
     LoginRequest,
     LoginResponse,
@@ -65,9 +70,7 @@ PASSWORD_RESET_GENERIC_MESSAGE = (
     "a password-reset email will be sent when eligible."
 )
 
-PASSWORD_RESET_INVALID_MESSAGE = (
-    "This password-reset link is invalid or has expired."
-)
+PASSWORD_RESET_INVALID_MESSAGE = "This password-reset link is invalid or has expired."
 
 
 @router.post(
@@ -83,12 +86,16 @@ def signup(
     """Create a user, organization, Owner membership and verification email."""
     del response
 
+    if get_settings().app_environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Create your account through SIBVO.",
+        )
+
     normalized_email = payload.email.strip().lower()
 
     existing_user = db.scalar(
-        select(User.id).where(
-            func.lower(User.email) == normalized_email
-        )
+        select(User.id).where(func.lower(User.email) == normalized_email)
     )
     if existing_user is not None:
         raise HTTPException(
@@ -212,7 +219,7 @@ def resend_verification(
 ) -> ResendVerificationResponse:
     """Queue a replacement verification email without disclosing account state."""
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     normalized_email = payload.email.strip().lower()
     cutoff = now - timedelta(hours=1)
 
@@ -224,9 +231,7 @@ def resend_verification(
         )
 
         if user is None or not user.is_active or user.is_email_verified:
-            return ResendVerificationResponse(
-                message=RESEND_GENERIC_MESSAGE
-            )
+            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
         recent_count = (
             db.scalar(
@@ -250,20 +255,16 @@ def resend_verification(
         if latest_token is not None:
             created_at = latest_token.created_at
             if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
+                created_at = created_at.replace(tzinfo=UTC)
 
             cooldown_end = created_at + timedelta(
                 seconds=settings.email_verification_resend_cooldown_seconds
             )
             if now < cooldown_end:
-                return ResendVerificationResponse(
-                    message=RESEND_GENERIC_MESSAGE
-                )
+                return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
         if recent_count >= settings.email_verification_max_resends_per_hour:
-            return ResendVerificationResponse(
-                message=RESEND_GENERIC_MESSAGE
-            )
+            return ResendVerificationResponse(message=RESEND_GENERIC_MESSAGE)
 
         outstanding_tokens = db.scalars(
             select(EmailVerificationToken)
@@ -308,7 +309,7 @@ def request_password_reset(
 ) -> PasswordResetResponse:
     """Queue a password-reset email without disclosing account existence."""
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(hours=1)
     normalized_email = str(payload.email).strip().lower()
 
@@ -320,9 +321,7 @@ def request_password_reset(
         )
 
         if user is None or not user.is_active:
-            return PasswordResetResponse(
-                message=PASSWORD_RESET_GENERIC_MESSAGE
-            )
+            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
 
         recent_count = (
             db.scalar(
@@ -346,20 +345,16 @@ def request_password_reset(
         if latest_token is not None:
             created_at = latest_token.created_at
             if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
+                created_at = created_at.replace(tzinfo=UTC)
 
             cooldown_end = created_at + timedelta(
                 seconds=settings.password_reset_request_cooldown_seconds
             )
             if now < cooldown_end:
-                return PasswordResetResponse(
-                    message=PASSWORD_RESET_GENERIC_MESSAGE
-                )
+                return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
 
         if recent_count >= settings.password_reset_max_requests_per_hour:
-            return PasswordResetResponse(
-                message=PASSWORD_RESET_GENERIC_MESSAGE
-            )
+            return PasswordResetResponse(message=PASSWORD_RESET_GENERIC_MESSAGE)
 
         invalidate_password_reset_tokens(db, user.id, now=now)
 
@@ -393,7 +388,7 @@ def confirm_password_reset(
     db: Session = Depends(get_db_session),
 ) -> PasswordResetResponse:
     """Reset a password and revoke all existing sessions atomically."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     try:
         reset_record = consume_password_reset_token(
@@ -410,9 +405,7 @@ def confirm_password_reset(
             )
 
         user = db.scalar(
-            select(User)
-            .where(User.id == reset_record.user_id)
-            .with_for_update()
+            select(User).where(User.id == reset_record.user_id).with_for_update()
         )
 
         if user is None or not user.is_active:
@@ -455,11 +448,30 @@ def confirm_password_reset(
 )
 def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db_session),
 ) -> LoginResponse:
     """Authenticate a verified user and create a server-side session."""
     settings = get_settings()
+
+    if settings.app_environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Sign in through SIBVO.",
+        )
+
+    client_key = request.client.host if request.client is not None else "unknown"
+    allowed, retry_after = consume_login_attempt(
+        db,
+        client_key=f"login:{client_key}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many sign-in attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     user = authenticate_user(
         db=db,
@@ -480,7 +492,7 @@ def login(
             detail="Please verify your email address before signing in.",
         )
 
-    expires_at = datetime.now(timezone.utc) + timedelta(
+    expires_at = datetime.now(UTC) + timedelta(
         hours=settings.auth_session_lifetime_hours
     )
 
@@ -539,3 +551,23 @@ def get_me(
 ) -> LoginResponse:
     """Return the authenticated user's safe identity."""
     return LoginResponse(user=user)
+
+
+@router.get(
+    "/sibvo-access",
+    status_code=status.HTTP_200_OK,
+)
+def get_sibvo_access(
+    context: CurrentUserContext = Depends(get_current_user_context),
+) -> dict:
+    """Return SIBVO's access snapshot for this session (read-only).
+
+    SIBVO owns subscription, billing, and entitlement state; Dealsflo only
+    displays what SIBVO last returned for the signed-in session.
+    """
+    if not context.sibvo_attested or context.sibvo_access is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No SIBVO access information for this session.",
+        )
+    return context.sibvo_access

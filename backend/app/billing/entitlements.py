@@ -1,4 +1,11 @@
-"""Tenant-scoped subscription entitlement enforcement."""
+"""Tenant-scoped subscription entitlement enforcement.
+
+SIBVO owns subscriptions, billing, and entitlements. For SSO sessions the
+decision comes only from the SIBVO access snapshot stored on the session
+(refreshed on every revalidation). The local plan tables are a legacy
+fallback for unattested development and test sessions; production rejects
+those sessions before this code runs.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,8 @@ from sqlalchemy.orm import Session
 from app.db.models.plan import Plan
 from app.db.models.plan_entitlement import PlanEntitlement
 from app.db.models.subscription import Subscription
+from app.auth.dependencies import CurrentUserContext, get_current_user_context
+from app.config import get_settings
 from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
@@ -163,6 +172,41 @@ def get_entitlement_value(
     return value
 
 
+def _feature_enabled(
+    db: Session,
+    *,
+    user_context: CurrentUserContext,
+    organization_id: UUID,
+    key: str,
+) -> bool:
+    """Return whether a Boolean feature is enabled for this tenant session."""
+    if user_context.sibvo_attested:
+        access = user_context.sibvo_access
+        entitlements = access.get("entitlements") if isinstance(access, dict) else None
+        if not isinstance(entitlements, list):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="An eligible subscription is required.",
+            )
+        for item in entitlements:
+            if isinstance(item, dict) and item.get("feature_key") == key:
+                return item.get("enabled") is True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The required entitlement is not included in this plan.",
+        )
+
+    if get_settings().app_environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required.",
+        )
+    return (
+        get_entitlement_value(db, organization_id=organization_id, key=key)
+        is True
+    )
+
+
 def require_entitlement(
     key: str,
 ) -> Callable[..., TenantContext]:
@@ -174,15 +218,15 @@ def require_entitlement(
 
     def entitlement_dependency(
         tenant_context: TenantContext = Depends(get_tenant_context),
+        user_context: CurrentUserContext = Depends(get_current_user_context),
         db: Session = Depends(get_db_session),
     ) -> TenantContext:
-        value = get_entitlement_value(
+        if not _feature_enabled(
             db,
+            user_context=user_context,
             organization_id=tenant_context.organization_id,
             key=normalized_key,
-        )
-
-        if value is not True:
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This feature is not enabled for your subscription.",
@@ -214,15 +258,15 @@ def require_entitlement_with_permission(
 
     def combined_dependency(
         tenant_context: TenantContext = Depends(permission_dependency),
+        user_context: CurrentUserContext = Depends(get_current_user_context),
         db: Session = Depends(get_db_session),
     ) -> TenantContext:
-        value = get_entitlement_value(
+        if not _feature_enabled(
             db,
+            user_context=user_context,
             organization_id=tenant_context.organization_id,
             key=normalized_entitlement_key,
-        )
-
-        if value is not True:
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This feature is not enabled for your subscription.",

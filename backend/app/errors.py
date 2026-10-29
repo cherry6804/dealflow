@@ -11,6 +11,7 @@ def _error_response(
     code: str,
     message: str,
     details: Any = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Build the standard DealFlow API error response."""
     error: dict[str, Any] = {
@@ -24,6 +25,7 @@ def _error_response(
     return JSONResponse(
         status_code=status_code,
         content={"error": error},
+        headers=headers,
     )
 
 
@@ -46,6 +48,7 @@ async def http_exception_handler(
         code="HTTP_ERROR",
         message=message,
         details=details,
+        headers=exc.headers,
     )
 
 

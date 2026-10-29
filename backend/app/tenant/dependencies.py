@@ -41,6 +41,15 @@ def get_tenant_context(
             detail="Organization context is required.",
         )
 
+    if (
+        current_user.session_organization_id is not None
+        and organization_id != current_user.session_organization_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization access denied.",
+        )
+
     statement = (
         select(Membership)
         .join(Organization, Membership.organization_id == Organization.id)

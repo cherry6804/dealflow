@@ -2,12 +2,16 @@ import uuid
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 
+import httpx
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from pydantic import SecretStr
 
+from app.auth import dependencies as auth_dependencies
 from app.auth.dependencies import CurrentUserContext
 from app.auth.password import hash_password
 from app.auth.service import create_session
@@ -15,6 +19,7 @@ from app.config import get_settings
 from app.db.base import Base
 from app.db.models.membership import Membership
 from app.db.models.organization import Organization
+from app.db.models.auth_session import AuthSession
 from app.db.models.user import User
 from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext, get_tenant_context
@@ -136,7 +141,10 @@ def create_membership(
 
 
 
-def create_session_for_user(user: User) -> str:
+def create_session_for_user(
+    user: User,
+    organization: Organization | None = None,
+) -> str:
     """Create an authenticated session for a test user."""
     with TestingSessionLocal() as session:
         expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -145,12 +153,69 @@ def create_session_for_user(user: User) -> str:
             db=session,
             user=user,
             expires_at=expires_at,
+            organization=organization,
         )
 
         # Persist the test session before the request uses another DB session.
         session.commit()
 
         return token
+
+
+def create_sso_session_for_user(
+    user: User,
+    organization: Organization,
+    *,
+    last_verified_at: datetime,
+) -> tuple[str, uuid.UUID]:
+    with TestingSessionLocal() as session:
+        auth_session, token = create_session(
+            db=session,
+            user=user,
+            organization=organization,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            sibvo_subject=uuid.uuid4(),
+            sibvo_organization_id=uuid.uuid4(),
+            sibvo_session_id=uuid.uuid4(),
+            sso_last_verified_at=last_verified_at,
+        )
+        session.commit()
+        return token, auth_session.id
+
+
+def configure_sso_revalidation(monkeypatch, response_json=None, error=None):
+    settings = get_settings().model_copy(
+        update={
+            "sso_dealsflo_client_secret": SecretStr("test-secret"),
+            "sso_sibvo_base_url": "http://localhost:8000/api/v1",
+            "sso_revalidation_interval_seconds": 5,
+        }
+    )
+    monkeypatch.setattr(auth_dependencies, "get_settings", lambda: settings)
+
+    class FakeResponse:
+        def raise_for_status(self):
+            if error:
+                raise error
+
+        def json(self):
+            return response_json or {"active": True}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.payload = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, **kwargs):
+            self.payload = kwargs["data"]
+            return FakeResponse()
+
+    monkeypatch.setattr(auth_dependencies.httpx, "Client", FakeClient)
 
 
 
@@ -288,8 +353,78 @@ def test_tenant_context_rejects_inactive_organization() -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_revoked_sibvo_session_revokes_bound_dealsflo_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(monkeypatch, {"active": False})
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 401
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).revoked_at is not None
+
+
+def test_active_sibvo_session_passes_revalidation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(monkeypatch, {"active": True})
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 200
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).sso_last_verified_at is not None
+
+
+def test_sibvo_revalidation_outage_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, _session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(monkeypatch, error=httpx.ConnectError("offline"))
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 503
     assert response.json() == {
-        "detail": "Organization access denied.",
+        "detail": "SIBVO access verification is unavailable.",
     }
 
 
@@ -417,3 +552,132 @@ def test_tenant_context_rejects_inactive_user() -> None:
     assert response.json() == {
         "detail": "Authentication required.",
     }
+
+
+def test_sso_session_cannot_switch_to_another_local_organization() -> None:
+    user = create_user()
+    authorized_organization = create_organization()
+    other_organization = create_organization()
+    create_membership(user.id, authorized_organization.id)
+    create_membership(user.id, other_organization.id)
+
+    token = create_session_for_user(user, authorized_organization)
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(other_organization.id)},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Organization access denied."}
+
+
+def test_revalidation_stores_sibvo_access_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(
+        monkeypatch,
+        {
+            "active": True,
+            "subscription_status": "past_due",
+            "plan_version_id": str(uuid.uuid4()),
+            "product_role": "member",
+            "entitlements": [
+                {
+                    "feature_key": "workflow_automation",
+                    "enabled": True,
+                    "limit_value": None,
+                    "limit_unit": None,
+                    "unexpected": "dropped",
+                }
+            ],
+            "unexpected_top_level": "dropped",
+        },
+    )
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 200
+    with TestingSessionLocal() as session:
+        snapshot = session.get(AuthSession, session_id).sibvo_access
+    assert snapshot["subscription_status"] == "past_due"
+    assert snapshot["product_role"] == "member"
+    assert snapshot["entitlements"] == [
+        {
+            "feature_key": "workflow_automation",
+            "enabled": True,
+            "limit_value": None,
+            "limit_unit": None,
+        }
+    ]
+    assert "unexpected_top_level" not in snapshot
+
+
+def test_malformed_sibvo_access_snapshot_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(
+        monkeypatch,
+        {"active": True, "entitlements": [{"feature_key": "x", "enabled": "yes"}]},
+    )
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 503
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).sibvo_access is None
+
+
+def test_session_without_snapshot_revalidates_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh SSO login has no snapshot yet, so it must not wait 30 seconds."""
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc),
+    )
+    configure_sso_revalidation(monkeypatch, {"active": True, "entitlements": []})
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 200
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).sibvo_access == {
+            "subscription_status": None,
+            "plan_version_id": None,
+            "product_role": None,
+            "entitlements": [],
+        }

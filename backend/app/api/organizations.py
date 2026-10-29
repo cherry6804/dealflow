@@ -52,6 +52,11 @@ def list_my_organizations(
         .order_by(Organization.name.asc(), Organization.id.asc())
     )
 
+    if current_user.session_organization_id is not None:
+        statement = statement.where(
+            Organization.id == current_user.session_organization_id,
+        )
+
     organizations = db.scalars(statement).all()
 
     return [

@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 revision: str = "d4c7b2a91f60"
 down_revision: str | Sequence[str] | None = "8564215a0358"
@@ -17,7 +17,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Register imports.upload and grant it to the active owner role."""
+    """Register imports.upload and grant it to the active owner role.
+
+    Offline SQL generation cannot inspect existing permission and role
+    records. Keep the data-dependent migration live-only rather than
+    generating SQL that could grant duplicate or incorrect permissions.
+    """
+    if context.is_offline_mode():
+        return
+
     connection = op.get_bind()
 
     permissions = sa.table(
