@@ -8,6 +8,9 @@ import PublicLayout from "../../layouts/PublicLayout";
 import WorkspaceLayout from "../../layouts/WorkspaceLayout";
 
 // Authentication pages
+const BillingAccessPage = lazy(
+  () => import("../../features/billing/pages/BillingAccessPage"),
+);
 const SibvoSignInRedirectPage = lazy(
   () => import("../../features/auth/pages/SibvoSignInRedirectPage"),
 );
@@ -220,15 +223,7 @@ export default function AppRouter() {
               }
             />
 
-            <Route
-              path="/billing"
-              element={
-                <ModulePlaceholder
-                  title="Billing"
-                  description="Manage your subscription, invoices, and billing details."
-                />
-              }
-            />
+            <Route path="/billing" element={<BillingAccessPage />} />
 
             {/* Unknown workspace routes */}
             <Route

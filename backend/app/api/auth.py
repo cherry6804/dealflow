@@ -12,7 +12,11 @@ from app.auth.cookie import (
     get_session_cookie,
     set_session_cookie,
 )
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import (
+    CurrentUserContext,
+    get_current_user,
+    get_current_user_context,
+)
 from app.auth.email_outbox import (
     enqueue_password_reset_email,
     enqueue_verification_email,
@@ -547,3 +551,23 @@ def get_me(
 ) -> LoginResponse:
     """Return the authenticated user's safe identity."""
     return LoginResponse(user=user)
+
+
+@router.get(
+    "/sibvo-access",
+    status_code=status.HTTP_200_OK,
+)
+def get_sibvo_access(
+    context: CurrentUserContext = Depends(get_current_user_context),
+) -> dict:
+    """Return SIBVO's access snapshot for this session (read-only).
+
+    SIBVO owns subscription, billing, and entitlement state; Dealsflo only
+    displays what SIBVO last returned for the signed-in session.
+    """
+    if not context.sibvo_attested or context.sibvo_access is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No SIBVO access information for this session.",
+        )
+    return context.sibvo_access
