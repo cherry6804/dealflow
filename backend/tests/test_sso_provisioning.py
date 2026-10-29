@@ -222,3 +222,42 @@ def test_entitled_sibvo_owner_bootstraps_workspace_once(
         )
         is not None
     )
+
+
+def test_existing_account_with_same_email_is_not_linked_without_invitation(
+    provisioning_db: Session,
+) -> None:
+    """Matching email alone never links an existing local account to a SIBVO subject."""
+    db = provisioning_db
+    email = f"existing-{uuid4()}@example.com"
+    existing = User(
+        email=email,
+        display_name="Existing Member",
+        password_hash="not-used-by-sso",
+        is_active=True,
+        is_email_verified=True,
+    )
+    db.add(existing)
+    db.flush()
+    subject = uuid4()
+
+    with pytest.raises(HTTPException) as denied:
+        _provision_sso_access(
+            db,
+            subject=subject,
+            sibvo_organization_id=uuid4(),
+            email=email,
+            display_name="Existing Member",
+            organization_name="Attempted Workspace",
+            organization_role="owner",
+            invitation_token=None,
+        )
+
+    assert denied.value.status_code == 403
+    assert (
+        db.scalar(
+            select(SibvoIdentityLink).where(SibvoIdentityLink.sibvo_subject == subject)
+        )
+        is None
+    )
+    assert db.scalar(select(Membership).where(Membership.user_id == existing.id)) is None
