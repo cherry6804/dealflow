@@ -97,12 +97,12 @@
   border-color: var(--pipeline-accent);
   background: var(--pipeline-accent);
   color: #ffffff;
-  box-shadow: 0 2px 5px rgb(81 70 229 / 14%);
+  box-shadow: 0 2px 5px rgb(12 102 228 / 14%);
 }
 
 .pipeline-primary-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 5px 12px rgb(81 70 229 / 20%);
+  box-shadow: 0 5px 12px rgb(12 102 228 / 20%);
 }
 
 .pipeline-secondary-button:hover:not(:disabled) {
@@ -118,7 +118,7 @@
 
 .pipeline-primary-button:focus-visible,
 .pipeline-secondary-button:focus-visible {
-  outline: 3px solid rgb(81 70 229 / 20%);
+  outline: 3px solid rgb(12 102 228 / 20%);
   outline-offset: 2px;
 }
 
@@ -206,7 +206,7 @@
 .pipeline-filter select:focus-visible,
 .pipeline-stage-control select:focus-visible {
   border-color: var(--pipeline-accent);
-  outline: 3px solid rgb(81 70 229 / 12%);
+  outline: 3px solid rgb(12 102 228 / 12%);
   outline-offset: 1px;
 }
 
@@ -427,7 +427,7 @@
 .pipeline-column-drop-target {
   border-color: var(--pipeline-accent);
   box-shadow:
-    0 0 0 3px rgb(81 70 229 / 13%),
+    0 0 0 3px rgb(12 102 228 / 13%),
     0 8px 22px rgb(38 45 90 / 7%);
   transform: translateY(-2px);
 }
@@ -567,7 +567,7 @@
 
 .pipeline-lead-card:focus-within {
   border-color: var(--pipeline-accent);
-  box-shadow: 0 0 0 3px rgb(81 70 229 / 10%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 10%);
 }
 
 .pipeline-lead-card-dragging {

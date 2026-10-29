@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { WorkspacePreferences } from "./workspacePreferences";
+import { WORKSPACE_SPACES } from "./workspaceSpaces";
 
 interface WorkspaceCustomizerProps {
   open: boolean;
@@ -70,6 +71,23 @@ export default function WorkspaceCustomizer({
     }
 
     update({ pinnedModules: [...pinned] });
+  }
+
+  function moveSpace(spaceId: string, direction: -1 | 1) {
+    const order = [...preferences.spaceOrder];
+    const currentIndex = order.indexOf(spaceId);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= order.length) {
+      return;
+    }
+
+    [order[currentIndex], order[nextIndex]] = [
+      order[nextIndex],
+      order[currentIndex],
+    ];
+
+    update({ spaceOrder: order });
   }
 
   function moveModule(module: string, direction: -1 | 1) {
@@ -148,6 +166,47 @@ export default function WorkspaceCustomizer({
                 <span />
               </span>
             </button>
+          </section>
+
+          <section className="workspace-setting-section">
+            <h3>Spaces</h3>
+            <p className="workspace-setting-description">
+              Choose the order of spaces in your sidebar. Only you see this
+              order.
+            </p>
+
+            <div className="workspace-module-list">
+              {preferences.spaceOrder
+                .map((spaceId) =>
+                  WORKSPACE_SPACES.find((space) => space.id === spaceId),
+                )
+                .filter((space) => space !== undefined)
+                .map((space, index, spaces) => (
+                  <div className="workspace-module-row" key={space.id}>
+                    <span className="workspace-module-name">{space.label}</span>
+
+                    <button
+                      type="button"
+                      className="workspace-order-button"
+                      aria-label={`Move ${space.label} space up`}
+                      disabled={index === 0}
+                      onClick={() => moveSpace(space.id, -1)}
+                    >
+                      <ChevronUp size={16} aria-hidden="true" />
+                    </button>
+
+                    <button
+                      type="button"
+                      className="workspace-order-button"
+                      aria-label={`Move ${space.label} space down`}
+                      disabled={index === spaces.length - 1}
+                      onClick={() => moveSpace(space.id, 1)}
+                    >
+                      <ChevronDown size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+            </div>
           </section>
 
           <section className="workspace-setting-section">

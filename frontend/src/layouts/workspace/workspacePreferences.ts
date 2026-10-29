@@ -1,14 +1,23 @@
+import { WORKSPACE_SPACE_IDS } from "./workspaceSpaces";
 
 export type TableDensity = "comfortable" | "compact";
 
 export const WORKSPACE_PREFERENCES_CHANGED_EVENT =
   "dealflow:workspace-preferences-changed";
 
+/**
+ * Personal display preferences. Every field here applies only to the current
+ * user in the current organization, and is stored in this browser only. None
+ * of these values change shared organization configuration or another user's
+ * interface.
+ */
 export interface WorkspacePreferences {
   sidebarCollapsed: boolean;
   navigationOrder: string[];
   hiddenModules: string[];
   pinnedModules: string[];
+  spaceOrder: string[];
+  collapsedSpaces: string[];
   tableDensity: TableDensity;
 }
 
@@ -32,10 +41,13 @@ export const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
     "Automation Rules",
     "Activity",
     "Notifications",
+    "Billing",
     "Settings",
   ],
   hiddenModules: [],
   pinnedModules: ["Leads", "Follow-ups"],
+  spaceOrder: [...WORKSPACE_SPACE_IDS],
+  collapsedSpaces: [],
   tableDensity: "comfortable",
 };
 
@@ -90,6 +102,8 @@ function normalizePreferences(
       pinnedModules: defaults.pinnedModules.filter((module) =>
         availableModules.includes(module),
       ),
+      spaceOrder: [...WORKSPACE_SPACE_IDS],
+      collapsedSpaces: [],
     };
   }
 
@@ -97,7 +111,10 @@ function normalizePreferences(
   const savedOrder = uniqueStrings(saved.navigationOrder);
   const savedHidden = uniqueStrings(saved.hiddenModules);
   const savedPinned = uniqueStrings(saved.pinnedModules);
+  const savedSpaceOrder = uniqueStrings(saved.spaceOrder);
+  const savedCollapsedSpaces = uniqueStrings(saved.collapsedSpaces);
   const available = new Set(availableModules);
+  const availableSpaces = new Set(WORKSPACE_SPACE_IDS);
 
   return {
     sidebarCollapsed:
@@ -113,6 +130,12 @@ function normalizePreferences(
 
     pinnedModules: (savedPinned ?? defaults.pinnedModules).filter(
       (module) => available.has(module),
+    ),
+
+    spaceOrder: normalizeOrder(savedSpaceOrder, [...WORKSPACE_SPACE_IDS]),
+
+    collapsedSpaces: (savedCollapsedSpaces ?? []).filter((spaceId) =>
+      availableSpaces.has(spaceId),
     ),
 
     tableDensity:

@@ -4,8 +4,8 @@
   --referrals-ink: #172b4d;
   --referrals-muted: #64748b;
   --referrals-line: #dbe3f0;
-  --referrals-primary: #5145e5;
-  --referrals-primary-hover: #4338ca;
+  --referrals-primary: var(--df-primary);
+  --referrals-primary-hover: var(--df-primary-hover);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -76,15 +76,15 @@
 
 .referrals-primary-button {
   min-width: max-content;
-  border-color: #5145e5;
-  background: #5145e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #fff;
   box-shadow: 0 2px 5px rgb(49 46 129 / 12%);
 }
 
 .referrals-primary-button:hover:not(:disabled) {
-  border-color: #4338ca;
-  background: #4338ca;
+  border-color: var(--df-primary-hover);
+  background: var(--df-primary-hover);
 }
 
 .referrals-secondary-button,
@@ -169,9 +169,9 @@
 .referrals-form-field input:focus,
 .referrals-form-field select:focus,
 .referrals-form-field textarea:focus {
-  border-color: #5145e5;
+  border-color: var(--df-primary);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .referrals-visually-hidden {
@@ -296,8 +296,8 @@
   place-items: center;
   border: 1px solid #d9e2ff;
   border-radius: 50%;
-  background: #eef2ff;
-  color: #5145e5;
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
   font-size: 11px;
   font-weight: 750;
 }
@@ -374,7 +374,7 @@
 .referrals-icon-action:hover {
   border-color: #c4d1e5;
   background: #f5f7fc;
-  color: #5145e5;
+  color: var(--df-primary);
 }
 
 .referrals-icon-action svg {
@@ -396,7 +396,7 @@
 
 .referrals-configure-columns-button:hover {
   background: #e4eaf4;
-  color: #5145e5;
+  color: var(--df-primary);
 }
 
 .referrals-configure-columns-button svg {
@@ -508,8 +508,8 @@
   place-items: center;
   border: 1px solid #d9e2ff;
   border-radius: 12px;
-  background: #eef2ff;
-  color: #5145e5;
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
   font-size: 24px;
 }
 
@@ -517,7 +517,7 @@
   width: 27px;
   height: 27px;
   border: 3px solid #e6e8ff;
-  border-top-color: #5145e5;
+  border-top-color: var(--df-primary);
   border-radius: 50%;
   animation: referrals-spin 750ms linear infinite;
 }
@@ -678,7 +678,7 @@
   place-items: center;
   border: 1px solid #dce4f0;
   border-radius: 8px;
-  color: #5145e5;
+  color: var(--df-primary);
 }
 
 .referrals-action-menu > button.referrals-menu-danger strong {
@@ -706,7 +706,7 @@
 }
 
 .referrals-column-option input {
-  accent-color: #5145e5;
+  accent-color: var(--df-primary);
 }
 
 .referrals-column-menu-footer {
@@ -724,15 +724,15 @@
   border: 1px solid #dce4f0;
   border-radius: 7px;
   background: #fff;
-  color: #5145e5;
+  color: var(--df-primary);
   font-size: 11px;
   font-weight: 650;
   cursor: pointer;
 }
 
 .referrals-column-menu-footer button:last-child {
-  border-color: #5145e5;
-  background: #5145e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #fff;
 }
 
