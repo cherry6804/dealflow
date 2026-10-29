@@ -57,6 +57,42 @@ class DealCreateRequest(BaseModel):
         return value
 
 
+class DealUpdateRequest(BaseModel):
+    """Partial update of a deal's editable fields. Stage changes use the transition endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: UUID | None = None
+    owner_user_id: UUID | None = None
+    expected_value: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("owner_user_id")
+    @classmethod
+    def require_owner(cls, value: UUID | None) -> UUID | None:
+        if value is None:
+            raise ValueError("Deal owner is required.")
+        return value
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("currency cannot be null.")
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isalpha():
+            raise ValueError("currency must be a three-letter currency code.")
+        return normalized
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_notes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
 class DealStageTransitionRequest(BaseModel):
     """Request to progress a deal to its next permitted workflow stage."""
 

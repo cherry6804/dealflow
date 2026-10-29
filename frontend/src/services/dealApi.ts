@@ -40,6 +40,13 @@ export interface DealListParams {
   owner_user_id?: string;
 }
 
+export interface DealUpdateInput {
+  lead_id?: string | null;
+  expected_value?: number | null;
+  currency?: string;
+  notes?: string | null;
+}
+
 export interface DealCreateInput {
   customer_profile_id: string;
   property_id: string;
@@ -359,6 +366,10 @@ export const dealsApi = {
 
   create(input: DealCreateInput): Promise<Deal> {
     return api.post<Deal>("/deals", input);
+  },
+
+  update(dealId: string, input: DealUpdateInput): Promise<Deal> {
+    return api.patch<Deal>(`/deals/${encodeURIComponent(dealId)}`, input);
   },
 
   transitionStage(

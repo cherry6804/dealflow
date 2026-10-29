@@ -12,6 +12,8 @@ import { DataGrid, type Column, type SortColumn } from "react-data-grid";
 import "react-data-grid/lib/styles.css";
 
 import { ApiError } from "../lib/api";
+import { leadsApi, type Lead } from "../services/leadApi";
+import { contactsApi, type Contact } from "../services/contactApi";
 import {
   customerProfilesApi,
   type CustomerProfile,
@@ -24,6 +26,7 @@ import {
   type DealNegotiation,
   type NegotiationHistoryItem,
   type NegotiationState,
+  type DealUpdateInput,
 } from "../services/dealApi";
 import {
   propertiesApi,
@@ -139,7 +142,15 @@ const NEGOTIATION_COMMENTS: Record<NegotiationState, string[]> = {
 };
 
 
+interface DealEditForm {
+  lead_id: string;
+  expected_value: string;
+  currency: string;
+  notes: string;
+}
+
 interface DealForm {
+  lead_id: string;
   customer_profile_id: string;
   property_id: string;
   stage: DealStage;
@@ -149,6 +160,7 @@ interface DealForm {
 }
 
 const EMPTY_FORM: DealForm = {
+  lead_id: "",
   customer_profile_id: "",
   property_id: "",
   stage: "NEW",
@@ -274,6 +286,12 @@ async function fetchAllDeals(stage?: DealStage): Promise<Deal[]> {
 export default function DealsPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
+  const [editForm, setEditForm] = useState<DealEditForm>({ lead_id: "", expected_value: "", currency: "INR", notes: "" });
+  const [editError, setEditError] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
   const [properties, setProperties] = useState<Property[]>([]);
   const [negotiationDeal, setNegotiationDeal] = useState<Deal | null>(null);
 const [negotiation, setNegotiation] = useState<DealNegotiation | null>(null);
@@ -327,6 +345,19 @@ const [transitionError, setTransitionError] = useState("");
 
   const modalRef = useRef<HTMLElement>(null);
 
+  const contactById = useMemo(
+    () => new Map(contacts.map((contact) => [contact.id, contact])),
+    [contacts],
+  );
+
+  function leadLabel(lead: Lead): string {
+    const contact = contactById.get(lead.contact_id);
+    const name = contact
+      ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
+      : "Lead";
+    return `${name} · ${label(lead.status)}`;
+  }
+
   const customerById = useMemo(
     () =>
       new Map(
@@ -364,7 +395,7 @@ const [transitionError, setTransitionError] = useState("");
     setSupportDataLoading(true);
 
     try {
-      const [customerResult, propertyResult] = await Promise.all([
+      const [customerResult, propertyResult, leadResult, contactResult] = await Promise.all([
         customerProfilesApi.list({
           page: 1,
           page_size: 100,
@@ -375,10 +406,14 @@ const [transitionError, setTransitionError] = useState("");
           page_size: 100,
           status: "AVAILABLE",
         }),
+        leadsApi.list({ page: 1, page_size: 100, is_active: true }),
+        contactsApi.list({ page: 1, page_size: 100, is_active: true }),
       ]);
 
       setCustomers(customerResult.items);
       setProperties(propertyResult.items);
+      setLeads(leadResult.items);
+      setContacts(contactResult.items);
     } catch (loadError) {
       setFormError(errorMessage(loadError));
     } finally {
@@ -723,6 +758,66 @@ async function handleStageTransition(deal: Deal) {
     setSuccess("");
   }
 
+  function openEditDeal(deal: Deal) {
+    setEditingDeal(deal);
+    setEditForm({
+      lead_id: deal.lead_id ?? "",
+      expected_value: deal.expected_value === null || deal.expected_value === undefined ? "" : String(deal.expected_value),
+      currency: deal.currency,
+      notes: deal.notes ?? "",
+    });
+    setEditError("");
+    if (leads.length === 0) void loadSelectorData();
+  }
+
+  function closeEditDeal() {
+    if (editSaving) return;
+    setEditingDeal(null);
+    setEditError("");
+  }
+
+  async function handleEditDeal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingDeal) return;
+
+    const currency = editForm.currency.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setEditError("Enter a valid three-letter currency code.");
+      return;
+    }
+
+    const expectedValue = editForm.expected_value.trim()
+      ? Number(editForm.expected_value)
+      : null;
+    if (expectedValue !== null && (!Number.isFinite(expectedValue) || expectedValue < 0)) {
+      setEditError("Expected value must be zero or more.");
+      return;
+    }
+
+    const input: DealUpdateInput = {
+      lead_id: editForm.lead_id || null,
+      expected_value: expectedValue,
+      currency,
+      notes: editForm.notes.trim() || null,
+    };
+
+    setEditSaving(true);
+    setEditError("");
+
+    try {
+      const updated = await dealsApi.update(editingDeal.id, input);
+      setDeals((current) =>
+        current.map((deal) => (deal.id === updated.id ? updated : deal)),
+      );
+      setEditingDeal(null);
+      setSuccess("Deal updated successfully.");
+    } catch (updateError) {
+      setEditError(errorMessage(updateError));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   async function handleCloseDeal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -816,6 +911,7 @@ async function handleStageTransition(deal: Deal) {
         expected_value: expectedValue,
         currency: form.currency.trim().toUpperCase(),
         notes: form.notes.trim() || null,
+        lead_id: form.lead_id || null,
       });
 
       setIsFormOpen(false);
@@ -1158,6 +1254,28 @@ async function handleStageTransition(deal: Deal) {
               </button>
             </header>
 
+            {actionMenu.deal.stage !== "CLOSED_WON" && actionMenu.deal.stage !== "CLOSED_LOST" && (
+              <button
+                className="deals-action-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={editSaving}
+                onClick={() => {
+                  const selectedDeal = actionMenu.deal;
+                  setActionMenu(null);
+                  openEditDeal(selectedDeal);
+                }}
+              >
+                <span className="deals-action-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /></svg>
+                </span>
+                <span className="deals-action-menu-copy">
+                  <strong>Edit deal</strong>
+                  <small>Change the linked lead, expected value, currency or notes</small>
+                </span>
+              </button>
+            )}
+
             {NEXT_DEAL_STAGE[actionMenu.deal.stage as DealStage] && (
               <button
                 className="deals-action-menu-item"
@@ -1286,6 +1404,124 @@ async function handleStageTransition(deal: Deal) {
           </div>
         </div>, document.body,
       )}
+
+      {editingDeal &&
+        createPortal(
+          <div
+            className="deals-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeEditDeal();
+            }}
+          >
+            <section
+              className="deals-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="deal-edit-modal-title"
+            >
+              <header className="deals-modal-header">
+                <div>
+                  <span className="deals-eyebrow">DEAL WORKSPACE</span>
+                  <h2 id="deal-edit-modal-title">Edit deal</h2>
+                  <p>
+                    {customerName(customerById.get(editingDeal.customer_profile_id))}{" "}
+                    · {propertyAddress(propertyById.get(editingDeal.property_id))}
+                  </p>
+                </div>
+                <button
+                  className="deals-modal-close"
+                  type="button"
+                  aria-label="Close deal edit dialog"
+                  disabled={editSaving}
+                  onClick={closeEditDeal}
+                >
+                  ×
+                </button>
+              </header>
+
+              <form className="deals-form" onSubmit={handleEditDeal} noValidate>
+                <div className="deals-form-body">
+                  {editError && (
+                    <div className="deals-alert deals-alert-error deals-form-error" role="alert">
+                      <p>{editError}</p>
+                    </div>
+                  )}
+
+                  <div className="deals-form-grid">
+                    <label className="deals-form-field deals-field-full">
+                      <span>Linked lead</span>
+                      <select
+                        value={editForm.lead_id}
+                        disabled={editSaving}
+                        onChange={(event) =>
+                          setEditForm((current) => ({ ...current, lead_id: event.target.value }))
+                        }
+                      >
+                        <option value="">No linked lead</option>
+                        {leads.map((lead) => (
+                          <option key={lead.id} value={lead.id}>
+                            {leadLabel(lead)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="deals-form-field">
+                      <span>Expected value</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={editForm.expected_value}
+                        disabled={editSaving}
+                        onChange={(event) =>
+                          setEditForm((current) => ({ ...current, expected_value: event.target.value }))
+                        }
+                      />
+                    </label>
+
+                    <label className="deals-form-field">
+                      <span>Currency</span>
+                      <input
+                        type="text"
+                        maxLength={3}
+                        value={editForm.currency}
+                        disabled={editSaving}
+                        onChange={(event) =>
+                          setEditForm((current) => ({ ...current, currency: event.target.value }))
+                        }
+                      />
+                    </label>
+
+                    <label className="deals-form-field deals-field-full">
+                      <span>Notes</span>
+                      <textarea
+                        rows={3}
+                        maxLength={2000}
+                        value={editForm.notes}
+                        disabled={editSaving}
+                        onChange={(event) =>
+                          setEditForm((current) => ({ ...current, notes: event.target.value }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <footer className="deals-form-actions">
+                  <button className="deals-secondary-button" type="button" disabled={editSaving} onClick={closeEditDeal}>
+                    Cancel
+                  </button>
+                  <button className="deals-primary-button" type="submit" disabled={editSaving}>
+                    {editSaving ? "Saving…" : "Save changes"}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>,
+          document.body,
+        )}
 
       {closingDeal &&
         createPortal(
@@ -1794,6 +2030,22 @@ async function handleStageTransition(deal: Deal) {
                       </h3>
 
                       <div className="deals-form-grid">
+                        <label className="deals-form-field deals-field-full">
+                          <span>Linked lead (optional)</span>
+                          <select
+                            value={form.lead_id}
+                            disabled={saving}
+                            onChange={(event) => updateForm("lead_id", event.target.value)}
+                          >
+                            <option value="">No linked lead</option>
+                            {leads.map((lead) => (
+                              <option key={lead.id} value={lead.id}>
+                                {leadLabel(lead)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
                         <label className="deals-form-field deals-field-full">
                           <span>Customer *</span>
                           <select

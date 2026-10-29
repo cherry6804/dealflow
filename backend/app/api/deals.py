@@ -22,13 +22,16 @@ from app.deals.schemas import (
     DealResponse,
     DealStage,
     DealStageTransitionRequest,
+    DealUpdateRequest,
 )
 from app.deals.service import (
     CLOSED_STAGES,
+    DealClosedError,
     create_deal,
     get_deal,
     list_deals,
     transition_deal_stage,
+    update_deal,
 )
 from app.notifications.service import create_notification
 from app.tenant.dependencies import TenantContext
@@ -182,6 +185,61 @@ def get_deal_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deal not found.",
         )
+
+    return DealResponse.model_validate(deal)
+
+
+@router.patch(
+    "/{deal_id}",
+    response_model=DealResponse,
+)
+def update_deal_endpoint(
+    deal_id: UUID,
+    payload: DealUpdateRequest,
+    tenant_context: TenantContext = Depends(
+        require_permission("deals.update")
+    ),
+    db: Session = Depends(get_db_session),
+) -> DealResponse:
+    """Update a deal's editable fields. Closed deals are read-only."""
+    try:
+        deal = update_deal(
+            db=db,
+            organization_id=tenant_context.organization_id,
+            deal_id=deal_id,
+            payload=payload,
+        )
+        if deal is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Deal not found.",
+            )
+        db.commit()
+    except DealClosedError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except LookupError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The deal could not be saved because of a data conflict.",
+        ) from exc
 
     return DealResponse.model_validate(deal)
 
