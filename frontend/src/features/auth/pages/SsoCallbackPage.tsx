@@ -9,6 +9,7 @@ import { organizationApi } from "../../../services/organizationApi";
 interface SsoCallbackResponse {
   user_id: string;
   organization_id: string;
+  return_to?: string | null;
 }
 
 export default function SsoCallbackPage() {
@@ -26,6 +27,17 @@ export default function SsoCallbackPage() {
       const code = searchParams.get("code");
       const state = searchParams.get("state");
       const providerError = searchParams.get("error");
+
+      if (providerError === "access_denied") {
+        // SIBVO issued no code. The reason only selects the next step on the
+        // access page; it grants nothing by itself.
+        const reason = searchParams.get("error_description") ?? "";
+        navigate(
+          `/access-required?${new URLSearchParams({ reason }).toString()}`,
+          { replace: true },
+        );
+        return;
+      }
 
       if (providerError || !code || !state) {
         setMessage(
@@ -60,9 +72,11 @@ export default function SsoCallbackPage() {
         }
 
         selectOrganization(result.organization_id);
-        const requestedPath = window.sessionStorage.getItem(
-          "dealsflo.sso.returnTo",
-        );
+        // The backend only returns allowlisted pages; the path is still
+        // validated below like any other stored return path.
+        const requestedPath =
+          result.return_to ??
+          window.sessionStorage.getItem("dealsflo.sso.returnTo");
         window.sessionStorage.removeItem("dealsflo.sso.returnTo");
         const safePath =
           requestedPath?.startsWith("/") &&

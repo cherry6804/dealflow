@@ -111,8 +111,20 @@ def _authorization_url(
     return urljoin(base_url, "sso/authorize") + "?" + query
 
 
+# Pages SIBVO may ask Dealsflo to open after sign-in. Anything else lands
+# on the workspace home; this is not a general redirect parameter.
+SSO_RETURN_PATHS = frozenset({"/", "/settings", "/billing"})
+
+
+def _safe_return_path(value: str | None) -> str | None:
+    return value if value in SSO_RETURN_PATHS else None
+
+
 def _new_flow(
-    settings, organization_id: UUID, invitation_token: str | None = None
+    settings,
+    organization_id: UUID,
+    invitation_token: str | None = None,
+    return_to: str | None = None,
 ) -> tuple[str, str]:
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
@@ -120,6 +132,8 @@ def _new_flow(
     cookie = json.loads(_flow_cookie(settings, state, verifier, nonce))
     if invitation_token is not None:
         cookie["invitation_token"] = invitation_token
+    if return_to is not None:
+        cookie["return_to"] = return_to
     response_cookie = json.dumps(cookie, separators=(",", ":"))
     return _authorization_url(
         settings, organization_id, state, verifier, nonce
@@ -329,8 +343,12 @@ def _provision_sso_access(
 
 
 @router.get("/start")
-def start_sso(organization_id: UUID) -> RedirectResponse:
-    """Start SSO for the organization selected in the SIBVO application."""
+def start_sso(organization_id: UUID, return_to: str | None = None) -> RedirectResponse:
+    """Start SSO for the organization selected in the SIBVO application.
+
+    `return_to` may name one allowlisted Dealsflo page (for example the
+    administration area); unknown values are ignored, never redirected to.
+    """
     settings = get_settings()
 
     if not settings.sso_dealsflo_client_secret:
@@ -339,7 +357,9 @@ def start_sso(organization_id: UUID) -> RedirectResponse:
             detail="SSO is not configured.",
         )
 
-    authorize_url, raw_flow = _new_flow(settings, organization_id)
+    authorize_url, raw_flow = _new_flow(
+        settings, organization_id, return_to=_safe_return_path(return_to)
+    )
     response = RedirectResponse(
         authorize_url,
         status_code=status.HTTP_302_FOUND,
@@ -419,6 +439,7 @@ def finish_sso(
         verifier = flow["verifier"]
         nonce = flow["nonce"]
         invitation_token = flow.get("invitation_token")
+        return_to = _safe_return_path(flow.get("return_to"))
     except (ValueError, TypeError, KeyError):
         raise HTTPException(
             status_code=400,
@@ -495,6 +516,18 @@ def finish_sso(
                 iat={"essential": True},
                 nonce={"essential": True, "value": nonce},
             ).validate(claims)
+    except httpx.HTTPStatusError as error:
+        # SIBVO refused the code or request (expired, reused, or forged): a client error.
+        # Server errors and transport failures are upstream outages and stay 502.
+        if 400 <= error.response.status_code < 500:
+            raise HTTPException(
+                status_code=400,
+                detail="SIBVO rejected this sign-in. Start sign-in again.",
+            ) from None
+        raise HTTPException(
+            status_code=502,
+            detail="SIBVO sign-in could not be completed. Please retry.",
+        ) from None
     except (httpx.HTTPError, ValueError, KeyError, JoseError):
         raise HTTPException(
             status_code=502,
@@ -560,6 +593,7 @@ def finish_sso(
         {
             "user_id": str(user.id),
             "organization_id": str(organization.id),
+            "return_to": return_to,
         }
     )
     set_session_cookie(

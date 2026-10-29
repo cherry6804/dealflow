@@ -32,6 +32,11 @@ const SsoCallbackPage = lazy(
   () => import("../../features/auth/pages/SsoCallbackPage"),
 );
 
+// Public next step when SIBVO denies Dealsflo access
+const AccessRequiredPage = lazy(
+  () => import("../../features/auth/pages/AccessRequiredPage"),
+);
+
 // Onboarding
 const OnboardingPage = lazy(
   () => import("../../features/onboarding/pages/OnboardingPage"),
@@ -126,6 +131,10 @@ export default function AppRouter() {
         <Route element={<PublicLayout />}>
           <Route path="/login" element={<SibvoSignInRedirectPage />} />
           <Route path="/signup" element={<SignupRoutePage />} />
+          <Route
+            path="/access-required"
+            element={<AccessRequiredPage />}
+          />
 
           <Route
             path="/verify-email"

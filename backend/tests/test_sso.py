@@ -1,5 +1,6 @@
 import json
 import time
+from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -122,7 +123,9 @@ def set_flow_cookie(client, state="test-state-1234567890"):
     return state
 
 
-def mock_token_exchange(monkeypatch, claims, *, publish_wrong_key=False):
+def mock_token_exchange(
+    monkeypatch, claims, *, publish_wrong_key=False, token_status=None
+):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = private_key.private_bytes(
         serialization.Encoding.PEM,
@@ -157,7 +160,12 @@ def mock_token_exchange(monkeypatch, claims, *, publish_wrong_key=False):
 
     class FakeResponse:
         def raise_for_status(self):
-            return None
+            if token_status is not None and token_status >= 400:
+                raise sso.httpx.HTTPStatusError(
+                    "token endpoint refused",
+                    request=sso.httpx.Request("POST", "http://sibvo.test/sso/token"),
+                    response=sso.httpx.Response(token_status),
+                )
 
         def json(self):
             return {"id_token": id_token}
@@ -316,6 +324,33 @@ def test_callback_rejects_invalid_signature(client, monkeypatch):
     assert response.status_code == 502
 
 
+@pytest.mark.parametrize("token_status", [400, 401])
+def test_callback_rejected_code_is_client_error(client, monkeypatch, token_status):
+    configure_sso(monkeypatch)
+    set_flow_cookie(client)
+    mock_token_exchange(monkeypatch, valid_claims(client), token_status=token_status)
+
+    response = client.post(
+        "/api/v1/sso/callback",
+        json={"code": "a" * 32, "state": "test-state-1234567890"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_callback_token_endpoint_outage_is_bad_gateway(client, monkeypatch):
+    configure_sso(monkeypatch)
+    set_flow_cookie(client)
+    mock_token_exchange(monkeypatch, valid_claims(client), token_status=503)
+
+    response = client.post(
+        "/api/v1/sso/callback",
+        json={"code": "a" * 32, "state": "test-state-1234567890"},
+    )
+
+    assert response.status_code == 502
+
+
 def test_callback_success_creates_session(client, monkeypatch):
     configure_sso(monkeypatch)
     set_flow_cookie(client)
@@ -404,3 +439,35 @@ def test_callback_rejects_missing_identity_mapping(client, monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("return_to", "stored"),
+    [
+        ("/settings", "/settings"),
+        ("/billing", "/billing"),
+        ("https://evil.example/settings", None),
+        ("//evil.example", None),
+        ("/settings/../admin", None),
+        ("/unknown", None),
+    ],
+)
+def test_start_only_keeps_allowlisted_return_paths(
+    client, monkeypatch, return_to, stored
+):
+    configure_sso(monkeypatch)
+
+    response = client.get(
+        "/api/v1/sso/start",
+        params={"organization_id": str(uuid4()), "return_to": return_to},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    # The return path never travels in the authorization URL.
+    assert "return_to" not in response.headers["location"]
+    jar = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        jar.load(header)
+    flow = json.loads(jar[sso.get_settings().sso_flow_cookie_name].value)
+    assert flow.get("return_to") == stored
