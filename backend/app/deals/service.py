@@ -14,7 +14,7 @@ from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.lead import Lead
 from app.db.models.membership import Membership
 from app.db.models.property import Property
-from app.deals.schemas import DealCreateRequest, DealStage
+from app.deals.schemas import DealCreateRequest, DealStage, DealUpdateRequest
 
 
 NEXT_STAGE: dict[str, str] = {
@@ -248,4 +248,71 @@ def transition_deal_stage(
     db.flush()
     db.refresh(deal)
 
+    return deal
+
+
+class DealClosedError(Exception):
+    """A closed deal is terminal and its details are read-only."""
+
+
+def update_deal(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+    payload: DealUpdateRequest,
+) -> Deal | None:
+    """Update the editable fields of a deal inside the verified organization.
+
+    Returns None if the deal is outside the organization. Raises DealClosedError
+    for a closed deal, LookupError if a linked lead is missing, inactive or in
+    another organization, and ValueError if the owner is not an active member.
+    The caller owns the transaction.
+    """
+    deal = db.scalar(
+        select(Deal)
+        .where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+    if deal is None:
+        return None
+
+    if deal.stage in CLOSED_STAGES:
+        raise DealClosedError("Closed deals cannot be edited.")
+
+    changes = payload.model_dump(exclude_unset=True)
+
+    if changes.get("lead_id") is not None:
+        lead_match = db.scalar(
+            select(Lead.id).where(
+                Lead.id == changes["lead_id"],
+                Lead.organization_id == organization_id,
+                Lead.is_active.is_(True),
+            )
+        )
+        if lead_match is None:
+            raise LookupError("Lead was not found in the current organization.")
+
+    if "owner_user_id" in changes:
+        owner_membership = db.scalar(
+            select(Membership.id).where(
+                Membership.user_id == changes["owner_user_id"],
+                Membership.organization_id == organization_id,
+                Membership.is_active.is_(True),
+            )
+        )
+        if owner_membership is None:
+            raise ValueError(
+                "Deal owner must be an active member of the organization."
+            )
+
+    for field_name, value in changes.items():
+        setattr(deal, field_name, value)
+
+    db.flush()
+    db.refresh(deal)
     return deal
