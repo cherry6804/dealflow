@@ -1,0 +1,201 @@
+.followups-page {
+  display: grid;
+  gap: 1rem;
+  max-width: 880px;
+}
+
+.followups-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.followups-header p {
+  margin: 0.25rem 0 0;
+  color: #475467;
+}
+
+.followups-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.followups-filter {
+  font: inherit;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #c9cfd8;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.followups-filter[aria-pressed="true"] {
+  border-color: #344054;
+  background: #344054;
+  color: #fff;
+}
+
+.followups-filter:focus-visible,
+.followups-primary-button:focus-visible,
+.followups-secondary-button:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.followups-notice,
+.followups-error {
+  margin: 0;
+}
+
+.followups-notice {
+  color: #067647;
+}
+
+.followups-error {
+  color: #b42318;
+}
+
+.followups-state {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  border: 1px dashed #c9cfd8;
+  border-radius: 10px;
+}
+
+.followups-state h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.followups-state p {
+  margin: 0;
+  color: #475467;
+}
+
+.followups-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #c9cfd8;
+  border-top-color: #344054;
+  border-radius: 50%;
+  animation: followups-spin 0.8s linear infinite;
+}
+
+@keyframes followups-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .followups-spinner {
+    animation: none;
+  }
+}
+
+.followups-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.followups-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.followups-card-top {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.followups-status {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.followups-status-overdue {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.followups-type {
+  color: #475467;
+  font-size: 0.8rem;
+}
+
+.followups-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.followups-meta {
+  margin: 0;
+  color: #475467;
+  font-size: 0.9rem;
+}
+
+.followups-reschedule {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.followups-field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  max-width: 20rem;
+}
+
+.followups-field input {
+  font: inherit;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #c9cfd8;
+  border-radius: 6px;
+}
+
+.followups-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.followups-primary-button,
+.followups-secondary-button {
+  font: inherit;
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.followups-primary-button {
+  border: 1px solid #344054;
+  background: #344054;
+  color: #fff;
+}
+
+.followups-secondary-button {
+  border: 1px solid #c9cfd8;
+  background: #fff;
+  color: #344054;
+}
+
+.followups-primary-button:disabled,
+.followups-secondary-button:disabled,
+.followups-filter:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

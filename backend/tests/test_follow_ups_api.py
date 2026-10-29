@@ -572,7 +572,7 @@ def test_list_follow_ups_returns_only_current_tenant_pending_records() -> None:
     with TestingSessionLocal() as db:
         user, organization_a = create_authorized_user(
             db,
-            permission_keys=("leads.update",),
+            permission_keys=("leads.read",),
         )
         organization_b = create_organization(db)
 
@@ -631,7 +631,7 @@ def test_list_follow_ups_overdue_only_excludes_future_due_records() -> None:
     with TestingSessionLocal() as db:
         user, organization = create_authorized_user(
             db,
-            permission_keys=("leads.update",),
+            permission_keys=("leads.read",),
         )
         lead = create_lead(db, organization=organization)
 
@@ -988,3 +988,49 @@ def test_bulk_complete_rejects_duplicate_ids() -> None:
             )
 
         assert response.status_code == 422
+
+
+def test_list_follow_ups_allows_read_only_role_and_limits_it_to_its_tenant() -> None:
+    """A leads.read role can view its tenant's follow-ups but cannot change them."""
+    with TestingSessionLocal() as db:
+        viewer, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.read",),
+        )
+        lead = create_lead(db, organization=organization)
+        own_follow_up = create_pending_follow_up(
+            db,
+            organization=organization,
+            lead=lead,
+            owner=viewer,
+        )
+
+        other_user, other_organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        other_lead = create_lead(db, organization=other_organization)
+        create_pending_follow_up(
+            db,
+            organization=other_organization,
+            lead=other_lead,
+            owner=other_user,
+        )
+        own_follow_up_id = own_follow_up.id
+
+        with make_test_client(user=viewer) as client:
+            add_tenant_header(client, organization)
+            listed = client.get("/api/v1/follow-ups")
+            complete = client.post(
+                f"/api/v1/follow-ups/{own_follow_up_id}/complete",
+            )
+
+        assert listed.status_code == 200, listed.text
+        assert [item["id"] for item in listed.json()] == [str(own_follow_up_id)]
+        assert complete.status_code == 403
+        assert complete.json()["detail"] == "Permission denied."
+
+        db.expire_all()
+        persisted = db.get(FollowUp, own_follow_up_id)
+        assert persisted is not None
+        assert persisted.status == FollowUp.STATUS_PENDING
