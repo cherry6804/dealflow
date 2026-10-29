@@ -1,4 +1,3 @@
-
 """Register deal permissions.
 
 Revision ID: a91e6c4b2d70
@@ -9,7 +8,7 @@ import uuid
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 revision: str = "a91e6c4b2d70"
 down_revision: str | Sequence[str] | None = "7f4d9c2e1a63"
@@ -18,6 +17,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """Register deal permissions and grant them to the active owner role.
+
+    Offline SQL generation cannot inspect existing permission or role data.
+    The data-dependent migration therefore runs only with a live connection.
+    """
+    if context.is_offline_mode():
+        return
+
     connection = op.get_bind()
 
     permissions = sa.table(
@@ -69,11 +76,16 @@ def upgrade() -> None:
                     is_active=True,
                 )
             )
-            permission = {"id": permission_id, "is_active": True}
+            permission = {
+                "id": permission_id,
+                "is_active": True,
+            }
 
+        # Never grant an inactive permission.
         if not permission["is_active"]:
             continue
 
+        # A fresh installation may not yet have an owner role.
         if owner_role is None or not owner_role["is_active"]:
             continue
 
@@ -95,5 +107,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Preserve authorization records and assignments on downgrade.
+    """Preserve authorization records and assignments on downgrade."""
     pass

@@ -1,7 +1,8 @@
-
 """Invitation-aware account registration for DealFlow."""
 
 from __future__ import annotations
+
+from datetime import UTC
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.auth.email_outbox import enqueue_verification_email
 from app.auth.email_verification import create_verification_token
 from app.auth.password import hash_password
+from app.config import get_settings
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 from app.db.session import get_db_session
@@ -65,9 +67,15 @@ def signup_from_invitation(
     db: Session = Depends(get_db_session),
 ) -> InvitationSignupResponse:
     """Create an unverified account for an existing workspace invitation."""
-    from datetime import datetime, timezone
+    if get_settings().app_environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Accept workspace invitations through SIBVO.",
+        )
 
-    now = datetime.now(timezone.utc)
+    from datetime import datetime
+
+    now = datetime.now(UTC)
 
     invitation = db.scalar(
         select(TeamInvitation)
@@ -86,7 +94,7 @@ def signup_from_invitation(
 
     expires_at = invitation.expires_at
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
 
     if expires_at <= now:
         invitation.status = "expired"

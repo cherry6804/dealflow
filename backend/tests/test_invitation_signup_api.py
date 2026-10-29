@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api import invitation_signup as signup_api
-from app.api.invitation_signup import router as signup_router
 from app.api import team as team_api
+from app.api.invitation_signup import router as signup_router
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 from app.db.session import get_db_session
@@ -51,16 +51,13 @@ def create_signup_test_app() -> FastAPI:
     return app
 
 
-
 def create_pending_invitation(
     monkeypatch,
     *,
     email: str,
 ) -> tuple[UUID, str]:
     """Create an organization-scoped invitation and return its raw token."""
-    user, organization = create_manager(
-        permissions=("organization.invites.manage",)
-    )
+    user, organization = create_manager(permissions=("organization.invites.manage",))
 
     with TestingSessionLocal() as db:
         role = create_role(
@@ -84,9 +81,7 @@ def create_pending_invitation(
 
     app = create_team_test_app(user=user)
     with TestClient(app) as client:
-        client.headers.update(
-            {"X-Organization-ID": str(organization.id)}
-        )
+        client.headers.update({"X-Organization-ID": str(organization.id)})
         response = create_invitation(
             client,
             email=email,
@@ -186,9 +181,7 @@ def test_invitation_signup_rejects_email_mismatch(monkeypatch) -> None:
     assert response.status_code == 403, response.text
 
     with TestingSessionLocal() as db:
-        user = db.scalar(
-            select(User).where(User.email == different_email)
-        )
+        user = db.scalar(select(User).where(User.email == different_email))
         assert user is None
 
 
@@ -203,9 +196,7 @@ def test_invitation_signup_marks_expired_invitation(monkeypatch) -> None:
     with TestingSessionLocal() as db:
         invitation = db.get(TeamInvitation, invitation_id)
         assert invitation is not None
-        invitation.expires_at = (
-            datetime.now(timezone.utc) - timedelta(minutes=5)
-        )
+        invitation.expires_at = datetime.now(UTC) - timedelta(minutes=5)
         db.commit()
 
     app = create_signup_test_app()
@@ -243,10 +234,28 @@ def test_invitation_signup_rejects_existing_account(monkeypatch) -> None:
     assert response.status_code == 409, response.text
 
     with TestingSessionLocal() as db:
-        users = db.scalars(
-            select(User).where(User.email == email)
-        ).all()
+        users = db.scalars(select(User).where(User.email == email)).all()
         assert len(users) == 1
+
+
+def test_legacy_invitation_signup_is_disabled_in_production(monkeypatch) -> None:
+    settings = signup_api.get_settings().model_copy(
+        update={"app_environment": "production"}
+    )
+    monkeypatch.setattr(signup_api, "get_settings", lambda: settings)
+    app = create_signup_test_app()
+
+    with TestClient(app) as client:
+        response = client.post(
+            SIGNUP_URL,
+            json=signup_payload(
+                email=unique_email("legacy-production"),
+                token="x" * 40,
+            ),
+        )
+
+    assert response.status_code == 410
+    assert "through SIBVO" in response.json()["detail"]
 
 
 def test_unverified_user_cannot_accept_invitation(monkeypatch) -> None:

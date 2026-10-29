@@ -33,10 +33,19 @@ def test_production_accepts_secure_cookie() -> None:
         _env_file=None,
         app_environment="production",
         auth_cookie_secure=True,
+        auth_cookie_httponly=True,
+        sso_flow_cookie_secure=True,
+        sso_sibvo_base_url="https://sso.example.com/api/v1",
+        sso_dealsflo_redirect_uri=(
+            "https://app.example.com/sso/callback"
+        ),
+        sso_dealsflo_client_secret="test-production-secret",
+        cors_allowed_origins="https://app.example.com",
     )
 
     assert settings.auth_cookie_secure is True
     assert settings.auth_cookie_httponly is True
+    assert settings.sso_flow_cookie_secure is True
 
 
 def test_production_rejects_non_httponly_cookie() -> None:
@@ -46,6 +55,66 @@ def test_production_rejects_non_httponly_cookie() -> None:
             app_environment="production",
             auth_cookie_secure=True,
             auth_cookie_httponly=False,
+        )
+
+
+def test_cors_origins_are_explicit_and_normalized() -> None:
+    settings = Settings(
+        _env_file=None,
+        cors_allowed_origins=(
+            "https://app.example.com/, https://admin.example.com"
+        ),
+    )
+
+    assert settings.cors_origins == [
+        "https://app.example.com",
+        "https://admin.example.com",
+    ]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["*", "https://app.example.com/path", "https://user:pass@app.example.com"],
+)
+def test_cors_rejects_wildcards_paths_and_credentials(origin: str) -> None:
+    with pytest.raises(ValidationError, match="CORS_ALLOWED_ORIGINS"):
+        Settings(_env_file=None, cors_allowed_origins=origin)
+
+
+def test_production_rejects_http_cors_origin() -> None:
+    with pytest.raises(ValidationError, match="Production CORS origins"):
+        Settings(
+            _env_file=None,
+            app_environment="production",
+            auth_cookie_secure=True,
+            auth_cookie_httponly=True,
+            sso_flow_cookie_secure=True,
+            sso_sibvo_base_url="https://sso.example.com/api/v1",
+            sso_dealsflo_redirect_uri=(
+                "https://app.example.com/sso/callback"
+            ),
+            sso_dealsflo_client_secret="test-production-secret",
+            cors_allowed_origins="http://app.example.com",
+        )
+
+
+def test_production_remote_postgres_requires_tls() -> None:
+    with pytest.raises(ValidationError, match="must require TLS"):
+        Settings(
+            _env_file=None,
+            app_environment="production",
+            database_url=(
+                "postgresql+psycopg://dbuser:password@db.example.com/app"
+            ),
+            auth_cookie_secure=True,
+            auth_cookie_httponly=True,
+            sso_flow_cookie_secure=True,
+            sso_sibvo_base_url="https://sso.example.com/api/v1",
+            sso_dealsflo_redirect_uri=(
+                "https://app.example.com/sso/callback"
+            ),
+            sso_dealsflo_client_secret="test-production-secret",
+            cors_allowed_origins="https://app.example.com",
         )
 
 

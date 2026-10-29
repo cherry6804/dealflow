@@ -11,6 +11,7 @@ from app.auth.session import (
     hash_session_token,
 )
 from app.db.models.auth_session import AuthSession
+from app.db.models.organization import Organization
 from app.db.models.user import User
 
 
@@ -18,6 +19,11 @@ def create_session(
     db: Session,
     user: User,
     expires_at: datetime,
+    organization: Organization | None = None,
+    sibvo_subject=None,
+    sibvo_organization_id=None,
+    sibvo_session_id=None,
+    sso_last_verified_at: datetime | None = None,
 ) -> tuple[AuthSession, str]:
     """Stage a server-side session in the caller's transaction.
 
@@ -32,6 +38,11 @@ def create_session(
 
     session = AuthSession(
         user=user,
+        organization_id=organization.id if organization is not None else None,
+        sibvo_subject=sibvo_subject,
+        sibvo_organization_id=sibvo_organization_id,
+        sibvo_session_id=sibvo_session_id,
+        sso_last_verified_at=sso_last_verified_at,
         token_hash=token_hash,
         expires_at=expires_at,
     )

@@ -11,7 +11,6 @@ import { ApiError, setCurrentOrganizationId } from "../lib/api";
 import {
   authApi,
   type AuthenticatedUser,
-  type SignupResponse,
 } from "../services/authApi";
 import {
   organizationApi,
@@ -60,25 +59,15 @@ export function AppProvider({ children }: AppProviderProps) {
   }, [applyOrganizations]);
 
   const refreshSession = useCallback(
-    async (signupResponse?: SignupResponse) => {
+    async () => {
       setError(null);
 
       try {
-        let currentUser: AuthenticatedUser;
-        let preferredOrganizationId: string | null = null;
-
-        if (signupResponse) {
-          currentUser = signupResponse.user;
-          preferredOrganizationId = signupResponse.organization.id;
-          setUser(currentUser);
-        } else {
-          const response = await authApi.getCurrentUser();
-          currentUser = response.user;
-          setUser(currentUser);
-        }
+        const response = await authApi.getCurrentUser();
+        setUser(response.user);
 
         const available = await organizationApi.list();
-        applyOrganizations(available, preferredOrganizationId);
+        applyOrganizations(available);
         setStatus("authenticated");
       } catch (cause) {
         setCurrentOrganizationId(null);

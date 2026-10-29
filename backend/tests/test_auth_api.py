@@ -16,7 +16,6 @@ from app.db.models.user import User
 from app.db.session import get_db_session
 from app.errors import register_error_handlers
 
-
 engine = create_engine(
     "sqlite+pysqlite:///:memory:",
     connect_args={"check_same_thread": False},
@@ -31,7 +30,7 @@ TestingSessionLocal = sessionmaker(
 )
 
 
-def override_get_db_session() -> Generator[Session, None, None]:
+def override_get_db_session() -> Generator[Session]:
     """Provide a database session for API integration tests."""
     session = TestingSessionLocal()
     try:
@@ -169,6 +168,24 @@ def test_login_rejects_invalid_password() -> None:
     }
 
     assert "dealflow_session" not in response.cookies
+
+
+def test_login_rate_limit_returns_retry_after(monkeypatch) -> None:
+    from app.auth import rate_limit
+
+    monkeypatch.setattr(rate_limit, "LOGIN_MAX_ATTEMPTS", 1)
+    first = client.post(
+        "/api/v1/auth/login",
+        json={"email": "nobody@example.com", "password": "wrong-password"},
+    )
+    second = client.post(
+        "/api/v1/auth/login",
+        json={"email": "nobody@example.com", "password": "wrong-password"},
+    )
+
+    assert first.status_code == 401
+    assert second.status_code == 429
+    assert int(second.headers["retry-after"]) > 0
 
 
 def test_login_rejects_unknown_email() -> None:

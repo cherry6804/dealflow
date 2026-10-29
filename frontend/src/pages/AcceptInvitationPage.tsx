@@ -1,28 +1,24 @@
 
-import { useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertCircle, CheckCircle2, Mail, ShieldCheck } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
+import { AlertCircle, Mail, ShieldCheck } from "lucide-react";
 
-import { ApiError } from "../lib/api";
-import { useAppContext } from "../contexts/useAppContext";
-import { teamApi } from "../services/teamApi";
+import { ApiError, api } from "../lib/api";
 import "./AcceptInvitationPage.css";
 
 export default function AcceptInvitationPage() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const { refreshSession } = useAppContext();
 
   const token = searchParams.get("token")?.trim() ?? "";
-  const invitationPath = `/accept-invitation?${new URLSearchParams({
-    token,
-  }).toString()}`;
-  const signInUrl = `/login?next=${encodeURIComponent(invitationPath)}`;
-  const signupUrl = `/signup?invitation=${encodeURIComponent(token)}`;
+
+  useEffect(() => {
+    if (token) {
+      window.history.replaceState({}, document.title, "/accept-invitation");
+    }
+  }, [token]);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   async function handleAccept(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,11 +29,11 @@ export default function AcceptInvitationPage() {
     setError(null);
 
     try {
-      const result = await teamApi.acceptInvitation({ token });
-      setSuccess(result.message || "Invitation accepted successfully.");
-
-      await refreshSession();
-      navigate("/", { replace: true });
+      const result = await api.post<{ authorization_url: string }>(
+        "/sso/start-invitation",
+        { token },
+      );
+      window.location.assign(result.authorization_url);
     } catch (cause) {
       setError(
         cause instanceof ApiError
@@ -54,24 +50,18 @@ export default function AcceptInvitationPage() {
   return (
     <main className="accept-invitation">
       <section className="accept-invitation__card">
-        <span
-          className={`accept-invitation__icon${
-            success ? " accept-invitation__icon--success" : ""
-          }`}
-        >
-          {success ? <CheckCircle2 size={24} /> : <ShieldCheck size={24} />}
+        <span className="accept-invitation__icon">
+          <ShieldCheck size={24} />
         </span>
 
         <span className="accept-invitation__eyebrow">
           WORKSPACE INVITATION
         </span>
 
-        <h1>{success ? "You're on the team" : "Join your team"}</h1>
+        <h1>Join your team</h1>
 
         <p>
-          {success
-            ? success
-            : "Join the existing workspace using the secure invitation sent to your email address."}
+          Join the existing workspace using the secure invitation sent to your email address.
         </p>
 
         {!token && (
@@ -91,7 +81,7 @@ export default function AcceptInvitationPage() {
           </div>
         )}
 
-        {!success && token && (
+        {token && (
           <>
             <form onSubmit={handleAccept}>
               <button
@@ -99,31 +89,17 @@ export default function AcceptInvitationPage() {
                 type="submit"
                 disabled={submitting}
               >
-                {submitting ? "Accepting invitation..." : "Accept invitation"}
+                {submitting ? "Connecting to SIBVO…" : "Continue with SIBVO"}
               </button>
             </form>
-
-            <Link className="accept-invitation__button" to={signInUrl}>
-              Sign in to accept
-            </Link>
-
-            <Link className="accept-invitation__button" to={signupUrl}>
-              Create an account
-            </Link>
           </>
-        )}
-
-        {success && (
-          <Link className="accept-invitation__button" to="/">
-            Continue to workspace
-          </Link>
         )}
 
         <div className="accept-invitation__hint">
           <Mail size={16} />
           <span>
-            Use the email address that received the invitation. Your access is
-            determined by the role assigned by the workspace administrator.
+            Sign in to SIBVO with the verified email address that received the
+            invitation. Your Dealsflo role comes from the workspace invitation.
           </span>
         </div>
 
