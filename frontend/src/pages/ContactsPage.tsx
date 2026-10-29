@@ -51,18 +51,10 @@ function getErrorMessage(error: unknown): string {
 function getDuplicateFieldErrors(error: unknown): ContactFieldErrors {
   if (!(error instanceof ApiError)) return {};
 
-  const details = error.details;
-  if (typeof details !== "object" || details === null || !("detail" in details)) {
-    return {};
-  }
-
-  const detail = (details as { detail?: unknown }).detail;
-  if (typeof detail !== "object" || detail === null || !("code" in detail)) {
-    return {};
-  }
-
-  const duplicate = detail as { code?: unknown; fields?: unknown };
-  if (duplicate.code !== "duplicate_contact" || !Array.isArray(duplicate.fields)) {
+  // Errors arrive as { error: { code, message, details } }.
+  const body = error.details as { error?: { details?: unknown } } | null | undefined;
+  const duplicate = body?.error?.details as { code?: unknown; fields?: unknown } | undefined;
+  if (!duplicate || duplicate.code !== "duplicate_contact" || !Array.isArray(duplicate.fields)) {
     return {};
   }
 
@@ -187,6 +179,7 @@ export default function ContactsPage() {
   const [success, setSuccess] = useState("");
 
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [isFormClosing, setIsFormClosing] = useState(false);
   const [form, setForm] = useState<ContactCreateInput>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
@@ -485,7 +478,27 @@ export default function ContactsPage() {
     [columns, visibleColumnKeys],
   );
 
+  function openEditForm(contact: Contact) {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setEditingContact(contact);
+    setForm({
+      first_name: contact.first_name,
+      last_name: contact.last_name ?? "",
+      email: contact.email ?? "",
+      phone: contact.phone ?? "",
+    });
+    setFormError("");
+    setFieldErrors({});
+    setSuccess("");
+    setIsFormClosing(false);
+    setIsFormOpen(true);
+  }
+
   function openCreateForm() {
+    setEditingContact(null);
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
@@ -539,7 +552,12 @@ export default function ContactsPage() {
 
     setSaving(true);
     try {
-      await contactsApi.create(payload);
+      if (editingContact) {
+        const updated = await contactsApi.update(editingContact.id, payload);
+        setSelectedContact((current) => (current?.id === updated.id ? updated : current));
+      } else {
+        await contactsApi.create(payload);
+      }
       if (closeTimerRef.current !== null) {
         window.clearTimeout(closeTimerRef.current);
         closeTimerRef.current = null;
@@ -548,9 +566,12 @@ export default function ContactsPage() {
       setIsFormClosing(false);
       setForm(EMPTY_FORM);
       setFormError("");
-      setSearchInput("");
-      setSearch("");
-      setSuccess("Contact created successfully.");
+      if (!editingContact) {
+        setSearchInput("");
+        setSearch("");
+      }
+      setEditingContact(null);
+      setSuccess(editingContact ? "Contact updated successfully." : "Contact created successfully.");
       setContacts(await fetchAllContacts());
       setError("");
     } catch (createError) {
@@ -696,6 +717,7 @@ export default function ContactsPage() {
         <div className="contacts-action-menu-layer" role="presentation" onPointerDown={() => setActionMenu(null)}>
           <section ref={actionMenuRef} className="contacts-action-menu" style={{ top: actionMenu.top, left: actionMenu.left }} role="menu" aria-label="Contact actions" onPointerDown={(event) => event.stopPropagation()}>
             <header className="contacts-action-menu-header"><strong>Contact actions</strong><span title={getContactName(actionMenu.contact)}>{getContactName(actionMenu.contact)}</span></header>
+            <button type="button" role="menuitem" onClick={() => { openEditForm(actionMenu.contact); setActionMenu(null); }}>Edit contact</button>
             <button type="button" role="menuitem" onClick={() => { setSelectedContact(actionMenu.contact); setActionMenu(null); }}><DetailsIcon />View contact details</button>
             <button type="button" role="menuitem" disabled={!actionMenu.contact.email} onClick={() => void copyContactValue(actionMenu.contact.email, "Email address")}><CopyIcon />Copy email address</button>
             <button type="button" role="menuitem" disabled={!actionMenu.contact.phone} onClick={() => void copyContactValue(actionMenu.contact.phone, "Phone number")}><CopyIcon />Copy phone number</button>
@@ -738,7 +760,7 @@ export default function ContactsPage() {
         <div className={`contacts-modal-backdrop ${isFormClosing ? "is-closing" : ""}`} onMouseDown={(event) => { if (event.target === event.currentTarget) closeCreateForm(); }}>
           <section ref={modalRef} className={`contacts-modal ${isFormClosing ? "is-closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="contacts-modal-title">
             <header className="contacts-modal-header">
-              <div><span className="contacts-eyebrow">CONTACT DETAILS</span><h2 id="contacts-modal-title">Add a contact</h2><p>Create a contact record for your workspace.</p></div>
+              <div><span className="contacts-eyebrow">CONTACT DETAILS</span><h2 id="contacts-modal-title">{editingContact ? "Edit contact" : "Add a contact"}</h2><p>{editingContact ? "Update this contact's details. Email and phone must stay unique in your organization." : "Create a contact record for your workspace."}</p></div>
               <button type="button" className="contacts-modal-close" onClick={closeCreateForm} disabled={saving || isFormClosing} aria-label="Close form">×</button>
             </header>
             <form className="contacts-form" onSubmit={handleCreateContact}>
@@ -755,7 +777,7 @@ export default function ContactsPage() {
               </div>
               <footer className="contacts-modal-footer">
                 <button className="contacts-secondary-button" type="button" onClick={closeCreateForm} disabled={saving || isFormClosing}>Cancel</button>
-                <button className="contacts-primary-button" type="submit" disabled={saving || isFormClosing}>{saving ? "Saving contact…" : "Save contact"}</button>
+                <button className="contacts-primary-button" type="submit" disabled={saving || isFormClosing}>{saving ? "Saving contact…" : editingContact ? "Save changes" : "Save contact"}</button>
               </footer>
             </form>
           </section>

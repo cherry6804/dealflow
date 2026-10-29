@@ -100,6 +100,18 @@ function getErrorMessage(
   responseStatus: number,
   responseData: unknown,
 ): string {
+  // Errors arrive as { error: { code, message, details } }. Duplicate contact
+  // conflicts carry their field list in details.
+  const envelope = isRecord(responseData) && isRecord(responseData.error)
+    ? responseData.error
+    : undefined;
+  if (envelope && isRecord(envelope.details)) {
+    const envelopeDuplicateMessage = getDuplicateContactMessage(envelope.details);
+    if (envelopeDuplicateMessage) {
+      return envelopeDuplicateMessage;
+    }
+  }
+
   const detail = isRecord(responseData)
     ? responseData.detail
     : undefined;
