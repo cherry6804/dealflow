@@ -47,6 +47,15 @@ class DealCreateRequest(BaseModel):
             return None
         return value.strip() or None
 
+    @field_validator("stage")
+    @classmethod
+    def reject_closed_stage_on_create(cls, value: DealStage) -> DealStage:
+        # Closure needs BOOKING, a stated reason and deals.close, so a new deal
+        # must start in an open stage and be closed through the transition API.
+        if value in {DealStage.CLOSED_WON, DealStage.CLOSED_LOST}:
+            raise ValueError("A deal cannot be created in a closed stage.")
+        return value
+
 
 class DealStageTransitionRequest(BaseModel):
     """Request to progress a deal to its next permitted workflow stage."""

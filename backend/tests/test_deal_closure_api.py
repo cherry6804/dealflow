@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from sqlalchemy import select
 from fastapi.testclient import TestClient
 
@@ -58,6 +60,7 @@ def test_close_deal_won_records_audit_history() -> None:
                 "deals.create",
                 "deals.read",
                 "deals.update",
+                "deals.close",
             ),
         )
         deal = _create_booking_deal(
@@ -105,6 +108,7 @@ def test_close_deal_lost_records_audit_history() -> None:
                 "deals.create",
                 "deals.read",
                 "deals.update",
+                "deals.close",
             ),
         )
         deal = _create_booking_deal(
@@ -148,6 +152,7 @@ def test_closure_requires_a_reason() -> None:
                     "deals.create",
                     "deals.read",
                     "deals.update",
+                    "deals.close",
                 ),
             )
             deal = _create_booking_deal(
@@ -193,6 +198,7 @@ def test_closure_is_rejected_before_booking() -> None:
                 "deals.create",
                 "deals.read",
                 "deals.update",
+                "deals.close",
             ),
         )
         deal = _create_test_deal(
@@ -233,6 +239,7 @@ def test_closed_deal_cannot_be_closed_again_or_reopened() -> None:
                 "deals.create",
                 "deals.read",
                 "deals.update",
+                "deals.close",
             ),
         )
         deal = _create_booking_deal(
@@ -282,3 +289,149 @@ def test_closed_deal_cannot_be_closed_again_or_reopened() -> None:
         ).all()
         assert len(history) == 1
         assert history[0].to_stage == "CLOSED_WON"
+
+
+def test_closing_requires_deals_close_permission() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=(
+                "deals.create",
+                "deals.read",
+                "deals.update",
+            ),
+        )
+        deal = _create_booking_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+        deal_id = deal.id
+
+        response = _close_deal(
+            user=user,
+            organization=organization,
+            deal_id=deal_id,
+            outcome="CLOSED_WON",
+            reason="Buyer signed the sale agreement.",
+        )
+
+        assert response.status_code == 403
+        assert response.json() == {"detail": "Permission denied."}
+
+        db.expire_all()
+        persisted = db.get(Deal, deal_id)
+        assert persisted is not None
+        assert persisted.stage == "BOOKING"
+        assert (
+            db.scalars(
+                select(DealStageHistory).where(
+                    DealStageHistory.deal_id == deal_id,
+                )
+            ).all()
+            == []
+        )
+
+
+def test_update_only_role_can_still_move_a_deal_before_closure() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=(
+                "deals.create",
+                "deals.read",
+                "deals.update",
+            ),
+        )
+        deal = _create_test_deal(
+            db,
+            user=user,
+            organization=organization,
+        )
+        deal_id = deal.id
+
+        response = _close_deal(
+            user=user,
+            organization=organization,
+            deal_id=deal_id,
+            outcome="QUALIFICATION",
+            reason=None,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["stage"] == "QUALIFICATION"
+
+
+def test_member_of_another_organization_cannot_close_a_deal() -> None:
+    all_permissions = (
+        "deals.create",
+        "deals.read",
+        "deals.update",
+        "deals.close",
+    )
+    with TestingSessionLocal() as db:
+        owner, owner_organization = create_authorized_user(
+            db,
+            permission_keys=all_permissions,
+        )
+        deal = _create_booking_deal(
+            db,
+            user=owner,
+            organization=owner_organization,
+        )
+        deal_id = deal.id
+
+        other, other_organization = create_authorized_user(
+            db,
+            permission_keys=all_permissions,
+        )
+
+        response = _close_deal(
+            user=other,
+            organization=other_organization,
+            deal_id=deal_id,
+            outcome="CLOSED_WON",
+            reason="Attempt from another workspace.",
+        )
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Deal not found."}
+
+        db.expire_all()
+        persisted = db.get(Deal, deal_id)
+        assert persisted is not None
+        assert persisted.stage == "BOOKING"
+
+
+def test_create_rejects_a_closed_stage_and_persists_nothing() -> None:
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=(
+                "deals.create",
+                "deals.read",
+                "deals.update",
+                "deals.close",
+            ),
+        )
+        organization_id = organization.id
+
+        with TestClient(create_test_app(user=user)) as client:
+            client.headers.update({"X-Organization-ID": str(organization_id)})
+            response = client.post(
+                "/api/v1/deals",
+                json={
+                    "customer_profile_id": str(uuid4()),
+                    "property_id": str(uuid4()),
+                    "stage": "CLOSED_WON",
+                },
+            )
+
+        assert response.status_code == 422
+        db.expire_all()
+        assert (
+            db.scalars(
+                select(Deal).where(Deal.organization_id == organization_id)
+            ).all()
+            == []
+        )
