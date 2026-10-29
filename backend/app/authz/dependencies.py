@@ -16,13 +16,13 @@ from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
 
-def enforce_permission(
+def permission_granted(
     db: Session,
     *,
     tenant_context: TenantContext,
     permission_key: str,
-) -> None:
-    """Raise 403 unless a role in the selected tenant grants the permission."""
+) -> bool:
+    """Return whether a role in the selected tenant grants the permission."""
 
     statement = (
         select(Permission.id)
@@ -42,12 +42,23 @@ def enforce_permission(
         .limit(1)
     )
 
-    permission_id = db.scalar(statement)
-    decision = (
-        AuditDecision.ALLOWED
-        if permission_id is not None
-        else AuditDecision.DENIED
+    return db.scalar(statement) is not None
+
+
+def enforce_permission(
+    db: Session,
+    *,
+    tenant_context: TenantContext,
+    permission_key: str,
+) -> None:
+    """Raise 403 unless a role in the selected tenant grants the permission."""
+
+    granted = permission_granted(
+        db,
+        tenant_context=tenant_context,
+        permission_key=permission_key,
     )
+    decision = AuditDecision.ALLOWED if granted else AuditDecision.DENIED
 
     persist_authorization_audit_event(
         user_id=tenant_context.membership.user_id,
@@ -57,7 +68,7 @@ def enforce_permission(
         permission_key=permission_key,
     )
 
-    if permission_id is None:
+    if not granted:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied.",

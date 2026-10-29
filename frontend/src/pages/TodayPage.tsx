@@ -3,16 +3,17 @@ import { Link } from "react-router-dom";
 import { ApiError } from "../lib/api";
 import { activityApi, type LeadActivity } from "../services/activityApi";
 import { contactsApi } from "../services/contactApi";
-import type { Contact } from "../services/contactApi";
-import { followUpsApi } from "../services/followUpApi";
-import type { FollowUp } from "../services/followUpApi";
+import {
+  dashboardApi,
+  type DashboardSummary,
+  type DealSummary,
+} from "../services/dashboardApi";
 import { leadsApi } from "../services/leadApi";
-import type { Lead, LeadStatus } from "../services/leadApi";
 import { propertiesApi } from "../services/propertyApi";
 import "./TodayPage.css";
 
 type MetricKey = "contacts" | "leads" | "properties";
-type AttentionCategory = "overdue" | "today";
+type AttentionCategory = "overdue" | "today" | "upcoming";
 
 interface DashboardMetric {
   value: number | null;
@@ -37,7 +38,7 @@ interface OverviewCard {
 interface AttentionItem {
   id: string;
   source: "lead" | "follow-up";
-  lead: Lead;
+  interest: string | null;
   contactName: string;
   action: string;
   dueAt: Date;
@@ -57,8 +58,6 @@ const INITIAL_METRICS: DashboardMetrics = {
   properties: { ...INITIAL_METRIC },
 };
 
-const PAGE_SIZE = 100;
-const CLOSED_STATUSES: LeadStatus[] = ["WON", "LOST"];
 
 const overviewCards: OverviewCard[] = [
   {
@@ -101,19 +100,6 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "The data could not be loaded. Check your connection and try again.";
-}
-
-function getContactName(contact: Contact | undefined): string {
-  if (!contact) {
-    return "Contact unavailable";
-  }
-
-  const name = [contact.first_name, contact.last_name]
-    .filter((part): part is string => Boolean(part?.trim()))
-    .join(" ")
-    .trim();
-
-  return name || "Unnamed contact";
 }
 
 function formatDueDate(date: Date): string {
@@ -222,153 +208,67 @@ function DashboardIcon({
   }
 }
 
-async function fetchAllLeads(): Promise<Lead[]> {
-  const firstPage = await leadsApi.list({
-    page: 1,
-    page_size: PAGE_SIZE,
-    is_active: true,
-  });
+const INTEREST_RANK: Record<string, number> = {
+  HIGH: 3,
+  MEDIUM: 2,
+  LOW: 1,
+};
 
-  const allLeads = [...firstPage.items];
+const CATEGORY_RANK: Record<AttentionCategory, number> = {
+  overdue: 0,
+  today: 1,
+  upcoming: 2,
+};
 
-  for (let page = 2; page <= firstPage.total_pages; page += 1) {
-    const result = await leadsApi.list({
-      page,
-      page_size: PAGE_SIZE,
-      is_active: true,
-    });
+const PIPELINE_STAGES: { key: string; label: string }[] = [
+  { key: "NEW", label: "New" },
+  { key: "QUALIFICATION", label: "Qualification" },
+  { key: "NEGOTIATION", label: "Negotiation" },
+  { key: "BOOKING", label: "Booking" },
+  { key: "CLOSED_WON", label: "Closed won" },
+  { key: "CLOSED_LOST", label: "Closed lost" },
+];
 
-    allLeads.push(...result.items);
-  }
-
-  return allLeads;
-}
-
-async function fetchAllContacts(): Promise<Contact[]> {
-  const firstPage = await contactsApi.list({
-    page: 1,
-    page_size: PAGE_SIZE,
-  });
-
-  const allContacts = [...firstPage.items];
-
-  for (let page = 2; page <= firstPage.total_pages; page += 1) {
-    const result = await contactsApi.list({
-      page,
-      page_size: PAGE_SIZE,
-    });
-
-    allContacts.push(...result.items);
-  }
-
-  return allContacts;
-}
-
-function buildAttentionItems(
-  leads: Lead[],
-  contacts: Contact[],
-  followUps: FollowUp[],
-  now: Date,
-): AttentionItem[] {
-  const contactsById = new Map(
-    contacts.map((contact) => [contact.id, contact]),
-  );
-  const leadsById = new Map(leads.map((lead) => [lead.id, lead]));
-
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
-  const startOfTomorrow = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-  );
-
+function buildAttentionItems(summary: DashboardSummary): AttentionItem[] {
   const items: AttentionItem[] = [];
 
-  // Preserve the existing lead-level next-action behavior.
-  for (const lead of leads) {
-    if (!lead.is_active || CLOSED_STATUSES.includes(lead.status)) {
-      continue;
+  if (summary.follow_ups) {
+    for (const category of ["overdue", "today", "upcoming"] as const) {
+      for (const followUp of summary.follow_ups[category]) {
+        items.push({
+          id: `follow-up-${followUp.id}`,
+          source: "follow-up",
+          interest: followUp.interest,
+          contactName: followUp.contact_name,
+          action: followUp.title,
+          dueAt: new Date(followUp.due_at),
+          category,
+          statusLabel: followUp.follow_up_type.replaceAll("_", " "),
+        });
+      }
     }
-
-    if (!lead.next_action?.trim() || !lead.next_action_at) {
-      continue;
-    }
-
-    const dueAt = new Date(lead.next_action_at);
-
-    if (Number.isNaN(dueAt.getTime())) {
-      continue;
-    }
-
-    let category: AttentionCategory;
-
-    if (dueAt < startOfToday) {
-      category = "overdue";
-    } else if (dueAt < startOfTomorrow) {
-      category = "today";
-    } else {
-      continue;
-    }
-
-    items.push({
-      id: `lead-${lead.id}`,
-      source: "lead",
-      lead,
-      contactName: getContactName(contactsById.get(lead.contact_id)),
-      action: lead.next_action.trim(),
-      dueAt,
-      category,
-      statusLabel: lead.status.replaceAll("_", " "),
-    });
   }
 
-  // Preserve the existing individual pending follow-up behavior.
-  for (const followUp of followUps) {
-    const lead = leadsById.get(followUp.lead_id);
-
-    if (
-      !lead ||
-      !lead.is_active ||
-      CLOSED_STATUSES.includes(lead.status)
-    ) {
-      continue;
+  if (summary.lead_actions) {
+    for (const category of ["overdue", "today"] as const) {
+      for (const leadAction of summary.lead_actions[category]) {
+        items.push({
+          id: `lead-${leadAction.lead_id}-${category}`,
+          source: "lead",
+          interest: leadAction.interest,
+          contactName: leadAction.contact_name,
+          action: leadAction.action,
+          dueAt: new Date(leadAction.due_at),
+          category,
+          statusLabel: leadAction.status.replaceAll("_", " "),
+        });
+      }
     }
-
-    const dueAt = new Date(followUp.due_at);
-
-    if (Number.isNaN(dueAt.getTime())) {
-      continue;
-    }
-
-    let category: AttentionCategory;
-
-    if (dueAt < now) {
-      category = "overdue";
-    } else if (dueAt < startOfTomorrow) {
-      category = "today";
-    } else {
-      continue;
-    }
-
-    items.push({
-      id: `follow-up-${followUp.id}`,
-      source: "follow-up",
-      lead,
-      contactName: getContactName(contactsById.get(lead.contact_id)),
-      action: followUp.title,
-      dueAt,
-      category,
-      statusLabel: followUp.follow_up_type.replaceAll("_", " "),
-    });
   }
 
   return items.sort((a, b) => {
     if (a.category !== b.category) {
-      return a.category === "overdue" ? -1 : 1;
+      return CATEGORY_RANK[a.category] - CATEGORY_RANK[b.category];
     }
 
     const dueTimeDifference = a.dueAt.getTime() - b.dueAt.getTime();
@@ -377,30 +277,66 @@ function buildAttentionItems(
       return dueTimeDifference;
     }
 
-    const interestRank: Record<"HIGH" | "MEDIUM" | "LOW", number> = {
-      HIGH: 3,
-      MEDIUM: 2,
-      LOW: 1,
-    };
+    const aRank = a.interest ? (INTEREST_RANK[a.interest] ?? 0) : 0;
+    const bRank = b.interest ? (INTEREST_RANK[b.interest] ?? 0) : 0;
 
-    const aRank = a.lead.interest ? interestRank[a.lead.interest] : 0;
-    const bRank = b.lead.interest ? interestRank[b.lead.interest] : 0;
-
-    if (aRank !== bRank) {
-      return bRank - aRank;
-    }
-
-    return a.id.localeCompare(b.id);
+    return bRank - aRank;
   });
+}
+
+function PipelineSummary({ deals }: { deals: DealSummary }) {
+  const totalDeals = Object.values(deals.by_stage).reduce((sum, count) => sum + count, 0);
+
+  if (totalDeals === 0) {
+    return (
+      <div className="today-state">
+        <span className="today-state-icon" aria-hidden="true">+</span>
+        <div>
+          <strong>No deals yet</strong>
+          <p>Deals you create will be counted by stage here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="today-pipeline">
+      <ul className="today-pipeline-stages" aria-label="Deals by stage">
+        {PIPELINE_STAGES.map((stage) => (
+          <li className="today-pipeline-stage" key={stage.key}>
+            <span>{stage.label}</span>
+            <strong>{deals.by_stage[stage.key] ?? 0}</strong>
+          </li>
+        ))}
+      </ul>
+
+      {deals.open_value_by_currency.length === 0 ? (
+        <p className="today-pipeline-note">No expected value recorded on open deals.</p>
+      ) : (
+        <ul className="today-pipeline-values" aria-label="Open pipeline value by currency">
+          {deals.open_value_by_currency.map((value) => (
+            <li key={value.currency}>
+              <span>Open value · {value.currency}</span>
+              <strong>
+                {value.currency} {Number(value.total).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </strong>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function AttentionList({
   title,
   items,
+  total,
   category,
 }: {
   title: string;
   items: AttentionItem[];
+  total: number;
   category: AttentionCategory;
 }) {
   return (
@@ -412,9 +348,9 @@ function AttentionList({
         <h3 id={`attention-${category}-heading`}>{title}</h3>
         <span
           className={`today-count today-count-${category}`}
-          aria-label={`${items.length} ${category} follow-ups`}
+          aria-label={`${total} ${category} follow-ups`}
         >
-          {items.length}
+          {total}
         </span>
       </div>
 
@@ -424,7 +360,9 @@ function AttentionList({
           <p>
             {category === "overdue"
               ? "No overdue follow-ups. You're caught up."
-              : "No remaining follow-ups due today."}
+              : category === "today"
+                ? "No remaining follow-ups due today."
+                : "No upcoming follow-ups scheduled."}
           </p>
         </div>
       ) : (
@@ -455,6 +393,9 @@ function AttentionList({
               </div>
             </li>
           ))}
+          {total > items.length && (
+            <li className="today-attention-more">Showing {items.length} of {total}.</li>
+          )}
         </ul>
       )}
     </section>
@@ -468,7 +409,7 @@ export default function TodayPage() {
   const [recentActivities, setRecentActivities] = useState<LeadActivity[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState("");
-  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [attentionLoading, setAttentionLoading] = useState(true);
   const [attentionError, setAttentionError] = useState("");
 
@@ -527,18 +468,15 @@ export default function TodayPage() {
     setAttentionError("");
 
     try {
-      const [leads, contacts, followUps] = await Promise.all([
-        fetchAllLeads(),
-        fetchAllContacts(),
-        followUpsApi.list(),
-      ]);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
 
-      setAttentionItems(
-        buildAttentionItems(leads, contacts, followUps, new Date()),
-      );
+      setSummary(await dashboardApi.getSummary(startOfToday, startOfTomorrow));
     } catch (error) {
       setAttentionError(getErrorMessage(error));
-      setAttentionItems([]);
+      setSummary(null);
     } finally {
       setAttentionLoading(false);
     }
@@ -580,13 +518,16 @@ export default function TodayPage() {
     return metric.value.toLocaleString("en-IN");
   }
 
-  const overdueItems = attentionItems.filter(
-    (item) => item.category === "overdue",
-  );
-  const dueTodayItems = attentionItems.filter(
-    (item) => item.category === "today",
-  );
-  const attentionCount = attentionItems.length;
+  const attentionItems = summary ? buildAttentionItems(summary) : [];
+  const overdueItems = attentionItems.filter((item) => item.category === "overdue");
+  const dueTodayItems = attentionItems.filter((item) => item.category === "today");
+  const upcomingItems = attentionItems.filter((item) => item.category === "upcoming");
+  const overdueTotal =
+    (summary?.follow_ups?.overdue_count ?? 0) + (summary?.lead_actions?.overdue_count ?? 0);
+  const dueTodayTotal =
+    (summary?.follow_ups?.today_count ?? 0) + (summary?.lead_actions?.today_count ?? 0);
+  const upcomingTotal = summary?.follow_ups?.upcoming_count ?? 0;
+  const attentionCount = overdueTotal + dueTodayTotal + upcomingTotal;
 
   const today = new Date();
   const greeting = today.getHours() < 12 ? "Good morning" : today.getHours() < 18 ? "Good afternoon" : "Good evening";
@@ -673,8 +614,9 @@ export default function TodayPage() {
               </div>
             </div>
             <div className="today-priority-counts" aria-label="Follow-up summary">
-              <span className="today-count-pill overdue"><strong>{overdueItems.length}</strong> overdue</span>
-              <span className="today-count-pill due"><strong>{dueTodayItems.length}</strong> due today</span>
+              <span className="today-count-pill overdue"><strong>{overdueTotal}</strong> overdue</span>
+              <span className="today-count-pill due"><strong>{dueTodayTotal}</strong> due today</span>
+              <span className="today-count-pill"><strong>{upcomingTotal}</strong> upcoming</span>
             </div>
           </div>
 
@@ -700,11 +642,45 @@ export default function TodayPage() {
             </div>
           ) : (
             <div className="today-attention-content">
-              <AttentionList title="Overdue" items={overdueItems} category="overdue" />
-              <AttentionList title="Due today" items={dueTodayItems} category="today" />
+              <AttentionList title="Overdue" items={overdueItems} total={overdueTotal} category="overdue" />
+              <AttentionList title="Due today" items={dueTodayItems} total={dueTodayTotal} category="today" />
+              <AttentionList title="Upcoming" items={upcomingItems} total={upcomingTotal} category="upcoming" />
             </div>
           )}
           <div className="today-card-footer"><Link to="/leads">Manage follow-ups <DashboardIcon name="arrow" size={14} /></Link></div>
+        </article>
+      </section>
+
+      <section className="today-work-section" aria-labelledby="today-pipeline-title">
+        <div className="today-section-header">
+          <div>
+            <p className="today-overline">DEALS</p>
+            <h2 id="today-pipeline-title">Deal pipeline</h2>
+            <p className="today-section-description">Open deals by stage. Expected value is totalled separately for each currency.</p>
+          </div>
+          <Link className="today-subtle-link" to="/deals">Open deals <DashboardIcon name="arrow" size={14} /></Link>
+        </div>
+
+        <article className="today-priority-card">
+          {attentionLoading ? (
+            <div className="today-state" role="status">
+              <span className="today-spinner" aria-hidden="true" />
+              <div><strong>Loading pipeline</strong><p>Counting deals by stage.</p></div>
+            </div>
+          ) : attentionError ? (
+            <div className="today-state">
+              <span className="today-state-icon"><DashboardIcon name="alert" size={19} /></span>
+              <div><strong>Pipeline couldn’t be loaded</strong><p>Use Retry in the follow-up queue above to refresh the summary.</p></div>
+            </div>
+          ) : summary && summary.deals === null ? (
+            <div className="today-state">
+              <span className="today-state-icon" aria-hidden="true">!</span>
+              <div><strong>Deal data isn’t available for your role</strong><p>Ask an administrator if you need access to deals.</p></div>
+            </div>
+          ) : summary?.deals ? (
+            <PipelineSummary deals={summary.deals} />
+          ) : null}
+          <div className="today-card-footer"><Link to="/deals">Manage deals <DashboardIcon name="arrow" size={14} /></Link></div>
         </article>
       </section>
 
