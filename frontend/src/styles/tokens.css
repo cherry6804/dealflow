@@ -94,6 +94,33 @@
   --df-z-backdrop: 40;
   --df-z-dropdown: 50;
   --df-z-modal: 60;
+
+  /* Foundation roles used by shared primitives and the workspace shell. */
+  --df-on-primary: #ffffff;
+  --df-scrollbar: #c1c7d0;
+
+  --df-neutral: #626f86;
+  --df-neutral-soft: #f1f2f4;
+
+  --df-priority-high: var(--df-danger);
+  --df-priority-high-soft: var(--df-danger-soft);
+  --df-priority-medium: var(--df-warning);
+  --df-priority-medium-soft: var(--df-warning-soft);
+  --df-priority-low: var(--df-neutral);
+  --df-priority-low-soft: var(--df-neutral-soft);
+
+  --df-font-weight-regular: 400;
+  --df-font-weight-medium: 500;
+  --df-font-weight-semibold: 600;
+
+  --df-type-page-title-size: 20px;
+  --df-type-page-title-line: 28px;
+  --df-type-section-size: 14px;
+  --df-type-section-line: 20px;
+  --df-type-label-size: 12px;
+  --df-type-label-line: 16px;
+  --df-type-meta-size: 12px;
+  --df-type-meta-line: 16px;
 }
 
 @media (max-width: 1024px) {

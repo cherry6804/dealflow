@@ -63,7 +63,7 @@ body {
   background: var(--df-surface);
   border-right: 1px solid var(--df-border);
   scrollbar-width: thin;
-  scrollbar-color: #c1c7d0 transparent;
+  scrollbar-color: var(--df-scrollbar) transparent;
   transition: width 160ms ease, transform 180ms ease;
 }
 
@@ -87,7 +87,7 @@ body {
   height: 34px;
   flex: 0 0 34px;
   place-items: center;
-  color: #fff;
+  color: var(--df-on-primary);
   background: var(--df-primary);
   border-radius: 7px;
   font-size: 19px;
@@ -184,7 +184,7 @@ body {
 
 .workspace-org-select:hover {
   background: var(--df-surface-hover);
-  border-color: #a5adba;
+  border-color: var(--df-disabled);
 }
 
 .workspace-org-select:focus-within {
@@ -243,7 +243,7 @@ body {
   overscroll-behavior: contain;
   padding: 0 0 12px;
   scrollbar-width: thin;
-  scrollbar-color: #c1c7d0 transparent;
+  scrollbar-color: var(--df-scrollbar) transparent;
 }
 
 .workspace-nav-caption {
