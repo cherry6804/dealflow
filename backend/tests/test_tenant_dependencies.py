@@ -681,3 +681,34 @@ def test_session_without_snapshot_revalidates_immediately(
             "product_role": None,
             "entitlements": [],
         }
+
+
+def test_production_rejects_session_not_bound_to_an_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outside production the same unbound session still reaches the tenant check."""
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token = create_session_for_user(user)
+    headers = {"X-Organization-ID": str(organization.id)}
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    production_settings = get_settings().model_copy(
+        update={"app_environment": "production"},
+    )
+    monkeypatch.setattr(auth_dependencies, "get_settings", lambda: production_settings)
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers=headers,
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required."}

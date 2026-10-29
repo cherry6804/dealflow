@@ -176,3 +176,32 @@ def test_rejects_unauthenticated_requests() -> None:
         response = client.get("/api/v1/organizations")
 
     assert response.status_code == 401
+
+
+def test_sso_bound_session_lists_only_its_bound_organization() -> None:
+    with TestingSessionLocal() as db:
+        user = create_user(db)
+        bound_org = create_organization(db, name="Bound Workspace")
+        other_org = create_organization(db, name="Other Workspace")
+        create_membership(db, user=user, organization=bound_org)
+        create_membership(db, user=user, organization=other_org)
+        db.commit()
+        bound_org_id = bound_org.id
+
+        app = create_test_app(user=user)
+        app.dependency_overrides[get_current_user_context] = lambda: CurrentUserContext(
+            user=user,
+            session_organization_id=bound_org_id,
+            sibvo_attested=True,
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/api/v1/organizations")
+
+        assert response.status_code == 200
+        assert response.json() == [
+            {
+                "id": str(bound_org_id),
+                "name": "Bound Workspace",
+            }
+        ]
