@@ -22,11 +22,49 @@ class CurrentUserContext:
 
     user: User
     session_organization_id: UUID | None = None
+    # True when the session was issued through SIBVO SSO.
+    sibvo_attested: bool = False
+    # SIBVO's access snapshot; authoritative for plan and entitlements.
+    sibvo_access: dict | None = None
 
     @property
     def user_id(self) -> UUID:
         """Return the authenticated user's identifier."""
         return self.user.id
+
+
+def parse_sibvo_access(body: dict) -> dict:
+    """Keep only the expected access-snapshot fields, failing on bad shapes."""
+    entitlements = body.get("entitlements", [])
+    if not isinstance(entitlements, list):
+        raise ValueError("entitlements must be a list")
+    parsed_entitlements = []
+    for item in entitlements:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("feature_key"), str)
+            or not isinstance(item.get("enabled"), bool)
+        ):
+            raise ValueError("invalid entitlement")
+        limit_value = item.get("limit_value")
+        if limit_value is not None and (
+            isinstance(limit_value, bool) or not isinstance(limit_value, int)
+        ):
+            raise ValueError("invalid entitlement limit")
+        parsed_entitlements.append(
+            {
+                "feature_key": item["feature_key"],
+                "enabled": item["enabled"],
+                "limit_value": limit_value,
+                "limit_unit": item.get("limit_unit"),
+            }
+        )
+    return {
+        "subscription_status": body.get("subscription_status"),
+        "plan_version_id": body.get("plan_version_id"),
+        "product_role": body.get("product_role"),
+        "entitlements": parsed_entitlements,
+    }
 
 
 def get_current_user_context(
@@ -101,6 +139,7 @@ def get_current_user_context(
 
         should_revalidate = (
             last_verified is None
+            or getattr(session, "sibvo_access", None) is None
             or (now - last_verified).total_seconds()
             >= settings.sso_revalidation_interval_seconds
         )
@@ -137,7 +176,11 @@ def get_current_user_context(
                         ),
                     )
                     response.raise_for_status()
-                    access_active = response.json().get("active") is True
+                    body = response.json()
+                    access_active = body.get("active") is True
+                    access_snapshot = (
+                        parse_sibvo_access(body) if access_active else None
+                    )
             except (httpx.HTTPError, ValueError, AttributeError):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -153,6 +196,7 @@ def get_current_user_context(
                 )
 
             session.sso_last_verified_at = now
+            session.sibvo_access = access_snapshot
             db.commit()
     elif settings.app_environment == "production":
         raise HTTPException(
@@ -163,6 +207,8 @@ def get_current_user_context(
     return CurrentUserContext(
         user=user,
         session_organization_id=session.organization_id,
+        sibvo_attested=has_sibvo_attestation,
+        sibvo_access=getattr(session, "sibvo_access", None),
     )
 
 

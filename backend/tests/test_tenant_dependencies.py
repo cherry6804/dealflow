@@ -571,3 +571,113 @@ def test_sso_session_cannot_switch_to_another_local_organization() -> None:
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Organization access denied."}
+
+
+def test_revalidation_stores_sibvo_access_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(
+        monkeypatch,
+        {
+            "active": True,
+            "subscription_status": "past_due",
+            "plan_version_id": str(uuid.uuid4()),
+            "product_role": "member",
+            "entitlements": [
+                {
+                    "feature_key": "workflow_automation",
+                    "enabled": True,
+                    "limit_value": None,
+                    "limit_unit": None,
+                    "unexpected": "dropped",
+                }
+            ],
+            "unexpected_top_level": "dropped",
+        },
+    )
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 200
+    with TestingSessionLocal() as session:
+        snapshot = session.get(AuthSession, session_id).sibvo_access
+    assert snapshot["subscription_status"] == "past_due"
+    assert snapshot["product_role"] == "member"
+    assert snapshot["entitlements"] == [
+        {
+            "feature_key": "workflow_automation",
+            "enabled": True,
+            "limit_value": None,
+            "limit_unit": None,
+        }
+    ]
+    assert "unexpected_top_level" not in snapshot
+
+
+def test_malformed_sibvo_access_snapshot_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(
+        monkeypatch,
+        {"active": True, "entitlements": [{"feature_key": "x", "enabled": "yes"}]},
+    )
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 503
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).sibvo_access is None
+
+
+def test_session_without_snapshot_revalidates_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh SSO login has no snapshot yet, so it must not wait 30 seconds."""
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, session_id = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc),
+    )
+    configure_sso_revalidation(monkeypatch, {"active": True, "entitlements": []})
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    assert response.status_code == 200
+    with TestingSessionLocal() as session:
+        assert session.get(AuthSession, session_id).sibvo_access == {
+            "subscription_status": None,
+            "plan_version_id": None,
+            "product_role": None,
+            "entitlements": [],
+        }

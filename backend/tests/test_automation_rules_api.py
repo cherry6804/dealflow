@@ -700,3 +700,90 @@ def test_list_automation_executions_is_tenant_scoped() -> None:
         result = response.json()
         assert result["total"] == 0
         assert result["items"] == []
+
+def request_with_sibvo_access(
+    *,
+    user: User,
+    organization: Organization,
+    sibvo_access: dict | None,
+) -> TestClient:
+    """Return a client whose session was issued through SIBVO SSO."""
+    app = create_test_app(user=user)
+    app.dependency_overrides[get_current_user_context] = lambda: CurrentUserContext(
+        user=user,
+        session_organization_id=organization.id,
+        sibvo_attested=True,
+        sibvo_access=sibvo_access,
+    )
+    client = TestClient(app)
+    client.headers.update({"X-Organization-ID": str(organization.id)})
+    return client
+
+
+def sibvo_snapshot(*, enabled: bool) -> dict:
+    return {
+        "subscription_status": "active",
+        "plan_version_id": None,
+        "product_role": "owner",
+        "entitlements": [
+            {
+                "feature_key": WORKFLOW_AUTOMATION_ENTITLEMENT,
+                "enabled": enabled,
+                "limit_value": None,
+                "limit_unit": None,
+            }
+        ],
+    }
+
+
+def test_sibvo_entitlement_allows_without_local_subscription() -> None:
+    """SSO sessions never need Dealsflo's legacy subscription rows."""
+    with TestingSessionLocal() as db:
+        user, organization = _create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+        db.commit()
+
+        with request_with_sibvo_access(
+            user=user,
+            organization=organization,
+            sibvo_access=sibvo_snapshot(enabled=True),
+        ) as client:
+            response = client.post("/api/v1/automation-rules", json=valid_payload())
+
+        assert response.status_code == 201, response.text
+
+
+def test_sibvo_entitlement_overrides_local_plan() -> None:
+    """A locally enabled plan cannot grant a feature SIBVO has disabled."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=ALL_PERMISSIONS,
+        )
+
+        with request_with_sibvo_access(
+            user=user,
+            organization=organization,
+            sibvo_access=sibvo_snapshot(enabled=False),
+        ) as client:
+            disabled = client.post("/api/v1/automation-rules", json=valid_payload())
+
+        with request_with_sibvo_access(
+            user=user,
+            organization=organization,
+            sibvo_access={**sibvo_snapshot(enabled=True), "entitlements": []},
+        ) as client:
+            missing = client.post("/api/v1/automation-rules", json=valid_payload())
+
+        with request_with_sibvo_access(
+            user=user,
+            organization=organization,
+            sibvo_access=None,
+        ) as client:
+            no_snapshot = client.post("/api/v1/automation-rules", json=valid_payload())
+
+        assert disabled.status_code == 403
+        assert missing.status_code == 403
+        assert no_snapshot.status_code == 403

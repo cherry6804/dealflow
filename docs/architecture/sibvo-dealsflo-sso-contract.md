@@ -61,6 +61,19 @@ different `X-Organization-ID`, and organization discovery returns only the
 bound workspace. Production rejects unbound legacy sessions and disables the
 old local login and general signup endpoints.
 
+## Plans, billing, and entitlements
+
+SIBVO owns subscriptions, payments, plan versions, and entitlements. Each
+successful revalidation stores SIBVO's access snapshot (subscription status,
+plan version, product role, entitlements) on the Dealsflo session in
+`auth_sessions.sibvo_access`; a session without a snapshot revalidates on its
+next request. Feature checks for SSO sessions read only this snapshot, so a
+locally configured plan can neither grant nor extend access. A malformed
+snapshot fails closed. Dealsflo no longer accepts payment-provider webhooks;
+providers deliver to SIBVO. The legacy `subscriptions`, `plans`,
+`plan_entitlements`, and billing audit tables remain for history and as a
+development/test fallback for unattested sessions, which production rejects.
+
 ## Provisioning and invitations
 
 SIBVO is the identity and organization source of truth. The first SSO login by

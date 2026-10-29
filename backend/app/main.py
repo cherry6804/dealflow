@@ -13,7 +13,6 @@ from app.api.activities import router as activities_router
 from app.api.auth import router as auth_router
 from app.api.automation_rules import router as automation_rules_router
 from app.api.billing_audit import router as billing_audit_router
-from app.api.billing_webhooks import router as billing_webhooks_router
 from app.api.contacts import router as contacts_router
 from app.api.customer_profiles import router as customer_profiles_router
 from app.api.deal_commissions import router as deal_commissions_router
@@ -34,7 +33,6 @@ from app.api.site_visits import router as site_visits_router
 from app.api.sso import router as sso_router
 from app.api.team import router as team_router
 from app.auth.email_outbox_worker import run_worker
-from app.billing.providers.registry import BillingProviderRegistry
 from app.config import get_settings
 from app.errors import register_error_handlers
 from app.logging import configure_logging
@@ -93,10 +91,6 @@ def create_app() -> FastAPI:
         openapi_url=None if settings.app_environment == "production" else "/openapi.json",
     )
 
-    application.state.billing_provider_registry = (
-        BillingProviderRegistry()
-    )
-
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -146,7 +140,6 @@ def create_app() -> FastAPI:
     application.include_router(documents_router)
     application.include_router(automation_rules_router)
     application.include_router(notifications_router)
-    application.include_router(billing_webhooks_router)
     application.include_router(billing_audit_router)
     application.include_router(team_router)
     application.include_router(invitation_signup_router)
