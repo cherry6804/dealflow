@@ -1,6 +1,9 @@
 
 export type TableDensity = "comfortable" | "compact";
 
+export const WORKSPACE_PREFERENCES_CHANGED_EVENT =
+  "dealflow:workspace-preferences-changed";
+
 export interface WorkspacePreferences {
   sidebarCollapsed: boolean;
   navigationOrder: string[];
@@ -157,6 +160,8 @@ export function saveWorkspacePreferences(
   } catch {
     // The workspace remains usable if browser storage is unavailable.
   }
+
+  window.dispatchEvent(new Event(WORKSPACE_PREFERENCES_CHANGED_EVENT));
 }
 
 export function resetWorkspacePreferences(
@@ -168,4 +173,6 @@ export function resetWorkspacePreferences(
   } catch {
     // Resetting local preferences must not break workspace navigation.
   }
+
+  window.dispatchEvent(new Event(WORKSPACE_PREFERENCES_CHANGED_EVENT));
 }
