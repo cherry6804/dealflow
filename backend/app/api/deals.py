@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.authz.dependencies import require_permission
+from app.authz.dependencies import enforce_permission, require_permission
 from app.automation_rules.execution_service import (
     execute_deal_created_automations,
 )
@@ -24,6 +24,7 @@ from app.deals.schemas import (
     DealStageTransitionRequest,
 )
 from app.deals.service import (
+    CLOSED_STAGES,
     create_deal,
     get_deal,
     list_deals,
@@ -198,6 +199,15 @@ def transition_deal_stage_endpoint(
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
     """Transition a deal, record history, and notify its owner."""
+    # Closing a deal is a separate permission from moving it through the
+    # pipeline, so an update-only role cannot win or lose a deal.
+    if payload.stage.value in CLOSED_STAGES:
+        enforce_permission(
+            db,
+            tenant_context=tenant_context,
+            permission_key="deals.close",
+        )
+
     try:
         deal = transition_deal_stage(
             db=db,

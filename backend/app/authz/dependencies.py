@@ -16,6 +16,54 @@ from app.db.session import get_db_session
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
 
+def enforce_permission(
+    db: Session,
+    *,
+    tenant_context: TenantContext,
+    permission_key: str,
+) -> None:
+    """Raise 403 unless a role in the selected tenant grants the permission."""
+
+    statement = (
+        select(Permission.id)
+        .join(
+            RolePermission,
+            RolePermission.permission_id == Permission.id,
+        )
+        .join(Role, Role.id == RolePermission.role_id)
+        .join(MembershipRole, MembershipRole.role_id == Role.id)
+        .where(
+            MembershipRole.membership_id == tenant_context.membership.id,
+            Role.organization_id == tenant_context.organization_id,
+            Permission.key == permission_key,
+            Permission.is_active.is_(True),
+            Role.is_active.is_(True),
+        )
+        .limit(1)
+    )
+
+    permission_id = db.scalar(statement)
+    decision = (
+        AuditDecision.ALLOWED
+        if permission_id is not None
+        else AuditDecision.DENIED
+    )
+
+    persist_authorization_audit_event(
+        user_id=tenant_context.membership.user_id,
+        organization_id=tenant_context.organization_id,
+        action=permission_key,
+        decision=decision,
+        permission_key=permission_key,
+    )
+
+    if permission_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied.",
+        )
+
+
 def require_permission(
     permission_key: str,
 ) -> Callable[..., TenantContext]:
@@ -31,45 +79,11 @@ def require_permission(
     ) -> TenantContext:
         """Authorize against the selected organization's membership."""
 
-        statement = (
-            select(Permission.id)
-            .join(
-                RolePermission,
-                RolePermission.permission_id == Permission.id,
-            )
-            .join(Role, Role.id == RolePermission.role_id)
-            .join(MembershipRole, MembershipRole.role_id == Role.id)
-            .where(
-                MembershipRole.membership_id == tenant_context.membership.id,
-                Role.organization_id == tenant_context.organization_id,
-                Permission.key == normalized_permission_key,
-                Permission.is_active.is_(True),
-                Role.is_active.is_(True),
-            )
-            .limit(1)
-        )
-
-        permission_id = db.scalar(statement)
-        decision = (
-            AuditDecision.ALLOWED
-            if permission_id is not None
-            else AuditDecision.DENIED
-        )
-
-        persist_authorization_audit_event(
-            user_id=tenant_context.membership.user_id,
-            organization_id=tenant_context.organization_id,
-            action=normalized_permission_key,
-            decision=decision,
+        enforce_permission(
+            db,
+            tenant_context=tenant_context,
             permission_key=normalized_permission_key,
         )
-
-        if permission_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied.",
-            )
-
         return tenant_context
 
     return permission_dependency
