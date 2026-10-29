@@ -45,6 +45,7 @@ const OnboardingPage = lazy(
 // CRM pages
 const TodayPage = lazy(() => import("../../pages/TodayPage"));
 const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
+const FollowUpsPage = lazy(() => import("../../pages/FollowUpsPage"));
 const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
@@ -212,15 +213,7 @@ export default function AppRouter() {
             <Route path="/settings" element={<TeamAccessPage />} />
 
             {/* Modules not yet implemented */}
-            <Route
-              path="/follow-ups"
-              element={
-                <ModulePlaceholder
-                  title="Follow-ups"
-                  description="Manage upcoming follow-ups, overdue activities, and customer reminders."
-                />
-              }
-            />
+            <Route path="/follow-ups" element={<FollowUpsPage />} />
 
             <Route
               path="/commissions"

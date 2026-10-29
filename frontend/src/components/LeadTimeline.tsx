@@ -1,13 +1,23 @@
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "../lib/api";
 import {
   activityApi,
   type LeadActivity,
+  type RecordableActivityType,
 } from "../services/activityApi";
 import SiteVisitHistory from "./SiteVisitHistory";
 import "./LeadTimeline.css";
+
+const RECORDABLE_ACTIVITY_TYPES: RecordableActivityType[] = [
+  "NOTE",
+  "CALL",
+  "EMAIL",
+  "MEETING",
+  "TASK",
+  "OTHER",
+];
 
 interface LeadTimelineProps {
   leadId: string;
@@ -141,6 +151,12 @@ export default function LeadTimeline({
   const [activities, setActivities] = useState<LeadActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [noteType, setNoteType] = useState<RecordableActivityType>("NOTE");
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteDetails, setNoteDetails] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const [noteSuccess, setNoteSuccess] = useState("");
 
   const loadTimeline = useCallback(async () => {
     setLoading(true);
@@ -155,6 +171,39 @@ export default function LeadTimeline({
       setLoading(false);
     }
   }, [leadId]);
+
+  async function handleAddNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const title = noteTitle.trim();
+    const details = noteDetails.trim();
+
+    setNoteError("");
+    setNoteSuccess("");
+
+    if (!title) {
+      setNoteError("Enter a title for this activity.");
+      return;
+    }
+
+    setNoteSaving(true);
+
+    try {
+      await activityApi.createForLead(leadId, {
+        activity_type: noteType,
+        title,
+        description: details || null,
+      });
+      setNoteTitle("");
+      setNoteDetails("");
+      setNoteSuccess("Activity saved.");
+      await loadTimeline();
+    } catch (saveError) {
+      setNoteError(getErrorMessage(saveError));
+    } finally {
+      setNoteSaving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +291,79 @@ export default function LeadTimeline({
         </header>
 
         <div className="lead-timeline-body leads-form-body">
+          <form
+            className="lead-timeline-note"
+            onSubmit={(event) => void handleAddNote(event)}
+            noValidate
+            aria-labelledby="lead-timeline-note-title"
+          >
+            <h3 id="lead-timeline-note-title">Add an activity</h3>
+
+            {noteError && (
+              <p className="lead-timeline-note-error" role="alert">
+                {noteError}
+              </p>
+            )}
+
+            {noteSuccess && (
+              <p className="lead-timeline-note-success" role="status">
+                {noteSuccess}
+              </p>
+            )}
+
+            <label className="lead-timeline-note-field">
+              <span>Type</span>
+              <select
+                value={noteType}
+                onChange={(event) =>
+                  setNoteType(event.target.value as RecordableActivityType)
+                }
+                disabled={noteSaving}
+              >
+                {RECORDABLE_ACTIVITY_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {formatActivityType(type)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="lead-timeline-note-field">
+              <span>
+                Title <b aria-hidden="true">*</b>
+              </span>
+              <input
+                type="text"
+                maxLength={200}
+                value={noteTitle}
+                onChange={(event) => setNoteTitle(event.target.value)}
+                disabled={noteSaving}
+                aria-invalid={noteError ? true : undefined}
+              />
+            </label>
+
+            <label className="lead-timeline-note-field">
+              <span>Details</span>
+              <textarea
+                rows={3}
+                maxLength={10000}
+                value={noteDetails}
+                onChange={(event) => setNoteDetails(event.target.value)}
+                disabled={noteSaving}
+              />
+            </label>
+
+            <div className="lead-timeline-note-actions">
+              <button
+                className="leads-primary-button"
+                type="submit"
+                disabled={noteSaving}
+              >
+                {noteSaving ? "Saving…" : "Save activity"}
+              </button>
+            </div>
+          </form>
+
           {loading ? (
             <div
               className="lead-timeline-state"

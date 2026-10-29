@@ -11,6 +11,19 @@ export type ActivityType =
   | "TASK"
   | "OTHER";
 
+// Activities users may record. STATUS_CHANGE and OWNER_CHANGE are written by
+// the lead workflow and cannot be created directly.
+export type RecordableActivityType = Exclude<
+  ActivityType,
+  "STATUS_CHANGE" | "OWNER_CHANGE"
+>;
+
+export interface LeadActivityCreateInput {
+  activity_type: RecordableActivityType;
+  title: string;
+  description?: string | null;
+}
+
 export interface LeadActivity {
   id: string;
   organization_id: string;
@@ -33,6 +46,16 @@ export const activityApi = {
   listForLead(leadId: string): Promise<LeadActivityListResponse> {
     return api.get<LeadActivityListResponse>(
       `/leads/${encodeURIComponent(leadId)}/activities`,
+    );
+  },
+
+  createForLead(
+    leadId: string,
+    input: LeadActivityCreateInput,
+  ): Promise<LeadActivity> {
+    return api.post<LeadActivity>(
+      `/leads/${encodeURIComponent(leadId)}/activities`,
+      input,
     );
   },
 

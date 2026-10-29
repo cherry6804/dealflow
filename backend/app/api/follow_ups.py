@@ -165,7 +165,7 @@ def list_follow_ups_endpoint(
     due_before: datetime | None = Query(default=None),
     overdue_only: bool = Query(default=False),
     tenant_context: TenantContext = Depends(
-        require_permission("leads.update"),
+        require_permission("leads.read"),
     ),
     db: Session = Depends(get_db_session),
 ) -> list[FollowUpResponse]:

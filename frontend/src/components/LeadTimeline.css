@@ -402,3 +402,46 @@
     align-self: flex-end;
   }
 }
+
+.lead-timeline-note {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.lead-timeline-note h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.lead-timeline-note-field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.lead-timeline-note-field input,
+.lead-timeline-note-field select,
+.lead-timeline-note-field textarea {
+  font: inherit;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #c9cfd8;
+  border-radius: 6px;
+}
+
+.lead-timeline-note-error {
+  margin: 0;
+  color: #b42318;
+}
+
+.lead-timeline-note-success {
+  margin: 0;
+  color: #067647;
+}
+
+.lead-timeline-note-actions {
+  display: flex;
+  justify-content: flex-end;
+}

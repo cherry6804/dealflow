@@ -425,3 +425,67 @@ def test_create_activity_rejects_invalid_activity_type() -> None:
             )
 
         assert response.status_code == 422
+
+
+def test_create_activity_rejects_system_managed_types() -> None:
+    """Users cannot record STATUS_CHANGE or OWNER_CHANGE history entries."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        lead_id = lead.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            for activity_type in ("STATUS_CHANGE", "OWNER_CHANGE"):
+                response = client.post(
+                    f"/api/v1/leads/{lead_id}/activities",
+                    json={
+                        "activity_type": activity_type,
+                        "title": "Forged change",
+                    },
+                )
+                assert response.status_code == 422, response.text
+
+        db.expire_all()
+        assert (
+            db.scalars(select(Activity).where(Activity.lead_id == lead_id)).all()
+            == []
+        )
+
+
+def test_create_activity_rejects_naive_occurred_at_and_accepts_aware() -> None:
+    """Occurrence times need a timezone, matching follow-up due dates."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(
+            db,
+            permission_keys=("leads.update",),
+        )
+        lead = create_lead(db, organization=organization)
+        lead_id = lead.id
+
+        with make_test_client(user=user) as client:
+            add_tenant_header(client, organization)
+            naive = client.post(
+                f"/api/v1/leads/{lead_id}/activities",
+                json={
+                    "activity_type": "NOTE",
+                    "title": "Called customer",
+                    "occurred_at": "2026-10-29T10:00:00",
+                },
+            )
+            aware = client.post(
+                f"/api/v1/leads/{lead_id}/activities",
+                json={
+                    "activity_type": "NOTE",
+                    "title": "Called customer",
+                    "occurred_at": "2026-10-29T10:00:00+05:30",
+                },
+            )
+
+        assert naive.status_code == 422, naive.text
+        assert aware.status_code == 201, aware.text
+        assert aware.json()["occurred_at"].endswith("+05:30")
+
