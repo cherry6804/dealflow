@@ -146,6 +146,15 @@ class Settings(BaseSettings):
         default=None,
         repr=False,
     )
+    # Provider credential encryption (DFR1-011 secrets boundary). Separate from the email key.
+    # Local and test: a JSON keyring of base64url 32-byte AES-256-GCM keys, keyed by key id.
+    # Production: must use a managed key provider; the local keyring is refused there.
+    provider_secrets_key_provider: Literal["local_keyring", "managed_kms"] = "local_keyring"
+    provider_secrets_active_key_id: str | None = Field(default=None, max_length=64)
+    provider_secrets_keyring: SecretStr | None = Field(
+        default=None,
+        repr=False,
+    )
     email_outbox_batch_size: int = Field(
         default=20,
         gt=0,

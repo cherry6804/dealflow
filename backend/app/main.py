@@ -29,6 +29,7 @@ from app.api.leads import router as leads_router
 from app.api.notifications import router as notifications_router
 from app.api.organizations import router as organizations_router
 from app.api.payment_milestones import router as payment_milestones_router
+from app.api.provider_credentials import router as provider_credentials_router
 from app.api.properties import router as properties_router
 from app.api.referrals import router as referrals_router
 from app.api.requirements import router as requirements_router
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
     application.include_router(billing_audit_router)
     application.include_router(team_router)
     application.include_router(governance_router)
+    application.include_router(provider_credentials_router)
     application.include_router(invitation_signup_router)
     application.include_router(sso_router)
     @application.get("/health", tags=["system"])

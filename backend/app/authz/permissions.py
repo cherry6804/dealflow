@@ -58,6 +58,8 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("governance.budgets.manage", "Set organization AI usage budgets."),
     ("governance.privacy.read", "View retention policies, legal holds and privacy requests."),
     ("governance.privacy.manage", "Change retention, legal holds and privacy requests."),
+    ("provider_credentials.read", "View provider credential metadata."),
+    ("provider_credentials.manage", "Create, rotate and revoke provider credentials."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)
@@ -69,6 +71,7 @@ OWNER_ONLY_PERMISSION_KEYS = frozenset(
         "governance.capabilities.manage",
         "governance.budgets.manage",
         "governance.privacy.manage",
+        "provider_credentials.manage",
     }
 )
 
