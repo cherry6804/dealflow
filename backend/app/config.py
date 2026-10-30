@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     sso_sibvo_base_url: str = "http://localhost:8000/api/v1"
 
     sso_dealsflo_client_id: str = "dealsflo"
+    # Must match SSO_DEALSFLO_PRODUCT_KEY in SIBVO. Access snapshots are
+    # rejected unless SIBVO names this product.
+    sso_dealsflo_product_key: str = "dealsflo"
     sso_dealsflo_client_secret: SecretStr | None = Field(
         default=None,
         repr=False,
@@ -72,6 +75,12 @@ class Settings(BaseSettings):
         ge=60,
         le=600,
     )
+
+    # Local plan tables as entitlement authority for sessions that are not
+    # SIBVO-attested. Off by default. Development and test only. Setting this
+    # to true in staging or production stops the application from starting.
+    # SIBVO is the authority for those environments (ADR-0027).
+    local_entitlement_fallback_enabled: bool = False
 
     # Email verification.
     email_verification_token_lifetime_minutes: int = Field(
@@ -173,6 +182,7 @@ class Settings(BaseSettings):
         "app_version",
         "auth_cookie_name",
         "sso_dealsflo_client_id",
+        "sso_dealsflo_product_key",
         "sso_dealsflo_redirect_uri",
         "sso_sibvo_base_url",
         "sso_flow_cookie_name",
@@ -283,6 +293,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SSO flow and authentication cookies must have "
                 "different names."
+            )
+
+        if (
+            self.local_entitlement_fallback_enabled
+            and self.app_environment not in {"development", "test"}
+        ):
+            raise ValueError(
+                "Local entitlement fallback is allowed only in development "
+                "and test. SIBVO is the entitlement authority elsewhere."
             )
 
         if self.app_environment == "production":

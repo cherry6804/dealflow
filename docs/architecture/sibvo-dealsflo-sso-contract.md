@@ -69,10 +69,16 @@ plan version, product role, entitlements) on the Dealsflo session in
 `auth_sessions.sibvo_access`; a session without a snapshot revalidates on its
 next request. Feature checks for SSO sessions read only this snapshot, so a
 locally configured plan can neither grant nor extend access. A malformed
-snapshot fails closed. Dealsflo no longer accepts payment-provider webhooks;
+snapshot fails closed. The snapshot must name the SIBVO organization and
+product it authorizes (`organization_id`, `product_key`); a snapshot for another
+organization or product, or one without that binding, is rejected and the
+session fails closed. Dealsflo no longer accepts payment-provider webhooks;
 providers deliver to SIBVO. The legacy `subscriptions`, `plans`,
-`plan_entitlements`, and billing audit tables remain for history and as a
-development/test fallback for unattested sessions, which production rejects.
+`plan_entitlements`, and billing audit tables remain for history. They decide
+access for unattested sessions only when `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is
+set, which is allowed only in `development` and `test`. Staging and production
+refuse to start with that flag set, and deny unattested feature access without
+it. See `docs/architecture/sibvo-dealsflo-entitlement-contract.md`.
 
 ## Provisioning and invitations
 

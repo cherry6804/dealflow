@@ -181,6 +181,12 @@ def _feature_enabled(
 ) -> bool:
     """Return whether a Boolean feature is enabled for this tenant session."""
     if user_context.sibvo_attested:
+        # A SIBVO snapshot authorizes only the organization it was issued for.
+        if user_context.session_organization_id != organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="An eligible subscription is required.",
+            )
         access = user_context.sibvo_access
         entitlements = access.get("entitlements") if isinstance(access, dict) else None
         if not isinstance(entitlements, list):
@@ -196,10 +202,12 @@ def _feature_enabled(
             detail="The required entitlement is not included in this plan.",
         )
 
-    if get_settings().app_environment == "production":
+    # Unattested sessions may use the local tables only when the explicit,
+    # development/test-only flag is on. Environment detection never enables it.
+    if not get_settings().local_entitlement_fallback_enabled:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SIBVO authorization is required for this feature.",
         )
     return (
         get_entitlement_value(db, organization_id=organization_id, key=key)

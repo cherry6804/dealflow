@@ -33,8 +33,22 @@ class CurrentUserContext:
         return self.user.id
 
 
-def parse_sibvo_access(body: dict) -> dict:
-    """Keep only the expected access-snapshot fields, failing on bad shapes."""
+def parse_sibvo_access(
+    body: dict,
+    *,
+    expected_organization_id: str,
+    expected_product_key: str,
+) -> dict:
+    """Keep only the expected access-snapshot fields, failing on bad shapes.
+
+    A snapshot must name the SIBVO organization and product it authorizes.
+    A snapshot without that binding, or for another organization or product,
+    is rejected so it cannot authorize this session.
+    """
+    if body.get("organization_id") != expected_organization_id:
+        raise ValueError("snapshot organization does not match the session")
+    if body.get("product_key") != expected_product_key:
+        raise ValueError("snapshot product does not match this application")
     entitlements = body.get("entitlements", [])
     if not isinstance(entitlements, list):
         raise ValueError("entitlements must be a list")
@@ -179,7 +193,13 @@ def get_current_user_context(
                     body = response.json()
                     access_active = body.get("active") is True
                     access_snapshot = (
-                        parse_sibvo_access(body) if access_active else None
+                        parse_sibvo_access(
+                            body,
+                            expected_organization_id=str(sibvo_values[1]),
+                            expected_product_key=settings.sso_dealsflo_product_key,
+                        )
+                        if access_active
+                        else None
                     )
             except (httpx.HTTPError, ValueError, AttributeError):
                 raise HTTPException(

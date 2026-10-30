@@ -194,12 +194,22 @@ def configure_sso_revalidation(monkeypatch, response_json=None, error=None):
     monkeypatch.setattr(auth_dependencies, "get_settings", lambda: settings)
 
     class FakeResponse:
+        def __init__(self, request_data):
+            self.request_data = request_data
+
         def raise_for_status(self):
             if error:
                 raise error
 
         def json(self):
-            return response_json or {"active": True}
+            body = dict(response_json) if response_json else {"active": True}
+            if body.get("active") is True:
+                # A correctly bound SIBVO response names the session's
+                # organization and this application's product. Tests that
+                # check the binding pass their own values.
+                body.setdefault("organization_id", self.request_data["organization_id"])
+                body.setdefault("product_key", settings.sso_dealsflo_product_key)
+            return body
 
     class FakeClient:
         def __init__(self, **kwargs):
@@ -213,7 +223,7 @@ def configure_sso_revalidation(monkeypatch, response_json=None, error=None):
 
         def post(self, url, **kwargs):
             self.payload = kwargs["data"]
-            return FakeResponse()
+            return FakeResponse(self.payload)
 
     monkeypatch.setattr(auth_dependencies.httpx, "Client", FakeClient)
 
@@ -712,3 +722,37 @@ def test_production_rejects_session_not_bound_to_an_organization(
     )
     assert response.status_code == 401
     assert response.json() == {"detail": "Authentication required."}
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"organization_id": str(uuid.uuid4())},
+        {"product_key": "another-product"},
+        {"organization_id": None},
+        {"product_key": None},
+    ],
+    ids=["other-sibvo-organization", "other-product", "unbound-organization", "unbound-product"],
+)
+def test_revalidation_rejects_snapshot_not_bound_to_this_session(
+    monkeypatch: pytest.MonkeyPatch,
+    binding: dict[str, str | None],
+) -> None:
+    user = create_user()
+    organization = create_organization()
+    create_membership(user.id, organization.id)
+    token, _ = create_sso_session_for_user(
+        user,
+        organization,
+        last_verified_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    configure_sso_revalidation(monkeypatch, {"active": True, **binding})
+
+    response = client.get(
+        "/tenant-protected",
+        cookies={get_settings().auth_cookie_name: token},
+        headers={"X-Organization-ID": str(organization.id)},
+    )
+
+    # Fail closed: a snapshot that does not match this session cannot authorize access.
+    assert response.status_code == 503

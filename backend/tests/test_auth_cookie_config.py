@@ -7,6 +7,12 @@ from pydantic import ValidationError
 from app.config import Settings
 
 
+@pytest.fixture(autouse=True)
+def _production_like_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model configuration without the test-only local entitlement fallback."""
+    monkeypatch.delenv("LOCAL_ENTITLEMENT_FALLBACK_ENABLED", raising=False)
+
+
 def test_development_allows_http_cookie_configuration() -> None:
     settings = Settings(
         _env_file=None,
