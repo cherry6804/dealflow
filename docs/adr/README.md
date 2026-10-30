@@ -253,7 +253,7 @@ Never silently rewrite architectural history.
 | 0026 | Transactional Outbox and Background Execution | Proposed |
 | 0027 | SIBVO Authority and Entitlement Snapshot | Proposed |
 | 0028 | Communication Channel Gateway Architecture | Proposed |
-| 0029 | AI Execution and Disabled-by-Default Enablement Policy | Proposed |
+| 0029 | AI Execution and Disabled-by-Default Enablement Policy | Accepted |
 | 0030 | Environment and Configuration Standards | Proposed |
 
 New ADRs should be added to this index when created.

@@ -5,10 +5,15 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from app.auth.dependencies import get_current_user_context
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.follow_up import FollowUp
 from app.db.session import SessionLocal
+from tests.governance_helpers import (
+    attested_user_context,
+    enable_deal_created_automation,
+)
 from tests.test_deals_api import (
     create_authorized_user,
     create_customer_profile,
@@ -33,6 +38,11 @@ def test_creating_deal_through_api_executes_active_automation() -> None:
             organization=organization,
         )
         lead = create_lead(db, organization=organization)
+        enable_deal_created_automation(
+            db,
+            organization_id=organization.id,
+            actor_user_id=user.id,
+        )
 
         rule = AutomationRule(
             organization_id=organization.id,
@@ -69,6 +79,9 @@ def test_creating_deal_through_api_executes_active_automation() -> None:
         )
 
         app = create_test_app(user=user)
+        app.dependency_overrides[get_current_user_context] = lambda: attested_user_context(
+            user, organization_id=organization.id
+        )
         from fastapi.testclient import TestClient
 
         with TestClient(app) as client:
@@ -125,6 +138,11 @@ def test_creating_deal_with_nonmatching_rule_records_skipped_execution() -> None
             organization=organization,
         )
         lead = create_lead(db, organization=organization)
+        enable_deal_created_automation(
+            db,
+            organization_id=organization.id,
+            actor_user_id=user.id,
+        )
 
         rule = AutomationRule(
             organization_id=organization.id,
@@ -158,6 +176,9 @@ def test_creating_deal_with_nonmatching_rule_records_skipped_execution() -> None
         )
 
         app = create_test_app(user=user)
+        app.dependency_overrides[get_current_user_context] = lambda: attested_user_context(
+            user, organization_id=organization.id
+        )
         from fastapi.testclient import TestClient
 
         with TestClient(app) as client:
