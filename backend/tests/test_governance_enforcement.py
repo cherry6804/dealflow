@@ -15,9 +15,11 @@ from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
+from app.db.models.user import User
 from app.db.session import SessionLocal
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES, AUTOMATION_MASTER
 from app.governance.service import set_capability_enabled
+from tests.governance_helpers import attested_user_context
 from tests.test_automation_execution_service import create_test_deal
 from tests.test_deals_api import create_authorized_user, create_lead
 
@@ -65,13 +67,17 @@ def _set(user_id: UUID, organization_id: UUID, key: str, enabled: bool) -> None:
         db.commit()
 
 
-def _run(organization_id: UUID, deal_id: UUID) -> int:
+def _run(user_id: UUID, organization_id: UUID, deal_id: UUID) -> int:
     """Run the deal-created automations and return how many executions were created."""
     with SessionLocal() as db:
         deal = db.get(Deal, deal_id)
-        assert deal is not None
+        user = db.get(User, user_id)
+        assert deal is not None and user is not None
         executions = execute_deal_created_automations(
-            db, organization_id=organization_id, deal=deal
+            db,
+            organization_id=organization_id,
+            deal=deal,
+            user_context=attested_user_context(user, organization_id=organization_id),
         )
         db.commit()
         return len(executions)
@@ -98,9 +104,9 @@ def _cleanup(organization_id: UUID) -> None:
 
 
 def test_no_rule_runs_while_automation_is_disabled_by_default() -> None:
-    _, organization_id, deal_id = _seed()
+    user_id, organization_id, deal_id = _seed()
     try:
-        assert _run(organization_id, deal_id) == 0
+        assert _run(user_id, organization_id, deal_id) == 0
         assert _execution_count(organization_id) == 0
         with SessionLocal() as db:
             # Manual CRM data is untouched by a denied automation.
@@ -113,7 +119,7 @@ def test_child_switch_alone_does_not_allow_execution() -> None:
     user_id, organization_id, deal_id = _seed()
     try:
         _set(user_id, organization_id, AUTOMATION_DEAL_CREATED_RULES, True)
-        assert _run(organization_id, deal_id) == 0
+        assert _run(user_id, organization_id, deal_id) == 0
         assert _execution_count(organization_id) == 0
     finally:
         _cleanup(organization_id)
@@ -124,7 +130,7 @@ def test_both_switches_on_allows_the_matching_rule_to_run() -> None:
     try:
         _set(user_id, organization_id, AUTOMATION_MASTER, True)
         _set(user_id, organization_id, AUTOMATION_DEAL_CREATED_RULES, True)
-        assert _run(organization_id, deal_id) == 1
+        assert _run(user_id, organization_id, deal_id) == 1
         assert _execution_count(organization_id) == 1
     finally:
         _cleanup(organization_id)
@@ -136,6 +142,6 @@ def test_disabling_the_master_stops_new_executions_immediately() -> None:
         _set(user_id, organization_id, AUTOMATION_MASTER, True)
         _set(user_id, organization_id, AUTOMATION_DEAL_CREATED_RULES, True)
         _set(user_id, organization_id, AUTOMATION_MASTER, False)
-        assert _run(organization_id, deal_id) == 0
+        assert _run(user_id, organization_id, deal_id) == 0
     finally:
         _cleanup(organization_id)

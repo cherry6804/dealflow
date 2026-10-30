@@ -25,11 +25,22 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import CurrentUserContext
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
     CAPABILITY_BY_KEY,
     CapabilityDefinition,
     ancestry,
+)
+from app.governance.entitlement import (
+    REASON_ENTITLEMENT_DISABLED,
+    REASON_ENTITLEMENT_MISSING,
+    REASON_ENTITLEMENT_UNVERIFIED,
+    REASON_PRODUCT_MEMBERSHIP_INACTIVE,
+    REASON_SUBSCRIPTION_NOT_ACTIVE,
+    REASON_TRIAL_EXPIRED,
+    REASON_WRONG_ORGANIZATION,
+    verify_entitlement,
 )
 
 REASON_ALLOWED = "allowed"
@@ -50,6 +61,15 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
     ),
+    REASON_ENTITLEMENT_UNVERIFIED: (
+        "Your subscription could not be verified. Sign in again or try later."
+    ),
+    REASON_WRONG_ORGANIZATION: "Your session is not authorized for this organization.",
+    REASON_PRODUCT_MEMBERSHIP_INACTIVE: "Your access to this product is not active.",
+    REASON_TRIAL_EXPIRED: "The trial for this product has ended.",
+    REASON_SUBSCRIPTION_NOT_ACTIVE: "The subscription for this product is not active.",
+    REASON_ENTITLEMENT_MISSING: "Your plan does not include this feature.",
+    REASON_ENTITLEMENT_DISABLED: "This feature is turned off for your plan.",
 }
 
 
@@ -98,15 +118,32 @@ def evaluate_capability(
     *,
     organization_id: UUID,
     capability_key: str,
+    user_context: CurrentUserContext | None = None,
     correlation_id: str | None = None,
 ) -> PolicyDecision:
-    """Return whether ``capability_key`` may execute for ``organization_id`` now."""
+    """Return whether ``capability_key`` may execute for ``organization_id`` now.
+
+    Gates run in this order: entitlement (SIBVO snapshot), organization master and child
+    switches, provider, consent. The first failing gate decides the reason. A capability
+    that needs an entitlement and has no verifiable snapshot is denied.
+    """
 
     definition: CapabilityDefinition | None = CAPABILITY_BY_KEY.get(capability_key)
     if definition is None:
         return _decision(
             capability_key, organization_id, REASON_UNKNOWN_CAPABILITY, 0, correlation_id
         )
+
+    if definition.entitlement_feature is not None:
+        verdict = verify_entitlement(
+            user_context,
+            organization_id=organization_id,
+            feature_key=definition.entitlement_feature,
+        )
+        if not verdict.allowed:
+            return _decision(
+                definition.key, organization_id, verdict.reason_code, 0, correlation_id
+            )
 
     chain = ancestry(definition)
     rows = {

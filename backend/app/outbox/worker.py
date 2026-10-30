@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Governance handlers (usage alert delivery) must be registered before any dispatch.
+    from app.governance.alert_delivery import register_governance_handlers
+
+    register_governance_handlers()
+
     if args.once:
         result = run_once()
         print(

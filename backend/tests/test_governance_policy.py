@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import delete
@@ -26,6 +27,7 @@ from app.governance.policy import (
     evaluate_capability,
 )
 from app.governance.service import set_capability_enabled
+from tests.governance_helpers import attested_user_context
 from tests.test_team_api import create_manager
 
 
@@ -57,8 +59,13 @@ def _set(tenant: tuple[UUID, UUID], key: str, enabled: bool) -> None:
 
 
 def _decide(organization_id: UUID, key: str):
+    # These tests exercise the switches. The entitlement is satisfied by an attested snapshot
+    # for the same organization, so only the switch decides the outcome.
+    context = attested_user_context(SimpleNamespace(id=uuid4()), organization_id=organization_id)
     with SessionLocal() as db:
-        return evaluate_capability(db, organization_id=organization_id, capability_key=key)
+        return evaluate_capability(
+            db, organization_id=organization_id, capability_key=key, user_context=context
+        )
 
 
 def test_every_capability_is_disabled_by_default(tenant) -> None:

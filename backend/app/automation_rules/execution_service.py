@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import CurrentUserContext
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
@@ -271,6 +272,7 @@ def execute_deal_created_automations(
     *,
     organization_id: UUID,
     deal: Deal,
+    user_context: CurrentUserContext | None,
 ) -> list[AutomationExecution]:
     """Execute active DEAL_CREATED rules for a deal in its organization.
 
@@ -294,6 +296,7 @@ def execute_deal_created_automations(
         db,
         organization_id=organization_id,
         capability_key=AUTOMATION_DEAL_CREATED_RULES,
+        user_context=user_context,
     )
     if not decision.allowed:
         return []

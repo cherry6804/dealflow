@@ -21,7 +21,7 @@ from app.db.models.lead import Lead
 from app.db.models.organization import Organization
 from app.db.models.user import User
 from app.db.session import SessionLocal
-from tests.governance_helpers import enable_deal_created_automation
+from tests.governance_helpers import attested_user_context, enable_deal_created_automation
 from tests.test_deals_api import (
     create_authorized_user,
     create_customer_profile,
@@ -136,6 +136,7 @@ def test_matching_rule_creates_follow_up() -> None:
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
         db.flush()
 
@@ -200,6 +201,7 @@ def test_non_matching_rule_is_skipped() -> None:
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
 
         assert len(executions) == 1
@@ -242,6 +244,7 @@ def test_follow_up_action_is_skipped_when_deal_has_no_lead() -> None:
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
 
         assert len(executions) == 1
@@ -273,6 +276,7 @@ def test_unsupported_action_records_failed_execution() -> None:
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
 
         assert len(executions) == 1
@@ -315,6 +319,7 @@ def test_rules_from_another_organization_are_not_executed() -> None:
             db,
             organization_id=organization_a.id,
             deal=deal_a,
+            user_context=attested_user_context(user_a, organization_id=organization_a.id),
         )
 
         assert executions == []
@@ -348,6 +353,7 @@ def test_execution_rejects_deal_from_another_organization() -> None:
                 db,
                 organization_id=organization_a.id,
                 deal=deal_b,
+                user_context=attested_user_context(user_a, organization_id=organization_a.id),
             )
 
 
@@ -446,6 +452,7 @@ def test_successful_execution_creates_notification_for_rule_creator() -> None:
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
         db.flush()
 
@@ -511,6 +518,7 @@ def test_automation_execution_notification_respects_disabled_preference() -> Non
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
         db.flush()
 
@@ -558,6 +566,7 @@ def test_repeated_deal_created_event_does_not_duplicate_execution_notification()
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
         db.commit()
 
@@ -567,6 +576,7 @@ def test_repeated_deal_created_event_does_not_duplicate_execution_notification()
             db,
             organization_id=organization.id,
             deal=deal,
+            user_context=attested_user_context(user, organization_id=organization.id),
         )
         db.commit()
 

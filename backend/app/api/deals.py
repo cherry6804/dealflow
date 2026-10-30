@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.authz.dependencies import enforce_permission, require_permission
 from app.automation_rules.execution_service import (
     execute_deal_created_automations,
@@ -73,6 +74,7 @@ def create_deal_endpoint(
     tenant_context: TenantContext = Depends(
         require_permission("deals.create")
     ),
+    user_context: CurrentUserContext = Depends(get_current_user_context),
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
     """Create a deal, notify its owner, and execute matching automations."""
@@ -110,6 +112,7 @@ def create_deal_endpoint(
             db,
             organization_id=tenant_context.organization_id,
             deal=deal,
+            user_context=user_context,
         )
 
         db.commit()

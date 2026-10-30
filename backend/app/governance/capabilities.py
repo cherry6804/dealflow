@@ -32,6 +32,8 @@ class CapabilityDefinition:
     parent_key: str | None
     requires_provider: bool = False
     requires_consent: bool = False
+    # SIBVO plan feature that must be enabled in the attested access snapshot.
+    entitlement_feature: str | None = None
 
     @property
     def default_enabled(self) -> bool:
@@ -70,7 +72,10 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
         requires_consent=True,
     ),
     CapabilityDefinition(
-        AUTOMATION_DEAL_CREATED_RULES, CapabilityCategory.AUTOMATION, AUTOMATION_MASTER
+        AUTOMATION_DEAL_CREATED_RULES,
+        CapabilityCategory.AUTOMATION,
+        AUTOMATION_MASTER,
+        entitlement_feature="workflow_automation",
     ),
     CapabilityDefinition(
         "channels.whatsapp", CapabilityCategory.COMMUNICATION, None,
