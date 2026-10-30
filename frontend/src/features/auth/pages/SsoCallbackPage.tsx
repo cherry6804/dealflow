@@ -1,21 +1,27 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { ApiError, api } from "../../../lib/api";
+import { ApiError } from "../../../lib/api";
 import { useAppContext } from "../../../contexts/useAppContext";
 import { organizationApi } from "../../../services/organizationApi";
-
-interface SsoCallbackResponse {
-  user_id: string;
-  organization_id: string;
-  return_to?: string | null;
-}
+import { exchangeCodeOnce } from "../ssoExchange";
 
 export default function SsoCallbackPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { refreshSession, selectOrganization } = useAppContext();
+  // The effect below runs once per authorization code. Context functions change
+  // identity on every state update, so they are read through a ref instead of
+  // being effect dependencies. Otherwise each refresh would re-run the callback.
+  const contextRef = useRef({ refreshSession, selectOrganization });
+  useEffect(() => {
+    contextRef.current = { refreshSession, selectOrganization };
+  });
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
+  const providerError = searchParams.get("error");
+  const providerErrorDescription = searchParams.get("error_description") ?? "";
   const [message, setMessage] = useState(
     "Completing secure sign-in…",
   );
@@ -24,14 +30,10 @@ export default function SsoCallbackPage() {
     let cancelled = false;
 
     async function completeSso() {
-      const code = searchParams.get("code");
-      const state = searchParams.get("state");
-      const providerError = searchParams.get("error");
-
       if (providerError === "access_denied") {
         // SIBVO issued no code. The reason only selects the next step on the
         // access page; it grants nothing by itself.
-        const reason = searchParams.get("error_description") ?? "";
+        const reason = providerErrorDescription;
         navigate(
           `/access-required?${new URLSearchParams({ reason }).toString()}`,
           { replace: true },
@@ -47,13 +49,10 @@ export default function SsoCallbackPage() {
       }
 
       try {
-        const result = await api.post<SsoCallbackResponse>(
-          "/sso/callback",
-          { code, state },
-        );
+        const result = await exchangeCodeOnce(code, state);
 
         // The backend sets the existing Dealsflo session cookie.
-        await refreshSession();
+        await contextRef.current.refreshSession();
 
         const organizations = await organizationApi.list();
 
@@ -71,7 +70,7 @@ export default function SsoCallbackPage() {
           return;
         }
 
-        selectOrganization(result.organization_id);
+        contextRef.current.selectOrganization(result.organization_id);
         // The backend only returns allowlisted pages; the path is still
         // validated below like any other stored return path.
         const requestedPath =
@@ -101,12 +100,7 @@ export default function SsoCallbackPage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    navigate,
-    refreshSession,
-    searchParams,
-    selectOrganization,
-  ]);
+  }, [code, state, providerError, providerErrorDescription, navigate]);
 
   return (
     <main className="public-auth-page" aria-live="polite">
