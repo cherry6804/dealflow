@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.db.models.audit_event import AuditEvent
+from app.db.models.organization import Organization
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
 from app.db.session import SessionLocal
 from app.governance.privacy import (
@@ -334,3 +335,35 @@ def test_legal_holds_are_listed_for_the_organization_only(tenant) -> None:
     assert own.status_code == 200
     assert own.json() == []
     assert foreign.status_code == 403
+
+
+def test_a_deletion_request_removes_no_data_and_an_export_creates_no_artifact(tenant) -> None:
+    from app.db.models.lead import Lead
+    from tests.test_deals_api import create_lead
+
+    organization_id, actor_id = tenant
+    with SessionLocal() as db:
+        lead = create_lead(db, organization=db.get(Organization, organization_id))
+        lead_id = lead.id
+        db.commit()
+
+    deletion = _in_session(
+        create_privacy_request,
+        organization_id=organization_id,
+        actor_user_id=actor_id,
+        request_type=PrivacyDataRequest.TYPE_DELETION,
+        category_keys=["crm.leads"],
+    )
+    export = _in_session(
+        create_privacy_request,
+        organization_id=organization_id,
+        actor_user_id=actor_id,
+        request_type=PrivacyDataRequest.TYPE_EXPORT,
+        category_keys=["crm.leads"],
+    )
+
+    assert deletion.status == STATUS_ELIGIBILITY_RECORDED
+    assert export.status == STATUS_AWAITING_ARTIFACT
+    assert export.artifact_reference is None
+    with SessionLocal() as db:
+        assert db.get(Lead, lead_id) is not None, "a deletion request must not delete the lead"

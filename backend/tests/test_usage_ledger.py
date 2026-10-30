@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
 from sqlalchemy import delete, func, select
 
 from app.db.models.ai_usage_event import AiUsageEvent
+from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
 from app.db.models.outbox_event import OutboxEvent
 from app.db.session import SessionLocal
@@ -276,3 +277,102 @@ def test_concurrent_reservations_cannot_exceed_the_limit(org) -> None:
     status = _status(org)
     assert status.reserved_quantity == 60
     assert status.remaining_quantity == 40
+
+
+def test_a_delayed_provider_report_delivered_twice_is_counted_once(org) -> None:
+    _budget(org, UsageUnit.TOKENS_OUTPUT, 100)
+    for _ in range(3):
+        _run(
+            record,
+            organization_id=org,
+            unit=UsageUnit.TOKENS_OUTPUT,
+            quantity=25,
+            idempotency_key="provider-report-42",
+            occurred_at=NOW,
+        )
+
+    assert _status(org).consumed_quantity == 25
+
+
+def test_settling_above_the_reservation_records_the_overrun_and_still_alerts(org) -> None:
+    _budget(org, UsageUnit.TOKENS_OUTPUT, 100)
+    _reserve(org, "output-grew", 50)
+
+    _run(settle, organization_id=org, idempotency_key="output-grew", actual_quantity=120)
+
+    status = _status(org)
+    assert status.consumed_quantity == 120
+    assert status.reserved_quantity == 0
+    assert status.overrun is True
+    assert _event_count(org) == 1  # the 70% crossing from 50 -> 120 is announced once, at 100
+
+
+def test_one_change_crossing_several_thresholds_announces_only_the_highest(org) -> None:
+    _budget(org, UsageUnit.TOKENS_OUTPUT, 100)
+
+    _reserve(org, "big-jump", 100)
+
+    with SessionLocal() as db:
+        payloads = [
+            row.payload["threshold_percent"]
+            for row in db.scalars(
+                select(OutboxEvent).where(OutboxEvent.organization_id == org,
+                                          OutboxEvent.event_type == THRESHOLD_EVENT_TYPE)
+            ).all()
+        ]
+    assert payloads == [100]
+
+
+def test_period_is_decided_in_utc_not_local_time() -> None:
+    # 00:30 on 1 March in Kolkata (UTC+05:30) is still 28 February in UTC.
+    kolkata = timezone(timedelta(hours=5, minutes=30))
+    period = budget_period_for(datetime(2026, 3, 1, 0, 30, tzinfo=kolkata))
+
+    assert period.start == date(2026, 2, 1)
+    assert period.end == date(2026, 2, 28)
+
+
+def test_cross_tenant_budget_reads_and_changes_are_refused() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.governance import router as governance_router
+    from app.auth.dependencies import CurrentUserContext, get_current_user_context
+    from app.db.session import get_db_session
+    from tests.test_team_api import TestingSessionLocal
+
+    reader, reader_org = create_manager(permissions=("governance.usage.read",))
+    _, other_org = create_manager(permissions=())
+    app = FastAPI()
+    app.include_router(governance_router)
+
+    def db_override():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.rollback()
+            db.close()
+
+    app.dependency_overrides[get_db_session] = db_override
+    app.dependency_overrides[get_current_user_context] = lambda: CurrentUserContext(user=reader)
+    try:
+        with TestClient(app) as client:
+            client.headers.update({"X-Organization-ID": str(other_org.id)})
+            foreign_read = client.get("/api/v1/governance/usage/budgets")
+            client.headers.update({"X-Organization-ID": str(reader_org.id)})
+            # The reader has read access but not the budget-management permission.
+            change = client.put(
+                "/api/v1/governance/usage/budgets/tokens_output",
+                json={"limit_quantity": 100, "confirm": True},
+            )
+            own_read = client.get("/api/v1/governance/usage/budgets")
+    finally:
+        with SessionLocal() as db:
+            for organization in (reader_org, other_org):
+                db.execute(delete(AuditEvent).where(AuditEvent.organization_id == organization.id))
+            db.commit()
+
+    assert foreign_read.status_code == 403
+    assert change.status_code == 403
+    assert own_read.status_code == 200

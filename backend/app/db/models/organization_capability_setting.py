@@ -40,6 +40,9 @@ class OrganizationCapabilitySetting(Base):
     capability_key: Mapped[str] = mapped_column(String(100), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # manual: set by a person through the settings API. migration_evidence_active_rule: granted
+    # by the E13 migration from an active automation rule with a known activating user.
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", server_default="manual")
     updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
