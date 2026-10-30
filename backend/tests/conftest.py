@@ -13,6 +13,12 @@ from app.db.session import engine
 
 def pytest_configure() -> None:
     """Refuse to run tests against a non-test database."""
+    # Legacy request-path tests use the local plan tables for unattested
+    # sessions. Enable the explicit test-only fallback here. Tests that
+    # verify denial turn it off with monkeypatch.
+    os.environ.setdefault("LOCAL_ENTITLEMENT_FALLBACK_ENABLED", "true")
+    # Settings are cached once per process; drop any copy read at import time.
+    get_settings.cache_clear()
     settings = get_settings()
     database_url = os.environ.get("DATABASE_URL") or settings.database_url
     database_name = make_url(database_url).database

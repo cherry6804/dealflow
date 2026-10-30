@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-import httpx
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -14,6 +13,7 @@ from app.auth.service import get_active_session
 from app.config import get_settings
 from app.db.models.user import User
 from app.db.session import get_db_session
+from app.integrations.sibvo_client import SibvoError, fetch_introspection
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,10 @@ class CurrentUserContext:
     sibvo_attested: bool = False
     # SIBVO's access snapshot; authoritative for plan and entitlements.
     sibvo_access: dict | None = None
+    # SIBVO identifiers bound to the session. Used for server-side SIBVO calls.
+    sibvo_subject: UUID | None = None
+    sibvo_session_id: UUID | None = None
+    sibvo_organization_id: UUID | None = None
 
     @property
     def user_id(self) -> UUID:
@@ -33,8 +37,22 @@ class CurrentUserContext:
         return self.user.id
 
 
-def parse_sibvo_access(body: dict) -> dict:
-    """Keep only the expected access-snapshot fields, failing on bad shapes."""
+def parse_sibvo_access(
+    body: dict,
+    *,
+    expected_organization_id: str,
+    expected_product_key: str,
+) -> dict:
+    """Keep only the expected access-snapshot fields, failing on bad shapes.
+
+    A snapshot must name the SIBVO organization and product it authorizes.
+    A snapshot without that binding, or for another organization or product,
+    is rejected so it cannot authorize this session.
+    """
+    if body.get("organization_id") != expected_organization_id:
+        raise ValueError("snapshot organization does not match the session")
+    if body.get("product_key") != expected_product_key:
+        raise ValueError("snapshot product does not match this application")
     entitlements = body.get("entitlements", [])
     if not isinstance(entitlements, list):
         raise ValueError("entitlements must be a list")
@@ -152,36 +170,24 @@ def get_current_user_context(
                     detail="SIBVO access verification is unavailable.",
                 )
 
-            introspection_url = (
-                settings.sso_sibvo_base_url.rstrip("/")
-                + "/sso/introspect"
-            )
             try:
-                with httpx.Client(
-                    timeout=settings.sso_http_timeout_seconds,
-                    follow_redirects=False,
-                ) as client:
-                    response = client.post(
-                        introspection_url,
-                        data={
-                            "subject": str(sibvo_values[0]),
-                            "session_id": str(sibvo_values[2]),
-                            "organization_id": str(
-                                sibvo_values[1]
-                            ),
-                        },
-                        auth=(
-                            settings.sso_dealsflo_client_id,
-                            secret.get_secret_value(),
-                        ),
+                body = fetch_introspection(
+                    settings,
+                    subject=sibvo_values[0],
+                    session_id=sibvo_values[2],
+                    organization_id=sibvo_values[1],
+                )
+                access_active = body.get("active") is True
+                access_snapshot = (
+                    parse_sibvo_access(
+                        body,
+                        expected_organization_id=str(sibvo_values[1]),
+                        expected_product_key=settings.sso_dealsflo_product_key,
                     )
-                    response.raise_for_status()
-                    body = response.json()
-                    access_active = body.get("active") is True
-                    access_snapshot = (
-                        parse_sibvo_access(body) if access_active else None
-                    )
-            except (httpx.HTTPError, ValueError, AttributeError):
+                    if access_active
+                    else None
+                )
+            except (SibvoError, ValueError, AttributeError):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="SIBVO access verification is unavailable.",
@@ -209,6 +215,9 @@ def get_current_user_context(
         session_organization_id=session.organization_id,
         sibvo_attested=has_sibvo_attestation,
         sibvo_access=getattr(session, "sibvo_access", None),
+        sibvo_subject=getattr(session, "sibvo_subject", None),
+        sibvo_session_id=getattr(session, "sibvo_session_id", None),
+        sibvo_organization_id=getattr(session, "sibvo_organization_id", None),
     )
 
 

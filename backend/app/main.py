@@ -19,6 +19,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.deal_commissions import router as deal_commissions_router
 from app.api.deal_negotiations import router as deal_negotiations_router
 from app.api.deals import router as deals_router
+from app.api.diagnostics import router as diagnostics_router
 from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
 from app.api.imports import router as imports_router
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     register_error_handlers(application)
 
     application.include_router(auth_router)
+    application.include_router(diagnostics_router)
     application.include_router(organizations_router)
     application.include_router(contacts_router)
     application.include_router(customer_profiles_router)

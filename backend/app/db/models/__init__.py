@@ -56,6 +56,7 @@ from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.sibvo_identity_link import SibvoIdentityLink
 from app.db.models.sibvo_organization_link import SibvoOrganizationLink
+from app.db.models.team_member_removal import TeamMemberRemoval
 from app.db.models.site_visit import SiteVisit
 from app.db.models.subscription import Subscription
 from app.db.models.team_invitation import TeamInvitation
@@ -111,6 +112,7 @@ __all__ = [
     "RolePermission",
     "SibvoIdentityLink",
     "SibvoOrganizationLink",
+    "TeamMemberRemoval",
     "SiteVisit",
     "Subscription",
     "TeamInvitation",

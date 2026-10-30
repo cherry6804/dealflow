@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     EmailStr,
     Field,
+    field_validator,
     StringConstraints,
 )
 
@@ -71,11 +72,31 @@ class TeamMemberRoleUpdateRequest(BaseModel):
     role_id: UUID
 
 
+class TeamMemberRemovalRequest(BaseModel):
+    """Reason recorded with the removal. Required, trimmed, at most 500 characters."""
+
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("A reason for the removal is required.")
+        return normalized
+
+
 class TeamMemberRemovalResponse(BaseModel):
-    """Result of deactivating an organization membership."""
+    """Result of removing a team member after SIBVO confirmed the seat outcome.
+
+    `seat_outcome` is one of released, already_released, not_held or not_linked.
+    A removal is never reported unless SIBVO confirmed it (or the member is not linked).
+    """
 
     membership_id: UUID
     is_active: bool
+    seat_outcome: str
+    already_removed: bool = False
     message: str
 
 

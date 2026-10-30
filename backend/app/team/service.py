@@ -892,27 +892,26 @@ def update_team_member_role(
     return membership
 
 
-def remove_team_member(
+def assert_member_removable(
     db: Session,
     *,
     organization_id: UUID,
-    membership_id: UUID,
+    membership: Membership,
     actor_user_id: UUID,
-) -> Membership:
-    membership = _get_organization_membership(
-        db,
-        organization_id=organization_id,
-        membership_id=membership_id,
-        lock=True,
-    )
+    allow_inactive: bool = False,
+) -> None:
+    """Apply the removal rules shared by every removal path.
 
+    `allow_inactive` lets a retry finish a removal whose local step did not
+    commit after SIBVO had already released the seat.
+    """
     if membership.user_id == actor_user_id:
         raise HTTPException(
             status_code=409,
             detail="You cannot remove your own membership through this endpoint.",
         )
 
-    if not membership.is_active:
+    if not allow_inactive and not membership.is_active:
         raise HTTPException(
             status_code=409,
             detail="This membership is already inactive.",
@@ -929,6 +928,27 @@ def remove_team_member(
             status_code=403,
             detail="Owner memberships cannot be removed through team management.",
         )
+
+
+def remove_team_member(
+    db: Session,
+    *,
+    organization_id: UUID,
+    membership_id: UUID,
+    actor_user_id: UUID,
+) -> Membership:
+    membership = _get_organization_membership(
+        db,
+        organization_id=organization_id,
+        membership_id=membership_id,
+        lock=True,
+    )
+    assert_member_removable(
+        db,
+        organization_id=organization_id,
+        membership=membership,
+        actor_user_id=actor_user_id,
+    )
 
     membership.is_active = False
     db.flush()

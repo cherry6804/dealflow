@@ -114,6 +114,17 @@
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
+.team-access .ta-button--danger {
+  border-color: #ae2e24;
+  background: #ae2e24;
+  color: #ffffff;
+}
+
+.team-access .ta-button--danger:hover:not(:disabled) {
+  border-color: #8f241c;
+  background: #8f241c;
+}
+
 .team-access .ta-button--primary {
   border-color: var(--ta-blue);
   background: var(--ta-blue);
@@ -837,7 +848,8 @@
 }
 
 .team-access .ta-field input,
-.team-access .ta-field select {
+.team-access .ta-field select,
+.team-access .ta-field textarea {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
