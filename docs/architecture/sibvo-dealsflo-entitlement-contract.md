@@ -367,10 +367,10 @@ Verified in this phase:
 - **SIBVO backend:** full suite on the separate `sibvo_test_full` database, 396 passed. Ruff passes.
 - **Frontends:** type check, lint and production build pass in both repositories. Dealsflo Vitest passes
   (70 tests). The SIBVO frontend has no test files, so its Vitest run exits with "No test files found".
-- **Migration `a1e2c3d4f5b6`:** the offline SQL for upgrade and downgrade was generated and reviewed. A live
-  downgrade was not run on `dealflow_test`, because `team_member_removals` holds 12 audit rows and the
-  downgrade drops the table. The repository's Alembic guard also refuses any database other than
-  `dealflow` and `dealflow_test`, so a full-chain check on a scratch database was not run.
+- **Migrations:** the full chain was run in a disposable schema (`migration_verify_e12`) inside
+  `dealflow_test`: upgrade to head, downgrade to base, upgrade to head. The schema was then dropped.
+  The public schema was not downgraded. Its `team_member_removals` rows (12) are kept, because a
+  downgrade of `a1e2c3d4f5b6` drops that table and its rows.
 
 Not verified:
 
