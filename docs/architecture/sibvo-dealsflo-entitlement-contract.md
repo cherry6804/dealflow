@@ -229,6 +229,34 @@ Proposed event contract, for approval:
 
 Depends on DFR1-017 (AI usage ledger, E13, Sprint 3), DFR1-036, and an approved SIBVO ingestion endpoint.
 
+### 7.1 Dependency analysis
+
+The DFR1 workbook is not in either repository, so the stories' acceptance criteria were not checked
+against it. This analysis uses the contract above and the ADRs only.
+
+| Concern | Required before DFR1-053 can close | Owner | Status |
+|---|---|---|---|
+| Usage source | DFR1-017 defines what a usage event is (AI usage ledger, E13) | E13 | Not started |
+| Metering and units | DFR1-036 and section 6 define the feature units and quantities | Product and E12/E13 | Not approved |
+| Identity of an event | `event_id`, unique per `(organization_id, product_key)` | SIBVO ingestion | Proposed |
+| Idempotent receipt | SIBVO returns the stored result for a repeat `event_id` | SIBVO | Not built |
+| Timestamps | `occurred_at` in UTC; the aggregation window is defined by it, not by receipt time | Both | Proposed |
+| Aggregation windows | Billing period from the subscription; a late event lands in the period of `occurred_at` | SIBVO | Not defined |
+| Delivery | Transactional outbox in Dealsflo (ADR-0026), at-least-once, bounded backoff | Dealsflo | Outbox exists; no usage producer |
+| Reconciliation | SIBVO compares accepted events with its meters and records mismatches | SIBVO | Not built |
+| Ownership | SIBVO owns meters and invoices; Dealsflo owns the source events | Both | Proposed |
+
+**Recommendation.** Keep DFR1-053 blocked in E12. Do not close it on the contract alone. Split it
+when the workbook is available:
+
+1. **DFR1-053a, Dealsflo event producer and outbox delivery.** Depends on DFR1-017. Can be built in
+   E13 when the AI usage ledger exists.
+2. **DFR1-053b, SIBVO ingestion, idempotency and reconciliation.** Depends on DFR1-036 and an
+   approved ingestion endpoint. Belongs in the SIBVO repository.
+
+Closing DFR1-053 requires both halves plus lifecycle tests (period rollover, late events, duplicate
+delivery, reconciliation mismatch). None of these exist yet.
+
 ## 8. Provider-independent integration boundary
 
 Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that calls SIBVO:
@@ -237,8 +265,15 @@ Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that c
 - **Bounded retry:** at most 2 attempts, only for connection failures, timeouts and 5xx
   responses, and only for operations that are safe to repeat (all three endpoints are).
   A 401 is never retried.
-- **Circuit breaker (in-memory, per process):** opens after 5 consecutive unavailability failures and suspends calls
-  for 30 seconds. After the cooldown, one trial call is allowed. Success closes the circuit.
+- **Circuit breaker (in-memory, per process):** opens after `SIBVO_CIRCUIT_FAILURE_THRESHOLD` consecutive
+  unavailability failures (default 5) and suspends calls for `SIBVO_CIRCUIT_COOLDOWN_SECONDS` (default 30).
+  Each failed attempt counts, so one read request that retries once counts as two failures. After the
+  cooldown, one trial call is allowed. Success closes the circuit and sets `recovered`.
+- **Circuit diagnostic (development and test only):** `GET /api/v1/diagnostics/sibvo-circuit` returns
+  the breaker's state, failure count, threshold, cooldown, last transition, last failure category and
+  `recovered`. It is 404 unless `SIBVO_DIAGNOSTICS_ENABLED=true`, 403 for any non-loopback client, and
+  settings validation refuses the flag outside development and test. It returns no tokens, secrets or
+  identifiers.
   While open, calls fail at once with "SIBVO calls are temporarily suspended." Authentication
   failures do not open the circuit, because SIBVO did answer.
 - **Health check:** `check_health` calls SIBVO's `GET /api/v1/ready` once, for operators.
@@ -250,6 +285,44 @@ Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that c
   structured `sibvo_call` log line per attempt with the operation name, attempt number,
   outcome, status code and duration in milliseconds. Logs never carry secrets, tokens,
   subjects, emails or session identifiers.
+
+Breaker states (implemented in `CircuitBreaker`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> closed
+    closed --> open: failures reach threshold
+    open --> half_open: cooldown elapsed
+    half_open --> closed: trial succeeds (recovered = true)
+    half_open --> open: trial fails (new cooldown)
+```
+
+Sequence for an attested read while SIBVO is down, then recovers:
+
+```mermaid
+sequenceDiagram
+    participant U as Browser
+    participant D as Dealsflo API
+    participant B as Breaker
+    participant S as SIBVO
+    U->>D: GET /auth/sibvo-seats
+    D->>B: before_call
+    B->>S: POST /sso/introspect (attempt 1 and 2, timeout)
+    S--xB: unreachable
+    B-->>D: open after threshold
+    D-->>U: 503 SIBVO access verification is unavailable
+    U->>D: GET /auth/sibvo-seats (circuit open)
+    D->>B: before_call
+    B-->>D: refused without calling SIBVO
+    D-->>U: 503
+    Note over B: cooldown elapses
+    U->>D: GET /auth/sibvo-seats
+    D->>B: before_call (half-open trial)
+    B->>S: POST /sso/introspect
+    S-->>B: 200
+    B-->>D: closed, recovered = true
+    D-->>U: result from SIBVO
+```
 
 Not implemented: a provider-capability registry, and a separate audit table for SIBVO calls.
 Add them when a second integration needs them.
@@ -282,7 +355,24 @@ behaviour is claimed in this contract.
 | DFR1-005 subscription, entitlement, seat and limit contract | **Partially implemented** | Done: fallback removed for staging and production; seat capacity read; team removal releases the seat after SIBVO confirms; plan activation checks reservations and downgrade capacity, with PostgreSQL race and lock tests. **Open:** organization-membership deactivation flow (4.2-1); numeric limits (none defined, section 6); browser verification with a live SIBVO sign-in (section 11) |
 | DFR1-053 usage reconciliation and lifecycle tests | **Blocked** | Usage contract proposed (section 7). Depends on DFR1-017, DFR1-036 and an approved SIBVO ingestion endpoint. Not claimed as complete |
 
-## 11. Not verified
+## 11. Verification status
+
+Verified in this phase:
+
+- **Dealsflo backend:** full suite on `dealflow_test`, 1286 passed and 7 skipped. The skips are the live
+  cross-repository tests, which run only when the `SIBVO_LIVE_*` variables are set.
+- **Live cross-repository checks:** all seven pass against a SIBVO instance on a dedicated, freshly seeded
+  database (`sibvo_test_live`). The seed script drops all tables, so it was not run against the database
+  that holds the demo data.
+- **SIBVO backend:** full suite on the separate `sibvo_test_full` database, 396 passed. Ruff passes.
+- **Frontends:** type check, lint and production build pass in both repositories. Dealsflo Vitest passes
+  (70 tests). The SIBVO frontend has no test files, so its Vitest run exits with "No test files found".
+- **Migration `a1e2c3d4f5b6`:** the offline SQL for upgrade and downgrade was generated and reviewed. A live
+  downgrade was not run on `dealflow_test`, because `team_member_removals` holds 12 audit rows and the
+  downgrade drops the table. The repository's Alembic guard also refuses any database other than
+  `dealflow` and `dealflow_test`, so a full-chain check on a scratch database was not run.
+
+Not verified:
 
 - **Browser verification with a real SIBVO-attested session is not performed.** An attested
   Dealsflo session requires a completed SIBVO sign-in, which sets an HttpOnly session cookie that
