@@ -11,7 +11,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import CurrentUserContext
-
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES, AUTOMATION_MASTER
 from app.governance.service import set_capability_enabled
 
