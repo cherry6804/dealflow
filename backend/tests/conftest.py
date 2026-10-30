@@ -2,9 +2,13 @@
 
 import os
 
+import pytest
 from sqlalchemy.engine import make_url
 
+import app.db.models  # noqa: F401  (registers every model on Base.metadata)
 from app.config import get_settings
+from app.db.base import Base
+from app.db.session import engine
 
 
 def pytest_configure() -> None:
@@ -25,3 +29,15 @@ def pytest_configure() -> None:
             "Unsafe pytest environment. "
             "Set APP_ENVIRONMENT=test before running tests."
         )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def create_test_schema() -> None:
+    """Create every model table before the first test runs.
+
+    Several test modules assume tables already exist, and some modules drop all
+    tables. A fresh database, such as a CI service container, starts empty, so
+    the suite must create the schema itself. create_all is idempotent and never
+    drops existing tables.
+    """
+    Base.metadata.create_all(bind=engine)
