@@ -185,6 +185,7 @@ def test_sibvo_outage_fails_closed_and_changes_nothing(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -200,6 +201,7 @@ def test_sibvo_denial_is_reported_and_changes_nothing(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -214,6 +216,7 @@ def test_owner_seat_in_sibvo_is_reported_as_a_conflict(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -227,18 +230,18 @@ def test_retry_after_an_unconfirmed_attempt_completes_once(monkeypatch):
     headers = {"X-Organization-ID": str(data["organization_id"])}
 
     stub_release(monkeypatch, error=SibvoUnavailable("down"))
-    assert client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", headers=headers).status_code == 503
+    assert client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", json={"reason": "Left the team"}, headers=headers).status_code == 503
 
     stub_release(
         monkeypatch,
         result=SibvoSeatRelease(released=True, already_released=False, reason="released"),
     )
-    first = client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", headers=headers)
+    first = client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", json={"reason": "Left the team"}, headers=headers)
     stub_release(
         monkeypatch,
         result=SibvoSeatRelease(released=True, already_released=True, reason="suspended"),
     )
-    second = client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", headers=headers)
+    second = client.post(f"{BASE_URL}/members/{data['membership_id']}/remove", json={"reason": "Left the team"}, headers=headers)
 
     assert first.status_code == 200
     assert first.json()["already_removed"] is False
@@ -255,6 +258,7 @@ def test_member_without_sibvo_link_is_removed_locally_and_says_so(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -272,6 +276,7 @@ def test_linked_removal_requires_sibvo_sign_in(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -298,6 +303,7 @@ def test_owner_membership_is_refused_before_sibvo_is_called(monkeypatch):
 
     response = client.post(
         f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
         headers={"X-Organization-ID": str(data["organization_id"])},
     )
 
@@ -305,3 +311,62 @@ def test_owner_membership_is_refused_before_sibvo_is_called(monkeypatch):
     assert response.status_code == 409, response.text
     assert calls == []
     assert member_state(data["membership_id"]) == (True, 0)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [None, {}, {"reason": ""}, {"reason": "   "}, {"reason": "x" * 501}],
+    ids=["no-body", "missing-reason", "empty-reason", "whitespace-reason", "reason-too-long"],
+)
+def test_removal_requires_a_valid_reason_and_changes_nothing(monkeypatch, body):
+    data = seed_linked_member()
+    calls = stub_release(
+        monkeypatch,
+        result=SibvoSeatRelease(released=True, already_released=False, reason="released"),
+    )
+    client = TestClient(build_app(attested_admin(data["admin_id"], data["sibvo_org"])))
+    kwargs = {"json": body} if body is not None else {}
+
+    response = client.post(
+        f"{BASE_URL}/members/{data['membership_id']}/remove",
+        headers={"X-Organization-ID": str(data["organization_id"])},
+        **kwargs,
+    )
+
+    assert response.status_code == 422, response.text
+    assert calls == []
+    assert member_state(data["membership_id"]) == (True, 0)
+
+
+def test_reason_is_trimmed_and_persisted_with_the_actor(monkeypatch):
+    data = seed_linked_member()
+    stub_release(
+        monkeypatch,
+        result=SibvoSeatRelease(released=True, already_released=False, reason="released"),
+    )
+    client = TestClient(build_app(attested_admin(data["admin_id"], data["sibvo_org"])))
+
+    response = client.post(
+        f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "  Left the brokerage  "},
+        headers={"X-Organization-ID": str(data["organization_id"])},
+    )
+
+    assert response.status_code == 200, response.text
+    db = SessionLocal()
+    try:
+        removal = db.scalar(
+            select(TeamMemberRemoval).where(TeamMemberRemoval.membership_id == data["membership_id"])
+        )
+        audit = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == str(data["membership_id"]),
+                AuditEvent.action == "team.member.removed",
+            )
+        )
+        assert removal.reason == "Left the brokerage"
+        assert removal.actor_user_id == data["admin_id"]
+        assert removal.target_user_id == data["member_id"]
+        assert audit is not None and audit.user_id == data["admin_id"]
+    finally:
+        db.close()

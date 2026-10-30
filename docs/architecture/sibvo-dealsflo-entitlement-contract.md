@@ -86,7 +86,8 @@ and idempotency key.
 
 ## 3. Team removal lifecycle (Dealsflo)
 
-Endpoint: `POST /api/v1/team/members/{membership_id}/remove` with optional body `{"reason": "..."}`.
+Endpoint: `POST /api/v1/team/members/{membership_id}/remove` with required body `{"reason": "..."}`.
+The reason is trimmed and must be 1–500 characters after trimming. Anything else returns 422 before any SIBVO call or local change.
 Requires `organization.members.manage`.
 
 Sequence, chosen so a failure never reports success:
@@ -236,7 +237,7 @@ Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that c
 - **Bounded retry:** at most 2 attempts, only for connection failures, timeouts and 5xx
   responses, and only for operations that are safe to repeat (all three endpoints are).
   A 401 is never retried.
-- **Circuit breaker:** opens after 5 consecutive unavailability failures and suspends calls
+- **Circuit breaker (in-memory, per process):** opens after 5 consecutive unavailability failures and suspends calls
   for 30 seconds. After the cooldown, one trial call is allowed. Success closes the circuit.
   While open, calls fail at once with "SIBVO calls are temporarily suspended." Authentication
   failures do not open the circuit, because SIBVO did answer.
@@ -253,7 +254,17 @@ Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that c
 Not implemented: a provider-capability registry, and a separate audit table for SIBVO calls.
 Add them when a second integration needs them.
 
+**Circuit-breaker limitation.** The breaker state lives in each Dealsflo process. It is not shared
+across processes or instances. With N processes, each one trips after its own five failures, so
+SIBVO can receive up to N×5 failing calls before every process has opened. Each process
+still fails closed, and nothing is reported as successful while it is open. The repository defines
+no deployment topology, so this is acceptable only for a single backend instance. Before running
+multiple instances, move breaker state to shared storage and test it. No distributed breaker
+behaviour is claimed in this contract.
+
 ## 9. Operations
+
+- **Downgrade:** a downgrade is a plan change through the same request lifecycle as an upgrade: create a request for a lower-priced published version, approve, verify payment, activate. Activation checks allocated seats plus pending reservations against the smaller plan (section 4.1), and refuses the change with 409 and the counts when they do not fit. The customer resolves this by removing members or cancelling invitations, then activating again. `backend/tests/test_upgrade_requests.py` covers the refusal and the success path.
 
 - **Startup:** Dealsflo refuses to start in staging or production if `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `true`.
 - **Health:** run `check_health` from an operator shell against the configured SIBVO base URL. `unavailable` means the authorization of every attested session is failing closed.

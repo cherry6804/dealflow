@@ -459,7 +459,7 @@ def put_team_member_role(
 )
 def post_remove_team_member(
     membership_id: UUID,
-    payload: TeamMemberRemovalRequest | None = None,
+    payload: TeamMemberRemovalRequest,
     tenant: TenantContext = Depends(
         require_permission("organization.members.manage")
     ),
@@ -483,7 +483,7 @@ def post_remove_team_member(
                 session_id=current_user.sibvo_session_id,
                 organization_id=current_user.sibvo_organization_id,
             ),
-            reason=(payload.reason if payload else "").strip(),
+            reason=payload.reason,
         )
         db.commit()
         return TeamMemberRemovalResponse(

@@ -433,7 +433,8 @@ def test_update_member_role_and_remove_member() -> None:
             json={"role_id": str(role_id)},
         )
         removed = client.post(
-            f"{BASE_URL}/members/{membership_id}/remove"
+            f"{BASE_URL}/members/{membership_id}/remove",
+            json={"reason": "Left the team"},
         )
 
     assert updated.status_code == 200, updated.text
@@ -481,7 +482,8 @@ def test_member_management_requires_permission() -> None:
             json={"role_id": str(role_id)},
         )
         remove_response = client.post(
-            f"{BASE_URL}/members/{membership_id}/remove"
+            f"{BASE_URL}/members/{membership_id}/remove",
+            json={"reason": "Left the team"},
         )
 
     assert update_response.status_code == 403, update_response.text

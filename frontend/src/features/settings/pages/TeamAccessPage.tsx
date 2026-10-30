@@ -20,6 +20,7 @@ import {
 import TeamMembersTable from "../components/TeamMembersTable";
 import PendingInvitations from "../components/PendingInvitations";
 import InviteMemberDialog from "../components/InviteMemberDialog";
+import RemoveMemberDialog from "../components/RemoveMemberDialog";
 import OrganizationRolesPanel from "../components/OrganizationRolesPanel";
 import "./TeamAccessPage.css";
 import {
@@ -92,6 +93,9 @@ export default function TeamAccessPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogSubmitting, setDialogSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<TeamMember | null>(null);
+  const [removalSubmitting, setRemovalSubmitting] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -274,28 +278,32 @@ export default function TeamAccessPage() {
     }
   }
 
-  async function handleRemove(member: TeamMember) {
-    const confirmed = window.confirm(
-      `Remove ${member.display_name} (${member.email}) from this workspace?`,
-    );
+  function handleRemove(member: TeamMember) {
+    setRemovalTarget(member);
+    setRemovalError(null);
+  }
 
-    if (!confirmed) {
-      return;
-    }
+  async function handleConfirmRemoval(reason: string) {
+    const member = removalTarget;
+    if (!member) return;
 
-    setBusyId(member.membership_id);
+    setRemovalSubmitting(true);
+    setRemovalError(null);
     setError(null);
+    setBusyId(member.membership_id);
     setNotice(removalPendingMessage(member.display_name));
 
     try {
-      const result = await teamApi.removeMember(member.membership_id);
+      const result = await teamApi.removeMember(member.membership_id, reason);
 
       setNotice(removalSuccessMessage(member.display_name, result));
+      setRemovalTarget(null);
       await loadTeam(true);
     } catch (cause) {
       setNotice(null);
-      setError(removalErrorMessage(member.display_name, cause));
+      setRemovalError(removalErrorMessage(member.display_name, cause));
     } finally {
+      setRemovalSubmitting(false);
       setBusyId(null);
     }
   }
@@ -599,6 +607,19 @@ export default function TeamAccessPage() {
           </p>
         </aside>
       )}
+
+      <RemoveMemberDialog
+        open={removalTarget !== null}
+        memberName={removalTarget?.display_name ?? ""}
+        submitting={removalSubmitting}
+        error={removalError}
+        onClose={() => {
+          if (!removalSubmitting) {
+            setRemovalTarget(null);
+          }
+        }}
+        onSubmit={handleConfirmRemoval}
+      />
 
       <InviteMemberDialog
         open={dialogOpen}
