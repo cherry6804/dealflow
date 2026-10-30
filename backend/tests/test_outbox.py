@@ -70,6 +70,9 @@ def _enqueue(db: Session, organization_id, *, key: str | None = None, **override
         "idempotency_key": key or f"key-{uuid4()}",
         "payload": {"lead_id": "lead-1", "status": "NEW"},
         "correlation_id": "corr-1",
+        # Dispatch in these tests runs at NOW. Using the wall clock here would make
+        # events due only after NOW, depending on when the suite runs.
+        "available_at": NOW,
     }
     values.update(overrides)
     return enqueue_event(db, **values)
