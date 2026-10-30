@@ -12,7 +12,8 @@
 | Ref | Commit | Tree | Notes |
 |---|---|---|---|
 | `origin/main` | `1b370fb` | `390b74beb9cef4a1cebe6f4c3c7e6a69a351035c` | Merge of PR #130. Parents `9efac07`, `05af559`. |
-| `origin/develop` | `3f836b0` | `9e6c107c3343307690d4b4484c228e48689df47b` | Merge of PR #129. Parents `4772a72`, `9efac07`. Contains E01–E13. |
+| `origin/develop` | `89fe2cc` | `03627f1b5722702e94be3c6ec93d26ca9f79aa35` | Merge of PR #132 (provider secrets). Parents `3f836b0`, `102bdc7`. Contains E01–E13 and the provider-secrets foundation. |
+| `origin/develop` (previous) | `3f836b0` | `9e6c107c3343307690d4b4484c228e48689df47b` | Merge of PR #129. Parents `4772a72`, `9efac07`. Contains E01–E13. |
 | `origin/restoration/revert-accidental-e13-merge` | `05af559` | `390b74beb9cef4a1cebe6f4c3c7e6a69a351035c` | Restoration commit `f25ffc9` plus PR #131 (CI fix). |
 | `origin/corrective/ci-baseline-aware-validation` | `a9dfea2` | `390b74beb9cef4a1cebe6f4c3c7e6a69a351035c` | CI-only commit on `f25ffc9`. Merged by PR #131. |
 
