@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.audit.service import create_authorization_audit_event
 from app.db.models.audit_event import AuditDecision
-from app.authz.permissions import OWNER_ROLE_PERMISSION_KEYS, PERMISSION_CATALOG
+from app.authz.permissions import (
+    OWNER_ONLY_PERMISSION_KEYS,
+    OWNER_ROLE_NAME,
+    OWNER_ROLE_PERMISSION_KEYS,
+    PERMISSION_CATALOG,
+)
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.organization import Organization
@@ -23,7 +28,6 @@ from app.db.models.user import User
 
 
 INVITATION_LIFETIME = timedelta(days=7)
-OWNER_ROLE_NAME = "DealFlow Owner"
 ROLE_ADMIN_PERMISSION = "organization.roles.manage"
 CUSTOM_ROLE_FORBIDDEN_PERMISSION_KEYS = frozenset(
     {
@@ -60,9 +64,10 @@ def _audit_role_change(
 
 DEFAULT_ROLE_TEMPLATES: dict[str, tuple[str, ...]] = {
     "DealFlow Owner": OWNER_ROLE_PERMISSION_KEYS,
+    # Admin receives every permission except the owner-only keys, which stay with the Owner role.
     "Admin": tuple(
         key for key, _ in PERMISSION_CATALOG
-        if key not in {"organization.roles.manage", "billing.audit.read", "provider_credentials.manage"}
+        if key not in OWNER_ONLY_PERMISSION_KEYS
     ),
     "Manager": (
         "contacts.create", "contacts.read", "contacts.update",
@@ -183,6 +188,13 @@ def provision_default_organization_roles(
             )
             db.add(role)
             db.flush()
+        elif role_name == OWNER_ROLE_NAME and not role.is_system:
+            # The Owner name is reserved for the system role. Refuse rather than promote a
+            # custom role that happens to carry the name.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A custom role uses the reserved Owner role name in this organization.",
+            )
         else:
             role.is_system = True
             role.is_active = True
@@ -254,10 +266,7 @@ def _get_assignable_role(
         ).all()
     )
 
-    owner_only_permissions = permission_keys & {
-        "organization.roles.manage",
-        "billing.audit.read",
-    }
+    owner_only_permissions = permission_keys & OWNER_ONLY_PERMISSION_KEYS
     forbidden_custom_permissions = (
         not role.is_system
         and bool(permission_keys & CUSTOM_ROLE_FORBIDDEN_PERMISSION_KEYS)

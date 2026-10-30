@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.audit.service import persist_authorization_audit_event
+from app.authz.permissions import OWNER_ONLY_PERMISSION_KEYS, OWNER_ROLE_NAME
 from app.db.models.audit_event import AuditDecision
 from app.db.models.membership_role import MembershipRole
 from app.db.models.permission import Permission
@@ -24,6 +25,18 @@ def permission_granted(
 ) -> bool:
     """Return whether a role in the selected tenant grants the permission."""
 
+    conditions = [
+        MembershipRole.membership_id == tenant_context.membership.id,
+        Role.organization_id == tenant_context.organization_id,
+        Permission.key == permission_key,
+        Permission.is_active.is_(True),
+        Role.is_active.is_(True),
+    ]
+    if permission_key in OWNER_ONLY_PERMISSION_KEYS:
+        # Owner-only keys are effective only through the system Owner role, whatever a
+        # custom role, template or direct assignment says.
+        conditions.extend([Role.is_system.is_(True), Role.name == OWNER_ROLE_NAME])
+
     statement = (
         select(Permission.id)
         .join(
@@ -32,13 +45,7 @@ def permission_granted(
         )
         .join(Role, Role.id == RolePermission.role_id)
         .join(MembershipRole, MembershipRole.role_id == Role.id)
-        .where(
-            MembershipRole.membership_id == tenant_context.membership.id,
-            Role.organization_id == tenant_context.organization_id,
-            Permission.key == permission_key,
-            Permission.is_active.is_(True),
-            Role.is_active.is_(True),
-        )
+        .where(*conditions)
         .limit(1)
     )
 

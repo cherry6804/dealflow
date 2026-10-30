@@ -75,6 +75,9 @@ OWNER_ONLY_PERMISSION_KEYS = frozenset(
     }
 )
 
+# The system Owner role. Owner-only permission keys are granted only through this role.
+OWNER_ROLE_NAME = "DealFlow Owner"
+
 OWNER_ROLE_PERMISSION_KEYS = tuple(
     key for key, _description in PERMISSION_CATALOG
 )

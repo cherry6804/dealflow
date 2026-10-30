@@ -22,6 +22,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.authz.permissions import OWNER_ROLE_NAME
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.permission import Permission
@@ -54,6 +55,9 @@ def administrator_user_ids(db: Session, *, organization_id: UUID) -> list[UUID]:
             Membership.is_active.is_(True),
             Role.organization_id == organization_id,
             Role.is_active.is_(True),
+            # Owner-only keys count only through the system Owner role, as in the permission check.
+            Role.is_system.is_(True),
+            Role.name == OWNER_ROLE_NAME,
             Permission.key == BUDGET_MANAGE_PERMISSION,
             Permission.is_active.is_(True),
             User.is_active.is_(True),

@@ -37,7 +37,7 @@ from app.governance.privacy import (
     set_retention_policy,
 )
 from tests.test_governance_api import _app_for
-from tests.test_team_api import create_manager
+from tests.test_team_api import create_manager, create_owner_manager
 
 
 @pytest.fixture
@@ -297,7 +297,7 @@ def test_retention_endpoint_requires_the_privacy_manage_permission(tenant) -> No
 
 
 def test_privacy_request_endpoint_rejects_unknown_categories() -> None:
-    user, org = create_manager(permissions=("governance.privacy.manage",))
+    user, org = create_owner_manager(permissions=("governance.privacy.manage",))
     try:
         with TestClient(_app_for(user)) as client:
             client.headers.update({"X-Organization-ID": str(org.id)})
