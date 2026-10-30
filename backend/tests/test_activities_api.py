@@ -487,5 +487,9 @@ def test_create_activity_rejects_naive_occurred_at_and_accepts_aware() -> None:
 
         assert naive.status_code == 422, naive.text
         assert aware.status_code == 201, aware.text
-        assert aware.json()["occurred_at"].endswith("+05:30")
+        # The offset in the response depends on the database session timezone,
+        # so compare the instant, not the string representation.
+        returned = datetime.fromisoformat(aware.json()["occurred_at"])
+        assert returned.utcoffset() is not None
+        assert returned == datetime(2026, 10, 29, 10, 0, tzinfo=timezone(timedelta(hours=5, minutes=30)))
 
