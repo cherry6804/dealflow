@@ -16,6 +16,8 @@ from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
+from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
+from app.governance.policy import evaluate_capability
 from app.notifications.service import create_notification
 
 
@@ -284,6 +286,17 @@ def execute_deal_created_automations(
         raise ValueError(
             "The deal does not belong to the requested organization."
         )
+
+    # Governance gate (DFR1-006): deal-created automations are disabled by default.
+    # A denial creates no executions and leaves the deal untouched, so manual CRM
+    # work continues when automation is off.
+    decision = evaluate_capability(
+        db,
+        organization_id=organization_id,
+        capability_key=AUTOMATION_DEAL_CREATED_RULES,
+    )
+    if not decision.allowed:
+        return []
 
     rules = list(
         db.scalars(

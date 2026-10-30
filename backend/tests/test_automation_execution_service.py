@@ -21,6 +21,7 @@ from app.db.models.lead import Lead
 from app.db.models.organization import Organization
 from app.db.models.user import User
 from app.db.session import SessionLocal
+from tests.governance_helpers import enable_deal_created_automation
 from tests.test_deals_api import (
     create_authorized_user,
     create_customer_profile,
@@ -90,6 +91,11 @@ def create_active_rule(
     )
     db.add(rule)
     db.flush()
+    enable_deal_created_automation(
+        db,
+        organization_id=organization.id,
+        actor_user_id=user.id,
+    )
     return rule
 
 

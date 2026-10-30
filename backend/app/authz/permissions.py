@@ -52,6 +52,12 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("organization.members.manage", "Manage organization memberships."),
     ("organization.invites.manage", "Create and manage invitations."),
     ("organization.roles.manage", "Create and manage organization roles."),
+    ("governance.capabilities.read", "View AI and automation capability settings."),
+    ("governance.capabilities.manage", "Change AI and automation capability settings."),
+    ("governance.usage.read", "View AI usage, budgets and provider cost."),
+    ("governance.budgets.manage", "Set organization AI usage budgets."),
+    ("governance.privacy.read", "View retention policies, legal holds and privacy requests."),
+    ("governance.privacy.manage", "Change retention, legal holds and privacy requests."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)
@@ -60,6 +66,9 @@ OWNER_ONLY_PERMISSION_KEYS = frozenset(
     {
         "organization.roles.manage",
         "billing.audit.read",
+        "governance.capabilities.manage",
+        "governance.budgets.manage",
+        "governance.privacy.manage",
     }
 )
 
