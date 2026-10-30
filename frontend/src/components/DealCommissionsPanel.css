@@ -1,0 +1,1259 @@
+
+.deal-commissions-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+  background: rgb(15 23 42 / 60%);
+  backdrop-filter: blur(5px);
+}
+
+.deal-commissions-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1000px);
+  max-height: min(92dvh, 920px);
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
+  animation: deal-commissions-enter 180ms ease both;
+}
+
+.deal-commissions-header,
+.deal-commission-form-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  border-bottom: 1px solid #e8edf4;
+  background: linear-gradient(135deg, #fff, #f7f9ff);
+}
+
+.deal-commissions-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #5969c4;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.deal-commissions-header h2,
+.deal-commission-form-header h2 {
+  margin: 0;
+  color: #172033;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+.deal-commissions-header p {
+  margin: 7px 0 0;
+  color: #657189;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.deal-commissions-close,
+.deal-commission-form-close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid #dce3ed;
+  border-radius: 12px;
+  background: #fff;
+  color: #475569;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.deal-commissions-close:hover,
+.deal-commission-form-close:hover {
+  background: #f1f5f9;
+}
+
+.deal-commissions-body {
+  min-height: 180px;
+  padding: 24px 28px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.deal-commissions-deal-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid #dfe5f3;
+  border-radius: 14px;
+  background: #f8faff;
+}
+
+.deal-commissions-deal-value > div {
+  display: grid;
+  gap: 6px;
+}
+
+.deal-commissions-deal-value span,
+.deal-commissions-deal-value p {
+  color: #657189;
+  font-size: 0.82rem;
+}
+
+.deal-commissions-deal-value strong {
+  color: #172033;
+  font-size: 1.3rem;
+  overflow-wrap: anywhere;
+}
+
+.deal-commissions-deal-value p {
+  max-width: 400px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.deal-commissions-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.deal-commissions-summary article {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e6ebf3;
+  border-radius: 14px;
+  background: #f8faff;
+}
+
+.deal-commissions-summary article span {
+  display: block;
+  margin-bottom: 8px;
+  color: #657189;
+  font-size: 0.77rem;
+  font-weight: 650;
+}
+
+.deal-commissions-summary article strong {
+  display: block;
+  color: #172033;
+  font-size: clamp(1rem, 2vw, 1.35rem);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.deal-commissions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.deal-commissions-toolbar h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 1.05rem;
+}
+
+.deal-commissions-toolbar p {
+  margin: 5px 0 0;
+  color: #758096;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.deal-commissions-primary,
+.deal-commissions-secondary,
+.deal-commissions-paid,
+.deal-commissions-cancel {
+  display: inline-flex;
+  min-height: 39px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.deal-commissions-primary {
+  border-color: #4f5fcb;
+  background: #4f5fcb;
+  color: #fff;
+}
+
+.deal-commissions-primary:hover:not(:disabled) {
+  border-color: #3d4cad;
+  background: #3d4cad;
+}
+
+.deal-commissions-secondary {
+  border-color: #dce3ed;
+  background: #fff;
+  color: #364152;
+}
+
+.deal-commissions-secondary:hover:not(:disabled) {
+  background: #f5f7fb;
+}
+
+.deal-commissions-paid {
+  border-color: #a7e5c0;
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.deal-commissions-paid:hover:not(:disabled) {
+  background: #d7f8e4;
+}
+
+.deal-commissions-cancel {
+  border-color: #f2d2d2;
+  background: #fff;
+  color: #b42318;
+}
+
+.deal-commissions-cancel:hover:not(:disabled) {
+  background: #fff1f1;
+}
+
+.deal-commissions-primary:disabled,
+.deal-commissions-secondary:disabled,
+.deal-commissions-paid:disabled,
+.deal-commissions-cancel:disabled,
+.deal-commissions-close:disabled,
+.deal-commission-form-close:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.deal-commissions-alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 11px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.deal-commissions-alert.error {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #a52222;
+}
+
+.deal-commissions-alert.success {
+  border-color: #a7e5c0;
+  background: #effdf4;
+  color: #067647;
+}
+
+.deal-commissions-alert button {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 750;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.deal-commissions-state {
+  padding: 48px 16px;
+  color: #64748b;
+  text-align: center;
+}
+
+.deal-commissions-empty {
+  padding: 48px 20px;
+  border: 1px dashed #d5deeb;
+  border-radius: 16px;
+  background: #fafbfe;
+  text-align: center;
+}
+
+.deal-commissions-empty > div {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 14px;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--df-primary-soft);
+  color: #4f5fcb;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.deal-commissions-empty h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 1.05rem;
+}
+
+.deal-commissions-empty p {
+  max-width: 440px;
+  margin: 9px auto 18px;
+  color: #758096;
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.deal-commissions-list {
+  display: grid;
+  gap: 14px;
+}
+
+.deal-commission-card {
+  min-width: 0;
+  padding: 19px;
+  border: 1px solid #e4e9f1;
+  border-radius: 15px;
+  background: #fff;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.deal-commission-card:hover {
+  border-color: #cbd5e8;
+  box-shadow: 0 6px 20px rgb(15 23 42 / 4%);
+}
+
+.deal-commission-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.deal-commission-type {
+  display: block;
+  color: #667085;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.deal-commission-card-heading h4 {
+  margin: 7px 0 0;
+  color: #172033;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-calculation {
+  margin: 5px 0 0;
+  color: #758096;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.deal-commission-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.deal-commission-status-proposed {
+  border-color: #f4d79a;
+  background: #fff8e8;
+  color: #946200;
+}
+
+.deal-commission-status-agreed {
+  border-color: #b8c5ff;
+  background: #eef1ff;
+  color: #3d4cad;
+}
+
+.deal-commission-status-paid {
+  border-color: #a7e5c0;
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.deal-commission-status-cancelled {
+  border-color: #dce3ed;
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.deal-commission-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 26px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #edf0f5;
+}
+
+.deal-commission-meta span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #475467;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-meta strong {
+  color: #8992a3;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.deal-commission-terms {
+  margin: 14px 0 0;
+  color: #667085;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 17px;
+  padding-top: 16px;
+  border-top: 1px solid #edf0f5;
+}
+
+.deal-commission-actions > label,
+.deal-commission-form-grid > label {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: #344054;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.deal-commission-actions input,
+.deal-commission-form-grid input,
+.deal-commission-form-grid select,
+.deal-commission-form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #dce3ed;
+  border-radius: 9px;
+  outline: none;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.deal-commission-actions input:focus,
+.deal-commission-form-grid input:focus,
+.deal-commission-form-grid select:focus,
+.deal-commission-form-grid textarea:focus {
+  border-color: #6978d8;
+  box-shadow: 0 0 0 3px rgb(79 95 203 / 12%);
+}
+
+.deal-commission-actions input:disabled,
+.deal-commission-form-grid input:disabled,
+.deal-commission-form-grid select:disabled,
+.deal-commission-form-grid textarea:disabled {
+  background: #f5f7fa;
+  cursor: not-allowed;
+}
+
+.deal-commission-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.deal-commissions-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 15px 28px;
+  border-top: 1px solid #e8edf4;
+  background: #fbfcfe;
+}
+
+.deal-commission-form-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 62%);
+  backdrop-filter: blur(4px);
+}
+
+.deal-commission-form-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 720px);
+  max-height: min(88dvh, 820px);
+  overflow: hidden;
+  border: 1px solid #dce4f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 30%);
+}
+
+.deal-commission-form-header {
+  flex: 0 0 auto;
+  padding: 20px 24px;
+  background: #fff;
+}
+
+.deal-commission-form-header h2 {
+  margin-top: 6px;
+  font-size: 1.25rem;
+}
+
+.deal-commission-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.deal-commission-form-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.deal-commission-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.deal-commission-form-grid > label.full,
+.deal-commission-preview.full {
+  grid-column: 1 / -1;
+}
+
+.deal-commission-form-grid textarea {
+  resize: vertical;
+}
+
+.deal-commission-preview {
+  display: grid;
+  gap: 6px;
+  padding: 15px;
+  border: 1px solid #dfe5f3;
+  border-radius: 12px;
+  background: #f8faff;
+}
+
+.deal-commission-preview span {
+  color: #657189;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.deal-commission-preview strong {
+  color: #172033;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-preview p {
+  margin: 0;
+  color: #758096;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.deal-commission-edit-notice {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid #f4d79a;
+  border-radius: 10px;
+  background: #fff8e8;
+  color: #805b0b;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.deal-commission-form-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid #e8edf4;
+  background: #fbfcfe;
+}
+
+@keyframes deal-commissions-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 700px) {
+  .deal-commissions-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .deal-commissions-modal {
+    max-height: calc(100dvh - 16px);
+    border-radius: 15px;
+  }
+
+  .deal-commissions-header,
+  .deal-commissions-body {
+    padding: 18px;
+  }
+
+  .deal-commissions-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 23px;
+  }
+
+  .deal-commissions-summary article {
+    padding: 12px;
+  }
+
+  .deal-commissions-deal-value {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .deal-commissions-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .deal-commissions-toolbar > button {
+    width: 100%;
+  }
+
+  .deal-commission-card {
+    padding: 15px;
+  }
+
+  .deal-commission-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .deal-commission-meta {
+    gap: 12px;
+  }
+
+  .deal-commission-meta span {
+    flex: 1 1 120px;
+  }
+
+  .deal-commission-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deal-commission-buttons button {
+    min-width: 0;
+  }
+
+  .deal-commission-form-backdrop {
+    padding: 8px;
+  }
+
+  .deal-commission-form-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 15px;
+  }
+
+  .deal-commission-form-header {
+    padding: 18px;
+  }
+
+  .deal-commission-form-body {
+    padding: 18px;
+  }
+
+  .deal-commission-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deal-commission-form-grid > label.full,
+  .deal-commission-preview.full {
+    grid-column: auto;
+  }
+
+  .deal-commission-form-actions {
+    flex-direction: column-reverse;
+    padding: 14px 18px;
+  }
+
+  .deal-commission-form-actions button,
+  .deal-commissions-footer button {
+    width: 100%;
+  }
+
+  .deal-commissions-footer {
+    padding: 12px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deal-commissions-modal {
+    animation: none;
+  }
+
+  .deal-commission-card,
+  .deal-commissions-primary,
+  .deal-commissions-secondary,
+  .deal-commissions-paid,
+  .deal-commissions-cancel {
+    transition: none;
+  }
+}
+
+
+/* =========================================================
+   Responsive modal/scroll fixes
+   Keep the form header and action buttons visible while only
+   the form content scrolls. These rules intentionally override
+   the earlier modal sizing rules above.
+   ========================================================= */
+
+.deal-commissions-backdrop {
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.deal-commissions-backdrop::-webkit-scrollbar {
+  display: none;
+}
+
+.deal-commissions-modal {
+  box-sizing: border-box;
+  min-height: 0;
+  max-height: calc(100dvh - 32px);
+}
+
+.deal-commissions-header,
+.deal-commissions-body,
+.deal-commissions-footer {
+  flex-shrink: 0;
+}
+
+.deal-commissions-body {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.deal-commission-form-backdrop {
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.deal-commission-form-backdrop::-webkit-scrollbar {
+  display: none;
+}
+
+.deal-commission-form-modal {
+  box-sizing: border-box;
+  min-height: 0;
+  height: min(760px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  width: min(100%, 900px);
+}
+
+.deal-commission-form-header {
+  flex: 0 0 auto;
+}
+
+.deal-commission-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.deal-commission-form-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+.deal-commission-form-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.deal-commission-form-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.deal-commission-form-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 2px solid #fff;
+  border-radius: 10px;
+}
+
+.deal-commission-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.deal-commission-form-grid > label {
+  min-width: 0;
+}
+
+.deal-commission-form-grid input,
+.deal-commission-form-grid select,
+.deal-commission-form-grid textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.deal-commission-form-grid textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.deal-commission-preview {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-form-actions {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 700px) {
+  .deal-commissions-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .deal-commissions-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+  }
+
+  .deal-commission-form-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .deal-commission-form-modal {
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 16px);
+    margin: auto 0;
+  }
+
+  .deal-commission-form {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .deal-commission-form-body {
+    padding: 18px;
+  }
+
+  .deal-commission-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deal-commission-form-grid > label.full,
+  .deal-commission-preview.full {
+    grid-column: auto;
+  }
+
+  .deal-commission-form-actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding: 12px 18px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .deal-commission-form-actions button {
+    width: auto;
+  }
+}
+
+@media (max-height: 650px) and (min-width: 701px) {
+  .deal-commission-form-modal {
+    height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .deal-commission-form-header {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .deal-commission-form-body {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .deal-commission-form-actions {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+}
+
+
+
+/* =========================================================
+   FINAL OVERRIDES — commission form modal sizing
+   Prevent the form modal from stretching across the screen.
+   Keep the header/footer visible and scroll only the form body.
+   ========================================================= */
+
+.deal-commission-form-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.deal-commission-form-modal {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 720px;
+  width: min(720px, calc(100vw - 32px));
+  max-width: 720px;
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  min-height: 0;
+  margin: auto;
+  overflow: hidden;
+}
+
+.deal-commission-form-header {
+  flex: 0 0 auto;
+  padding: 20px 24px;
+}
+
+.deal-commission-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.deal-commission-form-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 22px 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.deal-commission-form-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.deal-commission-form-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.deal-commission-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.deal-commission-form-grid > label {
+  min-width: 0;
+}
+
+.deal-commission-form-grid input,
+.deal-commission-form-grid select,
+.deal-commission-form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.deal-commission-form-grid textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.deal-commission-preview {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deal-commission-form-actions {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px max(14px, env(safe-area-inset-bottom));
+  border-top: 1px solid #e8edf4;
+  background: #fbfcfe;
+}
+
+@media (max-width: 700px) {
+  .deal-commission-form-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .deal-commission-form-modal {
+    flex: 0 1 auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    margin: auto 0;
+    border-radius: 15px;
+  }
+
+  .deal-commission-form-header {
+    padding: 16px 18px;
+  }
+
+  .deal-commission-form-body {
+    padding: 18px;
+  }
+
+  .deal-commission-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deal-commission-form-grid > label.full,
+  .deal-commission-preview.full {
+    grid-column: auto;
+  }
+
+  .deal-commission-form-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+    padding: 12px 18px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .deal-commission-form-actions button {
+    width: auto;
+  }
+}
+
+@media (max-height: 650px) and (min-width: 701px) {
+  .deal-commission-form-modal {
+    max-height: calc(100dvh - 24px);
+  }
+
+  .deal-commission-form-header {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .deal-commission-form-body {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .deal-commission-form-actions {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+
+/* Nested form is rendered with React createPortal into document.body.
+   This prevents the animated/overflow-hidden parent dialog from clipping it. */
+body:has(.deal-commission-form-backdrop) .deal-commissions-modal {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Full viewport overlay for the independently portaled form. */
+.deal-commission-form-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 20000 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+  margin: 0;
+  padding: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 0 !important;
+  background: rgb(15 23 42 / 62%);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.deal-commission-form-modal {
+  position: relative;
+  flex: 0 1 720px;
+  width: min(720px, calc(100vw - 32px));
+  max-width: 720px;
+  max-height: calc(100dvh - 32px);
+  min-width: 0;
+  min-height: 0;
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid #dce4f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 30%);
+}
+
+.deal-commission-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.deal-commission-form-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.deal-commission-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.deal-commission-form-grid > label,
+.deal-commission-preview {
+  min-width: 0;
+}
+
+.deal-commission-form-grid input,
+.deal-commission-form-grid select,
+.deal-commission-form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.deal-commission-form-actions {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  background: #fbfcfe;
+}
+
+@media (max-width: 700px) {
+  .deal-commission-form-backdrop {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .deal-commission-form-modal {
+    flex: 0 1 auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    margin: auto 0;
+    border-radius: 15px;
+  }
+
+  .deal-commission-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deal-commission-form-grid > label.full,
+  .deal-commission-preview.full {
+    grid-column: auto;
+  }
+}

@@ -1,0 +1,45 @@
+[project]
+name = "dealflow-api"
+version = "0.1.0"
+description = "DealFlow backend API"
+requires-python = ">=3.13,<3.14"
+readme = "README.md"
+dependencies = [
+    "alembic>=1.16,<2.0",
+    "cryptography>=50.0.2",
+    "email-validator>=2.3.0",
+    "fastapi>=0.141,<1.0",
+    "httpx>=0.28.1",
+    "joserfc>=1.7,<2.0",
+    "openpyxl>=3.1.5",
+    "psycopg[binary]>=3.2,<4.0",
+    "pwdlib[argon2]>=0.3.1",
+    "pydantic-settings>=2.0,<3.0",
+    "python-multipart>=0.0.20,<1.0",
+    "sqlalchemy>=2.0,<3.0",
+    "uvicorn[standard]>=0.35,<1.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1.0",
+    "pip-audit>=2.9,<3.0",
+    "pytest>=9.0.3,<10.0",
+    "ruff>=0.14,<1.0",
+]
+
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff.lint]
+ignore = ["B008"]

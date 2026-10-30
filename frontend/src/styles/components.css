@@ -1,0 +1,433 @@
+
+/* =========================================================
+   DealFlow CRM — Shared components
+   ========================================================= */
+
+/* Buttons */
+
+.button,
+.btn {
+  display: inline-flex;
+  min-width: 0;
+  min-height: var(--df-control-height-md);
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--df-ink-soft);
+  background: var(--df-surface);
+  border: 1px solid var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  font-size: var(--df-text-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color var(--df-transition-fast),
+    background-color var(--df-transition-fast),
+    border-color var(--df-transition-fast),
+    box-shadow var(--df-transition-fast);
+}
+
+.button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: var(--df-surface-soft);
+  border-color: var(--df-disabled);
+}
+
+.button:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.button-primary,
+.btn-primary {
+  color: var(--df-on-primary);
+  background: var(--df-primary);
+  border-color: var(--df-primary);
+}
+
+.button-primary:hover:not(:disabled),
+.btn-primary:hover:not(:disabled) {
+  color: var(--df-on-primary);
+  background: var(--df-primary-hover);
+  border-color: var(--df-primary-hover);
+}
+
+.button-secondary,
+.btn-secondary {
+  color: var(--df-ink-soft);
+  background: var(--df-surface);
+  border-color: var(--df-border);
+}
+
+.button-danger,
+.btn-danger {
+  color: var(--df-danger);
+  background: var(--df-surface);
+  border-color: var(--df-border);
+}
+
+.button-danger:hover:not(:disabled),
+.btn-danger:hover:not(:disabled) {
+  background: var(--df-danger-soft);
+  border-color: var(--df-danger);
+}
+
+.button-block {
+  width: 100%;
+}
+
+.button-sm {
+  min-height: var(--df-control-height-sm);
+  padding: 5px 9px;
+  font-size: var(--df-text-xs);
+}
+
+.button-lg {
+  min-height: var(--df-control-height-lg);
+  padding: 9px 16px;
+}
+
+.button:disabled,
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Icon buttons */
+
+.icon-button,
+.workspace-icon-button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: var(--df-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--df-radius-md);
+  transition:
+    color var(--df-transition-fast),
+    background-color var(--df-transition-fast),
+    border-color var(--df-transition-fast);
+}
+
+.icon-button:hover:not(:disabled),
+.workspace-icon-button:hover:not(:disabled) {
+  color: var(--df-ink);
+  background: var(--df-surface-soft);
+  border-color: var(--df-border);
+}
+
+.icon-button svg,
+.workspace-icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Form controls
+   Keep these generic rules restrained. Feature-specific layouts
+   should scope their own input widths and control arrangements.
+*/
+
+input,
+select,
+textarea,
+.form-control {
+  min-width: 0;
+  color: var(--df-ink);
+  background: var(--df-surface);
+  border: 1px solid var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  font-family: inherit;
+  font-size: var(--df-text-sm);
+  line-height: 1.4;
+  transition:
+    border-color var(--df-transition-fast),
+    box-shadow var(--df-transition-fast);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+select,
+.form-control {
+  min-height: var(--df-control-height-lg);
+  padding: 8px 10px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--df-subtle);
+  opacity: 1;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--df-disabled);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--df-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--df-focus-ring);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--df-disabled);
+  background: var(--df-surface-soft);
+}
+
+/* Form labels and hints */
+
+.form-field {
+  min-width: 0;
+}
+
+.form-label,
+label.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--df-ink-soft);
+  font-size: var(--df-text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.form-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--df-muted);
+  font-size: var(--df-text-xs);
+  line-height: 1.5;
+}
+
+/* Cards and panels */
+
+.card,
+.panel,
+.content-card,
+.form-card,
+.table-card {
+  min-width: 0;
+  background: var(--df-surface);
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+}
+
+.card,
+.panel,
+.content-card,
+.form-card {
+  padding: var(--df-space-4);
+}
+
+.table-card {
+  overflow: hidden;
+}
+
+.card-title {
+  margin-bottom: 12px;
+  color: var(--df-ink);
+  font-size: var(--df-text-md);
+  font-weight: 600;
+}
+
+/* Data tables */
+
+.table-container,
+.table-wrapper,
+.data-table-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow: auto;
+  background: var(--df-surface);
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--df-scrollbar) transparent;
+}
+
+.table-container:focus-visible,
+.table-wrapper:focus-visible,
+.data-table-wrap:focus-visible {
+  outline-offset: 2px;
+}
+
+table,
+.data-table {
+  width: 100%;
+  border-spacing: 0;
+  color: var(--df-ink);
+  font-size: var(--df-text-sm);
+  text-align: left;
+}
+
+table {
+  background: var(--df-surface);
+}
+
+thead th,
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--df-z-sticky);
+  height: var(--df-grid-header-height);
+  padding: 0 12px;
+  color: var(--df-muted);
+  background: #f7f8fa;
+  border-bottom: 1px solid var(--df-border);
+  font-size: var(--df-text-xs);
+  font-weight: 650;
+  text-align: left;
+  white-space: nowrap;
+}
+
+tbody td,
+.data-table tbody td {
+  height: var(--df-grid-row-height);
+  padding: 8px 12px;
+  color: var(--df-ink-soft);
+  background: var(--df-surface);
+  border-bottom: 1px solid var(--df-border-soft);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td,
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover td,
+.data-table tbody tr:hover td {
+  background: #f8faff;
+}
+
+tbody tr:focus-within td,
+.data-table tbody tr:focus-within td {
+  background: var(--df-primary-soft);
+}
+
+th,
+td {
+  overflow-wrap: break-word;
+}
+
+th {
+  font-weight: 600;
+}
+
+/* Status badges */
+
+.badge,
+.status-badge {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 2px 8px;
+  color: var(--df-ink-soft);
+  background: var(--df-surface-soft);
+  border: 1px solid transparent;
+  border-radius: var(--df-radius-sm);
+  font-size: var(--df-text-xs);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.badge-success,
+.status-success {
+  color: var(--df-success);
+  background: var(--df-success-soft);
+}
+
+.badge-warning,
+.status-warning {
+  color: var(--df-warning);
+  background: var(--df-warning-soft);
+}
+
+.badge-danger,
+.status-danger {
+  color: var(--df-danger);
+  background: var(--df-danger-soft);
+}
+
+.badge-info,
+.status-info {
+  color: var(--df-info);
+  background: var(--df-info-soft);
+}
+
+/* Feedback */
+
+.alert,
+.feedback {
+  padding: 12px 14px;
+  color: var(--df-ink-soft);
+  background: var(--df-surface);
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-md);
+  font-size: var(--df-text-sm);
+  line-height: 1.5;
+}
+
+.alert-error,
+.feedback-error {
+  color: var(--df-danger);
+  background: var(--df-danger-soft);
+  border-color: rgb(174 46 36 / 20%);
+}
+
+.alert-success,
+.feedback-success {
+  color: var(--df-success);
+  background: var(--df-success-soft);
+  border-color: rgb(33 110 78 / 20%);
+}
+
+.alert-warning,
+.feedback-warning {
+  color: var(--df-warning);
+  background: var(--df-warning-soft);
+  border-color: rgb(151 79 12 / 20%);
+}
+
+/* Responsive table containment */
+
+@media (max-width: 640px) {
+  .card,
+  .panel,
+  .content-card,
+  .form-card {
+    padding: 12px;
+  }
+
+  thead th,
+  .data-table thead th {
+    padding-inline: 10px;
+  }
+
+  tbody td,
+  .data-table tbody td {
+    padding: 8px 10px;
+  }
+}

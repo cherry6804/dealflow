@@ -1,5 +1,7 @@
 # DealFlow Git Workflow
 
+Engineering rules for Dealsflo work, including coding-agent guidance, are in [CLAUDE.md](../../CLAUDE.md).
+
 ## 1. Purpose
 
 This document defines the Git branching, commit, pull request, merge, and release practices for the DealFlow product.
@@ -65,6 +67,16 @@ feature/DF-9-fastapi-backend
 feature/DF-10-react-frontend
 
 A feature branch should normally represent one Jira story or one tightly related engineering change.
+
+Workbook-only stories without a Jira key use the following convention:
+
+```text
+feature/MVP-<story-id>-<short-description>
+```
+
+Example:
+
+feature/MVP-00-repo-baseline-audit
 
 4. Bug-Fix Branches
 

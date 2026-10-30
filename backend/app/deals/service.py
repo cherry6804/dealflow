@@ -1,0 +1,318 @@
+
+"""Service operations for DealFlow deals."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.db.models.customer_profile import CustomerProfile
+from app.db.models.deal import Deal
+from app.db.models.deal_stage_history import DealStageHistory
+from app.db.models.lead import Lead
+from app.db.models.membership import Membership
+from app.db.models.property import Property
+from app.deals.schemas import DealCreateRequest, DealStage, DealUpdateRequest
+
+
+NEXT_STAGE: dict[str, str] = {
+    DealStage.NEW.value: DealStage.QUALIFICATION.value,
+    DealStage.QUALIFICATION.value: DealStage.NEGOTIATION.value,
+    DealStage.NEGOTIATION.value: DealStage.BOOKING.value,
+}
+
+CLOSED_STAGES = {
+    DealStage.CLOSED_WON.value,
+    DealStage.CLOSED_LOST.value,
+}
+
+
+def create_deal(
+    db: Session,
+    *,
+    organization_id: UUID,
+    current_user_id: UUID,
+    payload: DealCreateRequest,
+) -> Deal | None:
+    """Create a deal using only references in the verified organization."""
+
+    customer = db.scalar(
+        select(CustomerProfile.id).where(
+            CustomerProfile.id == payload.customer_profile_id,
+            CustomerProfile.organization_id == organization_id,
+            CustomerProfile.is_active.is_(True),
+        )
+    )
+    if customer is None:
+        return None
+
+    property_record = db.scalar(
+        select(Property.id).where(
+            Property.id == payload.property_id,
+            Property.organization_id == organization_id,
+        )
+    )
+    if property_record is None:
+        return None
+
+    if payload.lead_id is not None:
+        lead = db.scalar(
+            select(Lead.id).where(
+                Lead.id == payload.lead_id,
+                Lead.organization_id == organization_id,
+                Lead.is_active.is_(True),
+            )
+        )
+        if lead is None:
+            return None
+
+    owner_user_id = payload.owner_user_id or current_user_id
+    owner_membership = db.scalar(
+        select(Membership.id).where(
+            Membership.user_id == owner_user_id,
+            Membership.organization_id == organization_id,
+            Membership.is_active.is_(True),
+        )
+    )
+    if owner_membership is None:
+        raise ValueError(
+            "Deal owner must be an active member of the organization."
+        )
+
+    deal = Deal(
+        organization_id=organization_id,
+        customer_profile_id=payload.customer_profile_id,
+        property_id=payload.property_id,
+        lead_id=payload.lead_id,
+        owner_user_id=owner_user_id,
+        stage=payload.stage.value,
+        expected_value=payload.expected_value,
+        currency=payload.currency,
+        notes=payload.notes,
+    )
+    db.add(deal)
+    db.flush()
+    db.refresh(deal)
+    return deal
+
+
+def get_deal(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+) -> Deal | None:
+    """Return a deal only if it belongs to the verified organization."""
+    return db.scalar(
+        select(Deal).where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+    )
+
+
+def list_deals(
+    db: Session,
+    *,
+    organization_id: UUID,
+    page: int = 1,
+    page_size: int = 20,
+    stage: DealStage | None = None,
+    owner_user_id: UUID | None = None,
+) -> tuple[list[Deal], int]:
+    """List organization-scoped deals with optional filters."""
+
+    statement = select(Deal).where(
+        Deal.organization_id == organization_id
+    )
+    count_statement = (
+        select(func.count())
+        .select_from(Deal)
+        .where(Deal.organization_id == organization_id)
+    )
+
+    if stage is not None:
+        statement = statement.where(Deal.stage == stage.value)
+        count_statement = count_statement.where(
+            Deal.stage == stage.value
+        )
+
+    if owner_user_id is not None:
+        statement = statement.where(
+            Deal.owner_user_id == owner_user_id
+        )
+        count_statement = count_statement.where(
+            Deal.owner_user_id == owner_user_id
+        )
+
+    total = db.scalar(count_statement) or 0
+
+    items = list(
+        db.scalars(
+            statement
+            .order_by(Deal.created_at.desc(), Deal.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+    )
+    return items, total
+
+
+def transition_deal_stage(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+    actor_user_id: UUID,
+    target_stage: DealStage,
+    reason: str | None = None,
+) -> Deal | None:
+    """Transition a deal and record its stage history atomically.
+
+    Ordinary progression follows NEXT_STAGE. Closing is permitted only
+    from BOOKING, requires a meaningful reason, and is recorded in the
+    same stage-history table.
+
+    Returns None if the deal is outside the active organization.
+    Raises ValueError for an invalid or unnecessary transition.
+    The caller owns the transaction and must commit or roll back.
+    """
+
+    deal = db.scalar(
+        select(Deal)
+        .where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+    if deal is None:
+        return None
+
+    current_stage = deal.stage
+    requested_stage = target_stage.value
+
+    if requested_stage == current_stage:
+        raise ValueError("The deal is already in the requested stage.")
+
+    # A closed deal is terminal in the ordinary stage-transition API.
+    if current_stage in CLOSED_STAGES:
+        raise ValueError(
+            "Closed deals cannot be transitioned again."
+        )
+
+    # Explicit close outcomes are allowed only after booking.
+    if requested_stage in CLOSED_STAGES:
+        if current_stage != DealStage.BOOKING.value:
+            raise ValueError(
+                "A deal can only be closed from BOOKING."
+            )
+
+        normalized_reason = (reason or "").strip()
+        if not normalized_reason:
+            raise ValueError(
+                "A closure reason is required to close a deal."
+            )
+
+        reason = normalized_reason
+    else:
+        expected_next_stage = NEXT_STAGE.get(current_stage)
+
+        if expected_next_stage is None:
+            raise ValueError(
+                f"Stage transitions are not supported from "
+                f"{current_stage}."
+            )
+
+        if requested_stage != expected_next_stage:
+            raise ValueError(
+                f"Invalid stage transition from {current_stage} to "
+                f"{requested_stage}. The next permitted stage is "
+                f"{expected_next_stage}."
+            )
+
+    history = DealStageHistory(
+        organization_id=organization_id,
+        deal_id=deal.id,
+        from_stage=current_stage,
+        to_stage=requested_stage,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    )
+
+    deal.stage = requested_stage
+    db.add(history)
+    db.flush()
+    db.refresh(deal)
+
+    return deal
+
+
+class DealClosedError(Exception):
+    """A closed deal is terminal and its details are read-only."""
+
+
+def update_deal(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+    payload: DealUpdateRequest,
+) -> Deal | None:
+    """Update the editable fields of a deal inside the verified organization.
+
+    Returns None if the deal is outside the organization. Raises DealClosedError
+    for a closed deal, LookupError if a linked lead is missing, inactive or in
+    another organization, and ValueError if the owner is not an active member.
+    The caller owns the transaction.
+    """
+    deal = db.scalar(
+        select(Deal)
+        .where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+    if deal is None:
+        return None
+
+    if deal.stage in CLOSED_STAGES:
+        raise DealClosedError("Closed deals cannot be edited.")
+
+    changes = payload.model_dump(exclude_unset=True)
+
+    if changes.get("lead_id") is not None:
+        lead_match = db.scalar(
+            select(Lead.id).where(
+                Lead.id == changes["lead_id"],
+                Lead.organization_id == organization_id,
+                Lead.is_active.is_(True),
+            )
+        )
+        if lead_match is None:
+            raise LookupError("Lead was not found in the current organization.")
+
+    if "owner_user_id" in changes:
+        owner_membership = db.scalar(
+            select(Membership.id).where(
+                Membership.user_id == changes["owner_user_id"],
+                Membership.organization_id == organization_id,
+                Membership.is_active.is_(True),
+            )
+        )
+        if owner_membership is None:
+            raise ValueError(
+                "Deal owner must be an active member of the organization."
+            )
+
+    for field_name, value in changes.items():
+        setattr(deal, field_name, value)
+
+    db.flush()
+    db.refresh(deal)
+    return deal
