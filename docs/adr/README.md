@@ -226,5 +226,34 @@ Never silently rewrite architectural history.
 | ADR | Title | Status |
 |---|---|---|
 | 0001 | ADR Template | Accepted |
+| 0002 | Identity and Tenant Architecture | Accepted |
+| 0003 | Authentication Security Architecture | Accepted |
+| 0004 | Tenant Context Architecture | Accepted |
+| 0005 | Authorization Model Architecture | Accepted |
+| 0006 | Authorization Audit Events Architecture | Accepted |
+| 0007 | Contact and Customer Domain Architecture | Accepted |
+| 0008 | Lead Domain Architecture and Lifecycle | Accepted |
+| 0009 | Lead Update and Lifecycle Management | Accepted |
+| 0010 | Lead Assignment and Ownership | Accepted |
+| 0011 | Lead Next Action and Outcome Management | Accepted |
+| 0012 | Customer Requirement Domain Architecture | Accepted |
+| 0013 | Customer Requirement Budget Range | Accepted |
+| 0014 | Customer Requirement Location Preferences | Accepted |
+| 0015 | Customer Requirement Property Type, BHK & Property Preferences | Accepted |
+| 0016 | Customer Requirement Possession & Parking Preferences | Accepted |
+| 0017 | Customer Requirement Lead and Customer Profile Association | Accepted |
+| 0018 | Customer Requirement Edit History & Versioning | Proposed |
+| 0019 | Property Domain Foundation | Accepted |
+| 0020 | Property Commercial Fields | Accepted |
+| 0021 | Property Location and Attributes | Accepted |
+| 0022 | Property Availability and Status | Accepted |
+| 0023 | Property Search and Filtering | Accepted |
+| 0024 | Property Source and Owner Association | Proposed |
+| 0025 | Modular Monolith Boundaries and Module Ownership | Proposed |
+| 0026 | Transactional Outbox and Background Execution | Proposed |
+| 0027 | SIBVO Authority and Entitlement Snapshot | Proposed |
+| 0028 | Communication Channel Gateway Architecture | Proposed |
+| 0029 | AI Execution and Disabled-by-Default Enablement Policy | Proposed |
+| 0030 | Environment and Configuration Standards | Proposed |
 
 New ADRs should be added to this index when created.

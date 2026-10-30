@@ -119,6 +119,13 @@ class Settings(BaseSettings):
         gt=0,
     )
 
+    # Transactional outbox dispatch.
+    outbox_max_attempts: int = Field(default=5, ge=1, le=50)
+    outbox_base_backoff_seconds: int = Field(default=30, ge=1, le=3600)
+    outbox_max_backoff_seconds: int = Field(default=3600, ge=1, le=86400)
+    outbox_lease_seconds: int = Field(default=300, ge=10, le=3600)
+    outbox_batch_size: int = Field(default=50, ge=1, le=500)
+
     # Encrypted transactional email outbox.
     email_outbox_encryption_key: SecretStr | None = Field(
         default=None,
