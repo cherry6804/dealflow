@@ -22,6 +22,7 @@ from app.db.models.organization import Organization
 from app.db.models.auth_session import AuthSession
 from app.db.models.user import User
 from app.db.session import get_db_session
+from app.integrations import sibvo_client
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
 
@@ -194,6 +195,8 @@ def configure_sso_revalidation(monkeypatch, response_json=None, error=None):
     monkeypatch.setattr(auth_dependencies, "get_settings", lambda: settings)
 
     class FakeResponse:
+        status_code = 200
+
         def __init__(self, request_data):
             self.request_data = request_data
 
@@ -223,9 +226,11 @@ def configure_sso_revalidation(monkeypatch, response_json=None, error=None):
 
         def post(self, url, **kwargs):
             self.payload = kwargs["data"]
+            if error:
+                raise error
             return FakeResponse(self.payload)
 
-    monkeypatch.setattr(auth_dependencies.httpx, "Client", FakeClient)
+    monkeypatch.setattr(sibvo_client.httpx, "Client", FakeClient)
 
 
 

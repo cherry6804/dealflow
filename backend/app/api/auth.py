@@ -56,6 +56,8 @@ from app.db.models.organization import Organization
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.user import User
 from app.db.session import get_db_session
+from app.integrations import sibvo_client
+from app.integrations.sibvo_client import SibvoError
 from app.team.service import provision_default_organization_roles
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
@@ -571,3 +573,57 @@ def get_sibvo_access(
             detail="No SIBVO access information for this session.",
         )
     return context.sibvo_access
+
+
+@router.get(
+    "/sibvo-seats",
+    status_code=status.HTTP_200_OK,
+)
+def get_sibvo_seats(
+    context: CurrentUserContext = Depends(get_current_user_context),
+) -> dict:
+    """Return SIBVO's seat capacity for this session's organization.
+
+    SIBVO is the only seat authority. Capacity is read from SIBVO on each call
+    and is shown to product owners only. Failures are reported as unavailable.
+    """
+    if (
+        not context.sibvo_attested
+        or context.sibvo_access is None
+        or context.sibvo_subject is None
+        or context.sibvo_session_id is None
+        or context.sibvo_organization_id is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No SIBVO access information for this session.",
+        )
+    if context.sibvo_access.get("product_role") != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seat capacity is shown to product owners.",
+        )
+    try:
+        usage = sibvo_client.fetch_seat_usage(
+            get_settings(),
+            subject=context.sibvo_subject,
+            session_id=context.sibvo_session_id,
+            organization_id=context.sibvo_organization_id,
+        )
+    except SibvoError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SIBVO seat information is unavailable.",
+        ) from None
+    if usage is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seat capacity is not available for this session.",
+        )
+    return {
+        "seat_limit": usage.seat_limit,
+        "allocated": usage.allocated,
+        "reserved": usage.reserved,
+        "available": usage.available,
+        "unlimited": usage.seat_limit is None,
+    }
