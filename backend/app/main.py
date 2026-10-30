@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.activities import router as activities_router
 from app.api.auth import router as auth_router
+from app.api.diagnostics import router as diagnostics_router
 from app.api.automation_rules import router as automation_rules_router
 from app.api.billing_audit import router as billing_audit_router
 from app.api.contacts import router as contacts_router
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     register_error_handlers(application)
 
     application.include_router(auth_router)
+    application.include_router(diagnostics_router)
     application.include_router(organizations_router)
     application.include_router(contacts_router)
     application.include_router(customer_profiles_router)

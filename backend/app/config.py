@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     # SIBVO is the authority for those environments (ADR-0027).
     local_entitlement_fallback_enabled: bool = False
 
+    # SIBVO circuit breaker. Process-local (see the entitlement contract, section 8).
+    sibvo_circuit_failure_threshold: int = Field(default=5, ge=1, le=100)
+    sibvo_circuit_cooldown_seconds: float = Field(default=30.0, gt=0, le=3600)
+    # Development-only diagnostic for the circuit state. Loopback-only, never in staging or production.
+    sibvo_diagnostics_enabled: bool = False
+
     # Email verification.
     email_verification_token_lifetime_minutes: int = Field(
         default=30,
@@ -294,6 +300,9 @@ class Settings(BaseSettings):
                 "SSO flow and authentication cookies must have "
                 "different names."
             )
+
+        if self.sibvo_diagnostics_enabled and self.app_environment not in {"development", "test"}:
+            raise ValueError("The SIBVO circuit diagnostic is allowed only in development and test.")
 
         if (
             self.local_entitlement_fallback_enabled

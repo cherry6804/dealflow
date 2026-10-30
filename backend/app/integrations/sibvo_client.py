@@ -24,6 +24,7 @@ import logging
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -31,7 +32,7 @@ from uuid import UUID
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,16 @@ class SibvoRequestDenied(SibvoError):
         super().__init__(f"SIBVO denied the request ({status_code}, {error_code}).")
 
 
+CircuitState = Literal["closed", "open", "half_open"]
+
+
 class CircuitBreaker:
-    """Stops calling SIBVO after repeated unavailability, then probes once per cooldown."""
+    """Stops calling SIBVO after repeated unavailability, then probes once per cooldown.
+
+    States: closed (calls flow), open (calls refused until the cooldown ends), half_open
+    (one trial call is allowed; success closes the circuit, failure re-opens it).
+    State is process-local. See docs/architecture/sibvo-dealsflo-entitlement-contract.md.
+    """
 
     def __init__(
         self,
@@ -79,26 +88,37 @@ class CircuitBreaker:
         self._cooldown_seconds = cooldown_seconds
         self._clock = clock
         self._lock = threading.Lock()
+        self._state: CircuitState = "closed"
         self._failures = 0
         self._opened_at: float | None = None
         self._trial_in_flight = False
+        self._last_transition_at: str | None = None
+        self._last_failure_category: str | None = None
+
+    def _transition(self, new_state: CircuitState) -> None:
+        if new_state != self._state:
+            self._state = new_state
+            self._last_transition_at = datetime.now(UTC).isoformat()
+
+    def _cooldown_elapsed(self) -> bool:
+        return self._opened_at is not None and self._clock() - self._opened_at >= self._cooldown_seconds
 
     @property
-    def state(self) -> Literal["closed", "open", "half_open"]:
+    def state(self) -> CircuitState:
         with self._lock:
-            if self._opened_at is None:
-                return "closed"
-            if self._clock() - self._opened_at >= self._cooldown_seconds:
+            if self._state == "open" and self._cooldown_elapsed():
                 return "half_open"
-            return "open"
+            return self._state
 
     def before_call(self) -> None:
-        """Raise when the circuit is open, or when a half-open trial is already running."""
+        """Raise when the circuit refuses calls. Admit exactly one trial when half-open."""
         with self._lock:
-            if self._opened_at is None:
+            if self._state == "closed":
                 return
-            if self._clock() - self._opened_at < self._cooldown_seconds:
-                raise SibvoUnavailable("SIBVO calls are temporarily suspended.")
+            if self._state == "open":
+                if not self._cooldown_elapsed():
+                    raise SibvoUnavailable("SIBVO calls are temporarily suspended.")
+                self._transition("half_open")
             if self._trial_in_flight:
                 raise SibvoUnavailable("SIBVO calls are temporarily suspended.")
             self._trial_in_flight = True
@@ -108,22 +128,60 @@ class CircuitBreaker:
             self._failures = 0
             self._opened_at = None
             self._trial_in_flight = False
+            self._transition("closed")
 
-    def record_failure(self) -> None:
+    def record_failure(self, category: str = "unreachable") -> None:
         with self._lock:
-            self._failures += 1
+            self._last_failure_category = category
             self._trial_in_flight = False
-            if self._opened_at is not None or self._failures >= self._failure_threshold:
+            if self._state == "half_open":
                 self._opened_at = self._clock()
+                self._transition("open")
+                return
+            self._failures += 1
+            if self._failures >= self._failure_threshold and self._state == "closed":
+                self._opened_at = self._clock()
+                self._transition("open")
 
     def reset(self) -> None:
         with self._lock:
+            self._state = "closed"
             self._failures = 0
             self._opened_at = None
             self._trial_in_flight = False
+            self._last_transition_at = None
+            self._last_failure_category = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Diagnostic view. Contains no credentials, tenant data or request content."""
+        with self._lock:
+            state = self._state
+            if state == "open" and self._cooldown_elapsed():
+                state = "half_open"
+            remaining = None
+            if self._state == "open" and self._opened_at is not None:
+                remaining = max(0.0, round(self._cooldown_seconds - (self._clock() - self._opened_at), 1))
+            return {
+                "state": state,
+                "failure_count": self._failures,
+                "failure_threshold": self._failure_threshold,
+                "cooldown_seconds": self._cooldown_seconds,
+                "cooldown_remaining_seconds": remaining,
+                "last_transition_at": self._last_transition_at,
+                "last_failure_category": self._last_failure_category,
+                "recovered": state == "closed" and self._last_transition_at is not None,
+            }
 
 
-breaker = CircuitBreaker()
+def _breaker_from_settings() -> CircuitBreaker:
+    settings = get_settings()
+    return CircuitBreaker(
+        failure_threshold=settings.sibvo_circuit_failure_threshold,
+        cooldown_seconds=settings.sibvo_circuit_cooldown_seconds,
+    )
+
+
+breaker = _breaker_from_settings()
 
 
 @dataclass(frozen=True)
@@ -202,14 +260,15 @@ def _send(
                     auth=(client_id, secret),
                     headers={"X-Correlation-ID": correlation_id},
                 )
-        except (httpx.TimeoutException, httpx.ConnectError):
-            breaker.record_failure()
-            _trace(operation, correlation_id, attempt, "unreachable", started)
+        except (httpx.TimeoutException, httpx.ConnectError) as error:
+            category = "timeout" if isinstance(error, httpx.TimeoutException) else "unreachable"
+            breaker.record_failure(category)
+            _trace(operation, correlation_id, attempt, category, started)
             if last_attempt:
                 raise SibvoUnavailable("SIBVO could not be reached.") from None
             continue
         except httpx.HTTPError:
-            breaker.record_failure()
+            breaker.record_failure("http_error")
             _trace(operation, correlation_id, attempt, "http_error", started)
             raise SibvoUnavailable("SIBVO call failed.") from None
 
@@ -220,7 +279,7 @@ def _send(
             _trace(operation, correlation_id, attempt, "rejected", started, status_code)
             raise SibvoRejected("SIBVO rejected Dealsflo client credentials.")
         if status_code >= 500:
-            breaker.record_failure()
+            breaker.record_failure("server_error")
             _trace(operation, correlation_id, attempt, "server_error", started, status_code)
             if last_attempt:
                 raise SibvoUnavailable("SIBVO failed to answer.")
@@ -372,7 +431,7 @@ def release_product_seat(
             "reason": reason[:500],
             "idempotency_key": idempotency_key,
         },
-        retry_safe=True,
+        retry_safe=False,
     )
     released = body.get("released")
     already = body.get("already_released", False)
