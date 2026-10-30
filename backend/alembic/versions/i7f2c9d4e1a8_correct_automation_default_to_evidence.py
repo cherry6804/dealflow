@@ -1,23 +1,26 @@
-"""Correct the automation default: grant only on reliable evidence of prior opt-in (DFR1-006).
+"""Remove the automation grandfathering: existing organizations start disabled (DFR1-006).
 
-Revision f3a7b9c1d2e4 enabled automation for every organization that existed when it ran.
-That granted automation without evidence. This revision corrects it:
+Revision f3a7b9c1d2e4 enabled automation for every organization that existed when it ran,
+without evidence of an opt-in. Decision: no independently verifiable explicit opt-in exists
+in the database. Before E13 no organization-level automation switch existed, so no action
+recorded an enablement. An active rule with a recorded last-updating user is not proof of
+opt-in, and is not used.
 
-1. Adds ``source`` to organization_capability_settings. Rows are either ``manual`` (set by a
-   person through the settings API) or ``migration_evidence_active_rule``.
-2. Removes the blanket rows written by f3a7b9c1d2e4. They are identifiable: no actor,
+This revision therefore:
+
+1. Adds ``source`` to organization_capability_settings (the column records where a row came
+   from; rows set by a person are ``manual``).
+2. Removes only the blanket rows written by f3a7b9c1d2e4. They are identifiable: no actor,
    policy version 1, source ``manual``. Rows set by a person always record an actor.
-3. Grants automation (master and deal-created rules) only to organizations that have a
-   DEAL_CREATED automation rule with status ACTIVE and a recorded activating user. Activation
-   is an explicit user action, so that is the only reliable prior opt-in in the database.
-   Organizations without such a rule, including those with only draft or disabled rules,
-   stay disabled.
+3. Grants nothing. Every existing organization is disabled until an authorized organization
+   administrator explicitly enables a capability under the policy.
 
-Automation rule rows are not changed. Historical executions are not changed.
+Automation rules, their configurations, and their execution history are not changed. The
+migration executes no rule and creates no notification.
 
-Downgrade restores the blanket state of f3a7b9c1d2e4 and drops the source column. It refuses
-to run when a person has changed a capability switch, so that such changes are not lost
-silently. Export those rows before downgrading.
+Downgrade never re-enables anything. It drops the source column and leaves the remaining
+rows as they are. It refuses to run when a person has changed a switch, so no administrator
+change is discarded.
 """
 
 from collections.abc import Sequence
@@ -31,9 +34,6 @@ down_revision: str | Sequence[str] | None = "h5c9d1e3f6a7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-EVIDENCE_SOURCE = "migration_evidence_active_rule"
-EVIDENCE_CAPABILITIES = ("automation.master", "automation.deal_created_rules")
-
 
 def upgrade() -> None:
     op.add_column(
@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=40), nullable=False, server_default="manual"),
     )
 
-    # 1. Remove the unevidenced blanket grants written by f3a7b9c1d2e4.
+    # Remove only the unevidenced blanket grants written by f3a7b9c1d2e4.
     op.execute(
         sa.text(
             """
@@ -54,32 +54,6 @@ def upgrade() -> None:
         )
     )
 
-    # 2. Grant only where an active deal-created rule has a known activating user.
-    for capability_key in EVIDENCE_CAPABILITIES:
-        op.execute(
-            sa.text(
-                """
-                INSERT INTO organization_capability_settings
-                    (id, organization_id, capability_key, is_enabled, policy_version, source,
-                     updated_by_user_id, created_at, updated_at)
-                SELECT gen_random_uuid(), e.organization_id, CAST(:capability_key AS VARCHAR), true, 1,
-                       CAST(:source AS VARCHAR), NULL, now(), now()
-                FROM (
-                    SELECT DISTINCT organization_id
-                    FROM automation_rules
-                    WHERE status = 'ACTIVE'
-                      AND trigger_type = 'DEAL_CREATED'
-                      AND updated_by_user_id IS NOT NULL
-                ) AS e
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM organization_capability_settings s
-                    WHERE s.organization_id = e.organization_id
-                      AND s.capability_key = CAST(:capability_key AS VARCHAR)
-                )
-                """
-            ).bindparams(capability_key=capability_key, source=EVIDENCE_SOURCE)
-        )
-
 
 def downgrade() -> None:
     connection = op.get_bind()
@@ -87,7 +61,7 @@ def downgrade() -> None:
         sa.text(
             """
             SELECT COUNT(*) FROM organization_capability_settings
-            WHERE source = 'manual' AND updated_by_user_id IS NOT NULL
+            WHERE updated_by_user_id IS NOT NULL
             """
         )
     ).scalar_one()
@@ -96,26 +70,5 @@ def downgrade() -> None:
             "Refusing to downgrade: people have changed capability switches since the upgrade. "
             "Export organization_capability_settings before downgrading."
         )
-
-    op.execute(
-        sa.text(
-            "DELETE FROM organization_capability_settings WHERE source = 'migration_evidence_active_rule'"
-        )
-    )
-    # Restore the state written by f3a7b9c1d2e4 for organizations that still have no master row.
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO organization_capability_settings
-                (id, organization_id, capability_key, is_enabled, policy_version, updated_by_user_id,
-                 created_at, updated_at)
-            SELECT gen_random_uuid(), o.id, 'automation.master', true, 1, NULL, now(), now()
-            FROM organizations o
-            WHERE NOT EXISTS (
-                SELECT 1 FROM organization_capability_settings s
-                WHERE s.organization_id = o.id AND s.capability_key = 'automation.master'
-            )
-            """
-        )
-    )
+    # No rows are re-created: a downgrade must never silently re-enable a capability.
     op.drop_column("organization_capability_settings", "source")

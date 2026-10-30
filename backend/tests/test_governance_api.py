@@ -154,11 +154,14 @@ def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
     assert len(events) == 1
     assert events[0].resource_id == AUTOMATION_MASTER
     assert events[0].user_id == user.id
-    assert json.loads(events[0].event_metadata) == {
-        "after": True,
-        "before": False,
-        "policy_version": 1,
-    }
+    metadata = json.loads(events[0].event_metadata)
+    assert metadata["capability"] == AUTOMATION_MASTER
+    assert metadata["previous_state"] is False
+    assert metadata["new_state"] is True
+    assert metadata["action"] == "enabled"
+    assert metadata["policy_version"] == 1
+    assert metadata["source"] == "settings_api"
+    assert events[0].correlation_id, "every change carries a correlation id"
 
 
 def test_settings_of_one_organization_cannot_be_changed_with_another_tenant(cleanup) -> None:

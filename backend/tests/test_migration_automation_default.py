@@ -1,9 +1,11 @@
-"""Migration behaviour for the automation default (DFR1-006 corrective migration).
+"""Migration behaviour for the automation default (decision 1, DFR1-006).
 
 Each test builds a disposable schema inside dealflow_test, runs the migrations up to the
-pre-E13 revision, seeds existing organizations and automation rules with SQL, then runs the
-E13 migrations and checks the outcome. The public schema is never touched. Rule and execution
-rows are compared before and after to prove they are not changed.
+pre-E13 revision, seeds existing organizations, rules and execution history with SQL, then runs
+the E13 migrations and checks the outcome. The public schema is never touched.
+
+The decision these tests prove: no existing organization is enabled by a migration. Rules,
+configurations and execution history are preserved, and nothing executes during migration.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from app.config import get_settings
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = BACKEND_DIR.parent
 PRE_E13 = "a1e2c3d4f5b6"
-AFTER_F3_BLANKET = "f3a7b9c1d2e4"
 AFTER_H5 = "h5c9d1e3f6a7"
 HEAD = "i7f2c9d4e1a8"
 
@@ -98,7 +99,6 @@ def _rule(
     *,
     organization_id: uuid.UUID,
     status: str,
-    trigger_type: str,
     created_by: uuid.UUID | None,
     updated_by: uuid.UUID | None,
 ) -> uuid.UUID:
@@ -108,92 +108,121 @@ def _rule(
         INSERT INTO automation_rules
             (id, organization_id, name, trigger_type, trigger_config, conditions, actions, status,
              created_by_user_id, updated_by_user_id)
-        VALUES (%s, %s, %s, %s, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, %s, %s, %s)
+        VALUES (%s, %s, %s, 'DEAL_CREATED', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, %s, %s, %s)
         """,
-        (rule_id, organization_id, f"rule {rule_id}", trigger_type, status, created_by, updated_by),
+        (rule_id, organization_id, f"rule {rule_id}", status, created_by, updated_by),
     )
     return rule_id
 
 
-def _settings(connection: psycopg.Connection, organization_id: uuid.UUID) -> dict[str, tuple]:
-    rows = connection.execute(
-        "SELECT capability_key, is_enabled, source FROM organization_capability_settings "
-        "WHERE organization_id = %s",
+def _execution(connection: psycopg.Connection, *, organization_id: uuid.UUID, rule_id: uuid.UUID) -> None:
+    connection.execute(
+        """
+        INSERT INTO automation_executions
+            (id, organization_id, rule_id, event_type, event_id, action_results)
+        VALUES (%s, %s, %s, 'DEAL_CREATED', %s, '[]'::jsonb)
+        """,
+        (uuid.uuid4(), organization_id, rule_id, uuid.uuid4()),
+    )
+
+
+def _automation_state(connection: psycopg.Connection, organization_id: uuid.UUID) -> list[tuple]:
+    return connection.execute(
+        "SELECT capability_key, is_enabled FROM organization_capability_settings "
+        "WHERE organization_id = %s ORDER BY capability_key",
         (organization_id,),
     ).fetchall()
-    return {row[0]: (row[1], row[2]) for row in rows}
 
 
-def _rule_snapshot(connection: psycopg.Connection) -> list[tuple]:
-    return connection.execute(
-        "SELECT id, organization_id, status, trigger_type, created_by_user_id, updated_by_user_id "
-        "FROM automation_rules ORDER BY id"
-    ).fetchall()
+def _snapshot(connection: psycopg.Connection) -> dict[str, list]:
+    """Everything the migration must not change: rules, executions and notifications."""
+    return {
+        "rules": connection.execute(
+            "SELECT id, organization_id, status, trigger_type, created_by_user_id, updated_by_user_id, "
+            "trigger_config::text, conditions::text, actions::text FROM automation_rules ORDER BY id"
+        ).fetchall(),
+        "executions": connection.execute(
+            "SELECT id, rule_id FROM automation_executions ORDER BY id"
+        ).fetchall(),
+        "notifications": connection.execute("SELECT count(*) FROM notifications").fetchall(),
+    }
 
 
 def _seed_before_e13(schema: str) -> dict[str, uuid.UUID]:
-    """Existing organizations, created before E13, with the four cases the spec lists."""
+    """Existing organizations with every case the decision lists."""
     _alembic(schema, "upgrade", PRE_E13)
     with _connect(schema) as connection:
         person = _user(connection)
-        no_opt_in = _organization(connection)  # no automation rules at all
-        explicit_opt_in = _organization(connection)  # active rule, activated by a known user
-        configured_but_inactive = _organization(connection)  # draft and disabled rules only
-        active_without_activator = _organization(connection)  # active, updated_by unknown
-        _rule(connection, organization_id=explicit_opt_in, status="ACTIVE", trigger_type="DEAL_CREATED",
-              created_by=person, updated_by=person)
-        _rule(connection, organization_id=configured_but_inactive, status="DRAFT", trigger_type="DEAL_CREATED",
-              created_by=person, updated_by=person)
-        _rule(connection, organization_id=configured_but_inactive, status="DISABLED", trigger_type="DEAL_CREATED",
-              created_by=person, updated_by=person)
-        _rule(connection, organization_id=active_without_activator, status="ACTIVE", trigger_type="DEAL_CREATED",
-              created_by=None, updated_by=None)
+        active = _organization(connection)
+        draft = _organization(connection)
+        disabled = _organization(connection)
+        no_rules = _organization(connection)
+        with_history = _organization(connection)
+        active_rule = _rule(connection, organization_id=active, status="ACTIVE",
+                            created_by=person, updated_by=person)
+        _rule(connection, organization_id=draft, status="DRAFT", created_by=person, updated_by=person)
+        _rule(connection, organization_id=disabled, status="DISABLED", created_by=person, updated_by=person)
+        history_rule = _rule(connection, organization_id=with_history, status="ACTIVE",
+                             created_by=person, updated_by=person)
+        _execution(connection, organization_id=with_history, rule_id=history_rule)
+        _execution(connection, organization_id=active, rule_id=active_rule)
     return {
-        "no_opt_in": no_opt_in,
-        "explicit_opt_in": explicit_opt_in,
-        "configured_but_inactive": configured_but_inactive,
-        "active_without_activator": active_without_activator,
+        "active": active,
+        "draft": draft,
+        "disabled": disabled,
+        "no_rules": no_rules,
+        "with_history": with_history,
     }
 
 
-def test_existing_organization_without_opt_in_is_disabled_after_migration(schema) -> None:
+def test_existing_organization_with_active_rule_starts_disabled(schema) -> None:
     orgs = _seed_before_e13(schema)
 
     _alembic(schema, "upgrade", HEAD)
 
     with _connect(schema) as connection:
-        assert _settings(connection, orgs["no_opt_in"]) == {}
+        assert _automation_state(connection, orgs["active"]) == []
 
 
-def test_existing_organization_with_explicit_opt_in_keeps_automation_with_evidence(schema) -> None:
+def test_existing_organization_with_draft_rule_starts_disabled(schema) -> None:
     orgs = _seed_before_e13(schema)
+    _alembic(schema, "upgrade", HEAD)
+    with _connect(schema) as connection:
+        assert _automation_state(connection, orgs["draft"]) == []
+
+
+def test_existing_organization_with_disabled_rule_starts_disabled(schema) -> None:
+    orgs = _seed_before_e13(schema)
+    _alembic(schema, "upgrade", HEAD)
+    with _connect(schema) as connection:
+        assert _automation_state(connection, orgs["disabled"]) == []
+
+
+def test_existing_organization_with_no_rules_starts_disabled(schema) -> None:
+    orgs = _seed_before_e13(schema)
+    _alembic(schema, "upgrade", HEAD)
+    with _connect(schema) as connection:
+        assert _automation_state(connection, orgs["no_rules"]) == []
+
+
+def test_organization_with_historical_executions_starts_disabled_and_keeps_history(schema) -> None:
+    orgs = _seed_before_e13(schema)
+    with _connect(schema) as connection:
+        history_before = connection.execute(
+            "SELECT id, rule_id FROM automation_executions WHERE organization_id = %s ORDER BY id",
+            (orgs["with_history"],),
+        ).fetchall()
+    assert history_before, "the seed must contain execution history"
 
     _alembic(schema, "upgrade", HEAD)
 
     with _connect(schema) as connection:
-        settings = _settings(connection, orgs["explicit_opt_in"])
-    assert settings == {
-        "automation.master": (True, "migration_evidence_active_rule"),
-        "automation.deal_created_rules": (True, "migration_evidence_active_rule"),
-    }
-
-
-def test_active_rule_without_a_known_activator_is_not_treated_as_opt_in(schema) -> None:
-    orgs = _seed_before_e13(schema)
-
-    _alembic(schema, "upgrade", HEAD)
-
-    with _connect(schema) as connection:
-        assert _settings(connection, orgs["active_without_activator"]) == {}
-
-
-def test_organization_with_only_inactive_workflows_is_disabled(schema) -> None:
-    orgs = _seed_before_e13(schema)
-
-    _alembic(schema, "upgrade", HEAD)
-
-    with _connect(schema) as connection:
-        assert _settings(connection, orgs["configured_but_inactive"]) == {}
+        assert _automation_state(connection, orgs["with_history"]) == []
+        history_after = connection.execute(
+            "SELECT id, rule_id FROM automation_executions WHERE organization_id = %s ORDER BY id",
+            (orgs["with_history"],),
+        ).fetchall()
+    assert history_after == history_before
 
 
 def test_organization_created_after_migration_starts_disabled(schema) -> None:
@@ -202,58 +231,76 @@ def test_organization_created_after_migration_starts_disabled(schema) -> None:
 
     with _connect(schema) as connection:
         new_org = _organization(connection)
-        assert _settings(connection, new_org) == {}
+        assert _automation_state(connection, new_org) == []
 
 
-def test_migration_does_not_change_rules_or_their_history(schema) -> None:
+def test_explicit_opt_in_after_migration_is_recorded_with_its_actor(schema) -> None:
+    orgs = _seed_before_e13(schema)
+    _alembic(schema, "upgrade", HEAD)
+
+    with _connect(schema) as connection:
+        admin = _user(connection)
+        connection.execute(
+            "INSERT INTO organization_capability_settings "
+            "(id, organization_id, capability_key, is_enabled, policy_version, source, updated_by_user_id, "
+            " created_at, updated_at) VALUES (%s, %s, 'automation.master', true, 1, 'manual', %s, now(), now())",
+            (uuid.uuid4(), orgs["active"], admin),
+        )
+        row = connection.execute(
+            "SELECT is_enabled, updated_by_user_id, source FROM organization_capability_settings "
+            "WHERE organization_id = %s AND capability_key = 'automation.master'",
+            (orgs["active"],),
+        ).fetchone()
+    assert row == (True, admin, "manual")
+
+
+def test_migration_changes_no_rule_execution_or_notification(schema) -> None:
     _seed_before_e13(schema)
     with _connect(schema) as connection:
-        before = _rule_snapshot(connection)
+        before = _snapshot(connection)
+    assert before["executions"], "the seed must contain execution history"
 
     _alembic(schema, "upgrade", HEAD)
 
     with _connect(schema) as connection:
-        assert _rule_snapshot(connection) == before
+        assert _snapshot(connection) == before
 
 
-def test_rollback_restores_the_previous_state_and_reapplication_is_deterministic(schema) -> None:
+def test_rollback_does_not_re_enable_anything_and_reapplication_stays_disabled(schema) -> None:
     orgs = _seed_before_e13(schema)
     _alembic(schema, "upgrade", HEAD)
     with _connect(schema) as connection:
-        evidence_state = {key: _settings(connection, value) for key, value in orgs.items()}
+        before_rollback = _snapshot(connection)
 
     _alembic(schema, "downgrade", AFTER_H5)
     with _connect(schema) as connection:
-        column = connection.execute(
+        column_count = connection.execute(
             "SELECT count(*) FROM information_schema.columns WHERE table_schema = %s "
             "AND table_name = 'organization_capability_settings' AND column_name = 'source'",
             (schema,),
         ).fetchone()[0]
-        assert column == 0
-        # Back to the f3a7b9c1d2e4 blanket state: every organization has an enabled master row.
+        assert column_count == 0
         for value in orgs.values():
-            enabled = connection.execute(
-                "SELECT is_enabled FROM organization_capability_settings "
-                "WHERE organization_id = %s AND capability_key = 'automation.master'",
-                (value,),
-            ).fetchall()
-            assert enabled == [(True,)]
+            assert _automation_state(connection, value) == [], "rollback must not re-enable automation"
+        assert _snapshot(connection) == before_rollback
 
     _alembic(schema, "upgrade", HEAD)
     with _connect(schema) as connection:
-        assert {key: _settings(connection, value) for key, value in orgs.items()} == evidence_state
+        for value in orgs.values():
+            assert _automation_state(connection, value) == []
+        assert _snapshot(connection) == before_rollback
 
 
-def test_downgrade_refuses_to_discard_changes_made_by_people(schema) -> None:
+def test_rollback_refuses_to_discard_changes_made_by_people(schema) -> None:
     orgs = _seed_before_e13(schema)
     _alembic(schema, "upgrade", HEAD)
     with _connect(schema) as connection:
-        person = _user(connection)
+        admin = _user(connection)
         connection.execute(
             "INSERT INTO organization_capability_settings "
             "(id, organization_id, capability_key, is_enabled, policy_version, source, updated_by_user_id, "
             " created_at, updated_at) VALUES (%s, %s, 'ai.master', true, 1, 'manual', %s, now(), now())",
-            (uuid.uuid4(), orgs["no_opt_in"], person),
+            (uuid.uuid4(), orgs["no_rules"], admin),
         )
 
     with pytest.raises(RuntimeError, match="people have changed capability switches"):

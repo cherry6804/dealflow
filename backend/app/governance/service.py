@@ -21,6 +21,7 @@ from app.governance.policy import PolicyDecision, evaluate_capability
 
 GOVERNANCE_EVENT_TYPE = "governance"
 GOVERNANCE_CAPABILITY_ACTION = "governance.capability.updated"
+GOVERNANCE_SOURCE_SETTINGS_API = "settings_api"
 
 
 class UnknownCapabilityError(LookupError):
@@ -123,9 +124,12 @@ def set_capability_enabled(
             correlation_id=correlation_id,
             event_metadata=json.dumps(
                 {
-                    "before": before,
-                    "after": is_enabled,
+                    "capability": capability_key,
+                    "previous_state": before,
+                    "new_state": is_enabled,
+                    "action": "enabled" if is_enabled else "disabled",
                     "policy_version": row.policy_version,
+                    "source": GOVERNANCE_SOURCE_SETTINGS_API,
                 },
                 sort_keys=True,
             ),

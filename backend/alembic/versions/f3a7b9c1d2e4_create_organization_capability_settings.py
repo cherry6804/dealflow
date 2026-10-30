@@ -130,6 +130,16 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
+    changed_by_people = connection.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM organization_capability_settings WHERE updated_by_user_id IS NOT NULL"
+        )
+    ).scalar_one()
+    if changed_by_people:
+        raise RuntimeError(
+            "Refusing to drop organization_capability_settings: people have changed capability "
+            "switches. Export the table before downgrading."
+        )
     connection.execute(
         sa.text(
             """

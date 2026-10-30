@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -124,6 +124,7 @@ def update_capability_setting(
             actor_user_id=tenant.membership.user_id,
             capability_key=capability_key,
             is_enabled=payload.is_enabled,
+            correlation_id=str(uuid4()),
         )
         db.commit()
     except UnknownCapabilityError:
