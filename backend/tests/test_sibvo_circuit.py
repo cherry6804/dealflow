@@ -9,7 +9,11 @@ from pydantic import SecretStr, ValidationError
 
 from app.config import Settings, get_settings
 from app.integrations import sibvo_client
-from app.integrations.sibvo_client import CircuitBreaker, SibvoUnavailable, release_product_seat
+from app.integrations.sibvo_client import (
+    CircuitBreaker,
+    SibvoUnavailable,
+    release_product_seat,
+)
 
 
 class FakeClock:

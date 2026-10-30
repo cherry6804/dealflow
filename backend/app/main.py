@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.activities import router as activities_router
 from app.api.auth import router as auth_router
-from app.api.diagnostics import router as diagnostics_router
 from app.api.automation_rules import router as automation_rules_router
 from app.api.billing_audit import router as billing_audit_router
 from app.api.contacts import router as contacts_router
@@ -20,6 +19,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.deal_commissions import router as deal_commissions_router
 from app.api.deal_negotiations import router as deal_negotiations_router
 from app.api.deals import router as deals_router
+from app.api.diagnostics import router as diagnostics_router
 from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
 from app.api.imports import router as imports_router
