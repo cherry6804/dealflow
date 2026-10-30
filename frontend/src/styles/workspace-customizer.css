@@ -244,3 +244,14 @@
     padding-left: 14px;
   }
 }
+
+.workspace-setting-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 14px 0;
+}
+
+.workspace-setting-row strong,
+.workspace-setting-row small {
+  display: block;
+}

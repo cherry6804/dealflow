@@ -11,7 +11,11 @@ import { createPortal } from "react-dom";
 import { DataGrid, type Column, type SortColumn } from "react-data-grid";
 import "react-data-grid/lib/styles.css";
 
+import GridColumnOptionList from "../components/GridColumnOptionList";
+import { useGridViewPreferences } from "../hooks/useGridViewPreferences";
 import { ApiError } from "../lib/api";
+import { CONTACTS_GRID_VIEW } from "../lib/gridViewConfigs";
+import { arrangeGridColumns } from "../lib/gridViewPreferences";
 import {
   contactsApi,
   type Contact,
@@ -171,7 +175,7 @@ export default function ContactsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
-  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["name", "email", "phone", "createdAt", "status"]);
+  const gridView = useGridViewPreferences(CONTACTS_GRID_VIEW);
   const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -474,8 +478,8 @@ export default function ContactsPage() {
   ], [actionMenu, openActionMenu, openColumnMenu, columnMenuPosition]);
 
   const visibleColumns = useMemo(
-    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
-    [columns, visibleColumnKeys],
+    () => arrangeGridColumns(columns, CONTACTS_GRID_VIEW.columnOptions, gridView.preferences),
+    [columns, gridView.preferences],
   );
 
   function openEditForm(contact: Contact) {
@@ -655,13 +659,13 @@ export default function ContactsPage() {
             columns={visibleColumns}
             rows={sortedContacts}
             rowKeyGetter={(row) => row.id}
-            rowHeight={60}
+            rowHeight={gridView.rowHeight}
             headerRowHeight={52}
             defaultColumnOptions={{ resizable: true, sortable: true }}
             sortColumns={sortColumns}
             onSortColumnsChange={setSortColumns}
             style={{
-              height: Math.min(52 + sortedContacts.length * 60, Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
+              height: Math.min(52 + sortedContacts.length * gridView.rowHeight, Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
               minHeight: 112,
             }}
             renderers={{ noRowsFallback: <div className="contacts-grid-no-rows">No contacts to display.</div> }}
@@ -686,26 +690,13 @@ export default function ContactsPage() {
               <div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div>
               <button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button>
             </header>
-            {[
-              { key: "name", label: "Contact" },
-              { key: "email", label: "Email address" },
-              { key: "phone", label: "Phone number" },
-              { key: "createdAt", label: "Created" },
-              { key: "status", label: "Status" },
-            ].map((column) => (
-              <label className="contacts-column-option" key={column.key}>
-                <input
-                  type="checkbox"
-                  checked={visibleColumnKeys.includes(column.key)}
-                  onChange={(event) => setVisibleColumnKeys((current) => event.target.checked
-                    ? [...current, column.key]
-                    : current.filter((key) => key !== column.key))}
-                />
-                <span>{column.label}</span>
-              </label>
-            ))}
+            <GridColumnOptionList
+              columnOptions={gridView.columnOptions}
+              onVisibilityChange={gridView.setColumnVisible}
+              onMove={gridView.moveColumn}
+            />
             <footer className="contacts-column-menu-footer">
-              <button type="button" onClick={() => setVisibleColumnKeys(["name", "email", "phone", "createdAt", "status"])}>Reset columns</button>
+              <button type="button" onClick={gridView.resetColumns}>Reset columns</button>
               <button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button>
             </footer>
           </section>

@@ -12,8 +12,8 @@
   --properties-border-strong: #cbd7e9;
   --properties-surface: #ffffff;
   --properties-canvas: #f5f7fb;
-  --properties-primary: #5145e5;
-  --properties-primary-hover: #4338ca;
+  --properties-primary: var(--df-primary);
+  --properties-primary-hover: var(--df-primary-hover);
   --properties-primary-soft: #f1efff;
   --properties-success: #18794e;
   --properties-success-soft: #eaf8f0;
@@ -121,13 +121,13 @@
   border-color: var(--properties-primary);
   background: var(--properties-primary);
   color: #ffffff;
-  box-shadow: 0 2px 5px rgb(81 69 229 / 16%);
+  box-shadow: 0 2px 5px rgb(12 102 228 / 16%);
 }
 
 .properties-primary-button:hover:not(:disabled) {
   border-color: var(--properties-primary-hover);
   background: var(--properties-primary-hover);
-  box-shadow: 0 4px 10px rgb(81 69 229 / 20%);
+  box-shadow: 0 4px 10px rgb(12 102 228 / 20%);
   transform: translateY(-1px);
 }
 
@@ -178,7 +178,7 @@
 .properties-modal-backdrop input:focus-visible,
 .properties-modal-backdrop select:focus-visible,
 .properties-modal-backdrop textarea:focus-visible {
-  outline: 3px solid rgb(81 69 229 / 23%);
+  outline: 3px solid rgb(12 102 228 / 23%);
   outline-offset: 2px;
 }
 
@@ -210,7 +210,7 @@
 
 .properties-search-field:focus-within {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 11%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
 .properties-search-field > svg {
@@ -310,7 +310,7 @@
 .properties-form-field select:focus,
 .properties-form-field textarea:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 10%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 10%);
 }
 
 .properties-filter-field select:disabled,
@@ -414,7 +414,7 @@
   --rdg-background-color: #ffffff;
   --rdg-header-background-color: #eff3f9;
   --rdg-row-hover-background-color: #f4f7ff;
-  --rdg-selection-color: rgb(81 69 229 / 12%);
+  --rdg-selection-color: rgb(12 102 228 / 12%);
   --rdg-font-size: 12px;
 
   width: 100%;
@@ -1444,16 +1444,16 @@
 
 /* Keep the primary form action readable, including while a save is in progress. */
 .properties-page .properties-form-actions > .properties-primary-button {
-  border: 1px solid var(--properties-primary, #5145e5) !important;
-  background: var(--properties-primary, #5145e5) !important;
+  border: 1px solid var(--properties-primary, var(--df-primary)) !important;
+  background: var(--properties-primary, var(--df-primary)) !important;
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff;
   opacity: 1;
 }
 
 .properties-page .properties-form-actions > .properties-primary-button:hover:not(:disabled) {
-  border-color: var(--properties-primary-hover, #4338ca) !important;
-  background: var(--properties-primary-hover, #4338ca) !important;
+  border-color: var(--properties-primary-hover, var(--df-primary-hover)) !important;
+  background: var(--properties-primary-hover, var(--df-primary-hover)) !important;
   color: #ffffff !important;
 }
 

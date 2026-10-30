@@ -21,7 +21,11 @@ import {
   type LeadOutcome,
   type LeadStatus,
 } from "../services/leadApi";
+import GridColumnOptionList from "../components/GridColumnOptionList";
 import LeadTimeline from "../components/LeadTimeline";
+import { useGridViewPreferences } from "../hooks/useGridViewPreferences";
+import { LEADS_GRID_VIEW } from "../lib/gridViewConfigs";
+import { arrangeGridColumns } from "../lib/gridViewPreferences";
 import {
   followUpsApi,
   type BulkFollowUpResponse,
@@ -254,16 +258,8 @@ export default function LeadsPage() {
   const [interestFilter, setInterestFilter] = useState<
     "" | LeadInterest
   >("");
-  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["lead", "status", "interest", "nextAction", "createdAt"]);
+  const gridView = useGridViewPreferences(LEADS_GRID_VIEW);
   const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
-
-  useEffect(() => {
-    const updateGridDensity = () => setCompactGrid(window.innerWidth >= 1600);
-    updateGridDensity();
-    window.addEventListener("resize", updateGridDensity, { passive: true });
-    return () => window.removeEventListener("resize", updateGridDensity);
-  }, []);
 
   const [page, setPage] = useState(1);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
@@ -1296,8 +1292,8 @@ async function handleBulkRescheduleFollowUps() {
   ], [contactById, updatingLeadId, saving, handleStatusChange, handleInterestChange, openEditForm, openFollowUps, handleActiveToggle, openColumnMenu, columnMenuPosition]);
 
   const visibleColumns = useMemo(
-    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
-    [columns, visibleColumnKeys],
+    () => arrangeGridColumns(columns, LEADS_GRID_VIEW.columnOptions, gridView.preferences),
+    [columns, gridView.preferences],
   );
 
   return (
@@ -1347,7 +1343,7 @@ async function handleBulkRescheduleFollowUps() {
                 columns={visibleColumns}
                 rows={sortedLeads}
                 rowKeyGetter={(row) => row.id}
-                rowHeight={compactGrid ? 42 : 58}
+                rowHeight={gridView.rowHeight}
                 headerRowHeight={52}
                 defaultColumnOptions={{ resizable: true, sortable: true }}
                 sortColumns={sortColumns}
@@ -1355,10 +1351,10 @@ async function handleBulkRescheduleFollowUps() {
                 onScroll={handleGridScroll}
                 style={{
                   height: Math.min(
-                    52 + sortedLeads.length * (compactGrid ? 42 : 58),
+                    52 + sortedLeads.length * gridView.rowHeight,
                     Math.max(220, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68),
                   ),
-                  minHeight: 52 + Math.min(sortedLeads.length, 1) * (compactGrid ? 42 : 58),
+                  minHeight: 52 + Math.min(sortedLeads.length, 1) * gridView.rowHeight,
                 }}
                 renderers={{
                   noRowsFallback: (
@@ -1401,30 +1397,13 @@ async function handleBulkRescheduleFollowUps() {
           <div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div>
           <button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button>
         </div>
-        {[
-          { key: "lead", label: "Lead / Contact" },
-          { key: "status", label: "Status" },
-          { key: "interest", label: "Interest" },
-          { key: "nextAction", label: "Next follow-up" },
-          { key: "createdAt", label: "Created" },
-        ].map((column) => (
-          <label className="leads-column-option" key={column.key}>
-            <input
-              type="checkbox"
-              checked={visibleColumnKeys.includes(column.key)}
-              onChange={(event) => {
-                setVisibleColumnKeys((current) =>
-                  event.target.checked
-                    ? [...current, column.key]
-                    : current.filter((key) => key !== column.key),
-                );
-              }}
-            />
-            <span>{column.label}</span>
-          </label>
-        ))}
+        <GridColumnOptionList
+          columnOptions={gridView.columnOptions}
+          onVisibilityChange={gridView.setColumnVisible}
+          onMove={gridView.moveColumn}
+        />
         <div className="leads-column-menu-footer">
-          <button type="button" onClick={() => setVisibleColumnKeys(["lead", "status", "interest", "nextAction", "createdAt"])}>Reset columns</button>
+          <button type="button" onClick={gridView.resetColumns}>Reset columns</button>
           <button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button>
         </div>
       </div>

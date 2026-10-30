@@ -309,7 +309,7 @@
   margin: 0 auto 14px;
   place-items: center;
   border-radius: 16px;
-  background: #eef0ff;
+  background: var(--df-primary-soft);
   color: #4f5fcb;
   font-size: 1.5rem;
   font-weight: 800;

@@ -1,38 +1,28 @@
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Activity,
   Bell,
-  Bot,
   Building2,
-  CalendarCheck,
   Check,
   ChevronDown,
-  CircleDollarSign,
-  ClipboardList,
-  ContactRound,
-  FileText,
-  Handshake,
-  LayoutDashboard,
   LogOut,
-  MapPin,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Settings,
   SlidersHorizontal,
-  Upload,
-  UserRound,
-  Users,
-  Workflow,
-  BriefcaseBusiness,
-  BellRing,
   X,
 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAppContext } from "../contexts/useAppContext";
 import "../styles/workspace-layout-responsive.css";
+import dealsfloMark from "../assets/brand/dealsflo-mark.png";
+import GlobalSidebarNav from "./workspace/GlobalSidebarNav";
+import {
+  WORKSPACE_MODULE_LABELS,
+  WORKSPACE_MODULES,
+} from "./workspace/workspaceSpaces";
 import WorkspaceCustomizer from "./workspace/WorkspaceCustomizer";
 import {
   DEFAULT_WORKSPACE_PREFERENCES,
@@ -42,43 +32,7 @@ import {
   type WorkspacePreferences,
 } from "./workspace/workspacePreferences";
 
-const navigation = [
-  { label: "Overview", to: "/", icon: LayoutDashboard },
-  { label: "Leads", to: "/leads", icon: Users },
-  { label: "Contacts", to: "/contacts", icon: ContactRound },
-  { label: "Customers", to: "/customers", icon: UserRound },
-  { label: "Requirements", to: "/requirements", icon: ClipboardList },
-  { label: "Pipeline", to: "/pipeline", icon: Workflow },
-  { label: "Deals", to: "/deals", icon: Handshake },
-  { label: "Properties", to: "/properties", icon: Building2 },
-  { label: "Referrals", to: "/referrals", icon: BriefcaseBusiness },
-  { label: "Site Visits", to: "/site-visits", icon: MapPin },
-  { label: "Follow-ups", to: "/follow-ups", icon: CalendarCheck },
-  { label: "Commissions", to: "/commissions", icon: CircleDollarSign },
-  { label: "Documents", to: "/documents", icon: FileText },
-  { label: "Imports", to: "/imports", icon: Upload },
-  { label: "Automation Rules", to: "/automation-rules", icon: Bot },
-  { label: "Activity", to: "/automation-history", icon: Activity },
-  {
-    label: "Notifications",
-    to: "/notification-preferences",
-    icon: BellRing,
-  },
-  { label: "Settings", to: "/settings", icon: Settings },
-] as const;
-
-const moduleNames = navigation.map((item) => item.label);
-
-function getOrderedNavigation(order: string[]) {
-  const rank = new Map(order.map((label, index) => [label, index]));
-
-  return [...navigation].sort((a, b) => {
-    const aRank = rank.get(a.label) ?? Number.MAX_SAFE_INTEGER;
-    const bRank = rank.get(b.label) ?? Number.MAX_SAFE_INTEGER;
-
-    return aRank - bRank;
-  });
-}
+const moduleNames: string[] = [...WORKSPACE_MODULE_LABELS];
 
 function getInitials(name?: string | null, email?: string | null) {
   const value = name?.trim() || email?.trim() || "U";
@@ -252,24 +206,19 @@ export default function WorkspaceLayout() {
     };
   }, []);
 
-  const orderedNavigation = useMemo(
-    () => getOrderedNavigation(preferences.navigationOrder),
-    [preferences.navigationOrder],
-  );
-
-  const visibleNavigation = orderedNavigation.filter(
-    (item) =>
-      !preferences.hiddenModules.includes(item.label) &&
-      !preferences.pinnedModules.includes(item.label),
-  );
-
-  const pinnedNavigation = orderedNavigation.filter(
-    (item) =>
-      !preferences.hiddenModules.includes(item.label) &&
-      preferences.pinnedModules.includes(item.label),
-  );
-
   const avatar = getInitials(user?.display_name, user?.email);
+
+  function toggleSpace(spaceId: string) {
+    const collapsed = new Set(preferences.collapsedSpaces);
+
+    if (collapsed.has(spaceId)) {
+      collapsed.delete(spaceId);
+    } else {
+      collapsed.add(spaceId);
+    }
+
+    updatePreferences({ ...preferences, collapsedSpaces: [...collapsed] });
+  }
 
   function updatePreferences(next: WorkspacePreferences) {
     setPreferences(next);
@@ -312,7 +261,7 @@ export default function WorkspaceLayout() {
     // Do not imply that results have been searched across the database.
     const normalizedQuery = query.toLowerCase();
 
-    const match = navigation.find(
+    const match = WORKSPACE_MODULES.find(
       (item) =>
         item.label.toLowerCase() === normalizedQuery ||
         item.label.toLowerCase().includes(normalizedQuery),
@@ -343,28 +292,6 @@ export default function WorkspaceLayout() {
     } finally {
       setSigningOut(false);
     }
-  }
-
-  function renderNavigationItem(
-    item: (typeof navigation)[number],
-  ) {
-    const Icon = item.icon;
-
-    return (
-      <NavLink
-        key={item.to}
-        to={item.to}
-        end={item.to === "/"}
-        onClick={() => setSidebarOpen(false)}
-        className={({ isActive }) =>
-          `workspace-nav-link${isActive ? " is-active" : ""}`
-        }
-        title={preferences.sidebarCollapsed ? item.label : undefined}
-      >
-        <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-        <span>{item.label}</span>
-      </NavLink>
-    );
   }
 
   return (
@@ -399,10 +326,6 @@ export default function WorkspaceLayout() {
         aria-label="Workspace sidebar"
       >
         <div className="workspace-brand">
-          <span className="workspace-brand-mark" aria-hidden="true">
-            D
-          </span>
-
           <span className="workspace-brand-copy">
             <strong>Dealsflo</strong>
             <small>Real estate operations</small>
@@ -503,15 +426,12 @@ export default function WorkspaceLayout() {
         </div>
 
         <nav className="workspace-navigation" aria-label="Main navigation">
-          {pinnedNavigation.length > 0 && (
-            <>
-              <span className="workspace-nav-caption">PINNED</span>
-              {pinnedNavigation.map(renderNavigationItem)}
-            </>
-          )}
-
-          <span className="workspace-nav-caption">WORKSPACE</span>
-          {visibleNavigation.map(renderNavigationItem)}
+          <GlobalSidebarNav
+            preferences={preferences}
+            onToggleSpace={toggleSpace}
+            onNavigate={() => setSidebarOpen(false)}
+            iconsOnly={preferences.sidebarCollapsed && !sidebarOpen}
+          />
         </nav>
 
         <div className="workspace-sidebar-tools">
@@ -605,6 +525,13 @@ export default function WorkspaceLayout() {
             )}
           </button>
 
+          <img
+            className="workspace-topbar-logo"
+            src={dealsfloMark}
+            alt=""
+            aria-hidden="true"
+          />
+
           <div className="workspace-topbar-context">
             <span className="workspace-topbar-eyebrow">DEALSFLO</span>
             <span className="workspace-topbar-title">
@@ -686,6 +613,15 @@ export default function WorkspaceLayout() {
                 )}
               </div>
             )}
+
+            <NavLink
+              to="/settings"
+              className="workspace-icon-button"
+              aria-label="Settings"
+              title="Settings"
+            >
+              <Settings size={18} strokeWidth={1.8} aria-hidden="true" />
+            </NavLink>
 
             <button
               type="button"

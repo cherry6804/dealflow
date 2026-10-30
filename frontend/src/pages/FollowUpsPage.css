@@ -121,7 +121,7 @@
 .followups-status {
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  background: #eef2ff;
+  background: var(--df-primary-soft);
   color: #3730a3;
   font-size: 0.8rem;
   font-weight: 600;

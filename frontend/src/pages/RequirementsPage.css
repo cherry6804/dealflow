@@ -28,18 +28,18 @@
   padding: 9px 15px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #5145e5;
+  background: var(--df-primary);
   color: #fff;
   font: inherit;
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgb(81 69 229 / 15%);
+  box-shadow: 0 2px 4px rgb(12 102 228 / 15%);
 }
 
 .site-visits-page .site-visits-primary-button:hover:not(:disabled),
 .requirements-page .requirements-primary-button:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--df-primary-hover);
 }
 
 .site-visits-page .site-visits-primary-button:disabled,
@@ -121,7 +121,7 @@
   width: 18px;
   height: 18px;
   border: 2px solid #d9e2ef;
-  border-top-color: #5145e5;
+  border-top-color: var(--df-primary);
   border-radius: 50%;
   animation: visits-spin .8s linear infinite;
 }
@@ -144,8 +144,8 @@
   --deals-line: #dbe3f0;
   --deals-surface: #fff;
   --deals-page: #f5f7fb;
-  --deals-primary: #5145e5;
-  --deals-primary-hover: #4338ca;
+  --deals-primary: var(--df-primary);
+  --deals-primary-hover: var(--df-primary-hover);
 }
 
 .requirements-page .requirements-header {
@@ -200,7 +200,7 @@
 
 .requirements-search-field:focus-within {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .requirements-search-field>svg {
@@ -345,8 +345,8 @@
   flex: 0 0 34px;
   border: 1px solid #d8e2ff;
   border-radius: 50%;
-  background: #eef2ff;
-  color: #5145e5;
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
 }
 
 .requirements-grid-record-icon svg {
@@ -608,7 +608,7 @@
 .requirements-form-field textarea:focus {
   outline: 0;
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .requirements-form-section-title {
@@ -725,7 +725,7 @@
 
 .requirements-modal .requirements-eyebrow {
   display: inline-block;
-  color: #5145e5;
+  color: var(--df-primary);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -876,7 +876,7 @@
 .requirements-modal .requirements-form-field select:focus,
 .requirements-modal .requirements-form-field textarea:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .requirements-modal .requirements-form-field input:disabled,
@@ -932,15 +932,15 @@
 }
 
 .requirements-modal .requirements-primary-button {
-  border-color: #5145e5;
-  background: #5145e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #ffffff;
-  box-shadow: 0 2px 4px rgb(81 69 229 / 15%);
+  box-shadow: 0 2px 4px rgb(12 102 228 / 15%);
 }
 
 .requirements-modal button.requirements-primary-button:hover:not(:disabled) {
-  border-color: #4338ca;
-  background: #4338ca;
+  border-color: var(--df-primary-hover);
+  background: var(--df-primary-hover);
 }
 
 .requirements-modal .requirements-secondary-button {
@@ -969,7 +969,7 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: #5145e5;
+  color: var(--df-primary);
   font: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -977,7 +977,7 @@
 }
 
 .requirements-modal .requirements-text-button:hover:not(:disabled) {
-  border-color: #e0e7ff;
+  border-color: var(--df-primary-soft);
   background: #f5f6ff;
 }
 
@@ -1489,7 +1489,7 @@
 .requirements-modal .requirements-form-field select:focus,
 .requirements-modal .requirements-form-field textarea:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 11%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
 .requirements-modal .requirements-form-field input:disabled,
@@ -1531,12 +1531,12 @@
   min-height: 38px;
   padding: 8px 13px;
   border-color: transparent;
-  background: #5145e5;
+  background: var(--df-primary);
   color: #ffffff;
 }
 
 .requirements-modal button.requirements-primary-button:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--df-primary-hover);
 }
 
 .requirements-modal button.requirements-secondary-button {

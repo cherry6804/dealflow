@@ -4,8 +4,8 @@
   --contacts-ink: #172b4d;
   --contacts-muted: #64748b;
   --contacts-line: #dbe3f0;
-  --contacts-primary: #5145e5;
-  --contacts-primary-hover: #4338ca;
+  --contacts-primary: var(--df-primary);
+  --contacts-primary-hover: var(--df-primary-hover);
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -75,7 +75,7 @@
 
 .contacts-search-field:focus-within {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .contacts-search-field > svg {
@@ -155,12 +155,12 @@
 .contacts-primary-button {
   background: var(--contacts-primary);
   color: #fff;
-  box-shadow: 0 2px 4px rgb(81 69 229 / 15%);
+  box-shadow: 0 2px 4px rgb(12 102 228 / 15%);
 }
 
 .contacts-primary-button:hover:not(:disabled) {
   background: var(--contacts-primary-hover);
-  box-shadow: 0 4px 10px rgb(81 69 229 / 18%);
+  box-shadow: 0 4px 10px rgb(12 102 228 / 18%);
 }
 
 .contacts-secondary-button {
@@ -196,7 +196,7 @@
 .contacts-action-menu button:focus-visible,
 .contacts-action-menu a:focus-visible,
 .contacts-inline-action:focus-visible {
-  outline: 3px solid rgb(81 69 229 / 22%);
+  outline: 3px solid rgb(12 102 228 / 22%);
   outline-offset: 2px;
 }
 
@@ -459,7 +459,7 @@
   border: 1px solid #dce4ff;
   border-radius: 50%;
   background: #eef1ff;
-  color: #5145e5;
+  color: var(--df-primary);
   font-size: 11px;
   font-weight: 800;
 }
@@ -984,7 +984,7 @@
 
 .contacts-form-field input:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 11%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
 .contacts-form-field input[aria-invalid="true"] {
@@ -1200,18 +1200,18 @@
 /* Primary action: Save contact / Send email */
 
 .contacts-modal-footer .contacts-primary-button {
-  border-color: #4f46e5;
-  background: #4f46e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #ffffff;
-  box-shadow: 0 2px 5px rgb(79 70 229 / 18%);
+  box-shadow: 0 2px 5px rgb(12 102 228 / 18%);
   opacity: 1;
 }
 
 .contacts-modal-footer .contacts-primary-button:hover {
-  border-color: #4338ca;
-  background: #4338ca;
+  border-color: var(--df-primary-hover);
+  background: var(--df-primary-hover);
   color: #ffffff;
-  box-shadow: 0 4px 10px rgb(79 70 229 / 22%);
+  box-shadow: 0 4px 10px rgb(12 102 228 / 22%);
 }
 
 .contacts-modal-footer .contacts-primary-button:active {
@@ -1249,7 +1249,7 @@
 
 .contacts-modal-footer .contacts-primary-button:focus-visible,
 .contacts-modal-footer .contacts-secondary-button:focus-visible {
-  outline: 3px solid rgb(79 70 229 / 28%);
+  outline: 3px solid rgb(12 102 228 / 28%);
   outline-offset: 3px;
 }
 

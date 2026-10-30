@@ -34,6 +34,10 @@ import {
 } from "../services/propertyApi";
 import PaymentMilestonesPanel from "../components/PaymentMilestonesPanel";
 import DealCommissionsPanel from "../components/DealCommissionsPanel";
+import GridColumnOptionList from "../components/GridColumnOptionList";
+import { useGridViewPreferences } from "../hooks/useGridViewPreferences";
+import { DEALS_GRID_VIEW } from "../lib/gridViewConfigs";
+import { arrangeGridColumns } from "../lib/gridViewPreferences";
 
 import "./DealsPage.css";
 
@@ -314,10 +318,9 @@ const [customNegotiationNote, setCustomNegotiationNote] =
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState("");
-  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(["customerProperty", "stage", "expectedValue", "owner", "createdAt"]);
+  const gridView = useGridViewPreferences(DEALS_GRID_VIEW);
   const [columnMenuPosition, setColumnMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
-  const [compactGrid, setCompactGrid] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1600);
 
   const [actionMenu, setActionMenu] = useState<{ deal: Deal; top: number; left: number } | null>(null);
 
@@ -424,13 +427,6 @@ const [transitionError, setTransitionError] = useState("");
   useEffect(() => {
     void loadDeals();
   }, [loadDeals]);
-
-  useEffect(() => {
-    const updateGridDensity = () => setCompactGrid(window.innerWidth >= 1600);
-    updateGridDensity();
-    window.addEventListener("resize", updateGridDensity, { passive: true });
-    return () => window.removeEventListener("resize", updateGridDensity);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1136,8 +1132,8 @@ async function handleStageTransition(deal: Deal) {
   ], [customerById, propertyById, transitioningDealId, closureSaving, openActionMenu, actionMenu, openColumnMenu, columnMenuPosition]);
 
   const visibleColumns = useMemo(
-    () => columns.filter((column) => column.key === "configure" || column.key === "actions" || visibleColumnKeys.includes(column.key)),
-    [columns, visibleColumnKeys],
+    () => arrangeGridColumns(columns, DEALS_GRID_VIEW.columnOptions, gridView.preferences),
+    [columns, gridView.preferences],
   );
 
   return (
@@ -1198,14 +1194,14 @@ async function handleStageTransition(deal: Deal) {
               columns={visibleColumns}
               rows={sortedDeals}
               rowKeyGetter={(row) => row.id}
-              rowHeight={compactGrid ? 48 : 62}
+              rowHeight={gridView.rowHeight}
               headerRowHeight={52}
               defaultColumnOptions={{ resizable: true, sortable: true }}
               sortColumns={sortColumns}
               onSortColumnsChange={setSortColumns}
               style={{
-                height: Math.min(52 + sortedDeals.length * (compactGrid ? 48 : 62), Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
-                minHeight: 52 + Math.min(sortedDeals.length, 1) * (compactGrid ? 48 : 62),
+                height: Math.min(52 + sortedDeals.length * gridView.rowHeight, Math.max(260, (typeof window !== "undefined" ? window.innerHeight : 900) * 0.68)),
+                minHeight: 52 + Math.min(sortedDeals.length, 1) * gridView.rowHeight,
               }}
               renderers={{ noRowsFallback: <div className="deals-grid-no-rows">No deals to display.</div> }}
             />
@@ -1388,19 +1384,8 @@ async function handleStageTransition(deal: Deal) {
         <div className="deals-column-menu-layer" onPointerDown={() => setColumnMenuPosition(null)} role="presentation">
           <div className="deals-column-menu" style={{ top: columnMenuPosition.top, left: columnMenuPosition.left }} role="dialog" aria-label="Configure table columns" onPointerDown={(event) => event.stopPropagation()}>
             <div className="deals-column-menu-heading"><div><strong>Configure columns</strong><span>Choose which fields are visible.</span></div><button type="button" aria-label="Close column configuration" onClick={() => setColumnMenuPosition(null)}>×</button></div>
-            {[
-              { key: "customerProperty", label: "Customer / Property" },
-              { key: "stage", label: "Stage" },
-              { key: "expectedValue", label: "Expected value" },
-              { key: "owner", label: "Owner" },
-              { key: "createdAt", label: "Created" },
-            ].map((column) => (
-              <label className="deals-column-option" key={column.key}>
-                <input type="checkbox" checked={visibleColumnKeys.includes(column.key)} onChange={(event) => setVisibleColumnKeys((current) => event.target.checked ? [...current, column.key] : current.filter((key) => key !== column.key))}/>
-                <span>{column.label}</span>
-              </label>
-            ))}
-            <div className="deals-column-menu-footer"><button type="button" onClick={() => setVisibleColumnKeys(["customerProperty", "stage", "expectedValue", "owner", "createdAt"])}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div>
+            <GridColumnOptionList columnOptions={gridView.columnOptions} onVisibilityChange={gridView.setColumnVisible} onMove={gridView.moveColumn} />
+            <div className="deals-column-menu-footer"><button type="button" onClick={gridView.resetColumns}>Reset columns</button><button type="button" onClick={() => setColumnMenuPosition(null)}>Done</button></div>
           </div>
         </div>, document.body,
       )}

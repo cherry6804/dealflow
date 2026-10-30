@@ -28,18 +28,18 @@
   padding: 9px 15px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #5145e5;
+  background: var(--df-primary);
   color: #fff;
   font: inherit;
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgb(81 69 229 / 15%);
+  box-shadow: 0 2px 4px rgb(12 102 228 / 15%);
 }
 
 .site-visits-page .site-visits-primary-button:hover:not(:disabled),
 .requirements-page .requirements-primary-button:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--df-primary-hover);
 }
 
 .site-visits-page .site-visits-primary-button:disabled,
@@ -121,7 +121,7 @@
   width: 18px;
   height: 18px;
   border: 2px solid #d9e2ef;
-  border-top-color: #5145e5;
+  border-top-color: var(--df-primary);
   border-radius: 50%;
   animation: visits-spin .8s linear infinite;
 }
@@ -144,8 +144,8 @@
   --deals-line: #dbe3f0;
   --deals-surface: #fff;
   --deals-page: #f5f7fb;
-  --deals-primary: #5145e5;
-  --deals-primary-hover: #4338ca;
+  --deals-primary: var(--df-primary);
+  --deals-primary-hover: var(--df-primary-hover);
 }
 
 .site-visits-page .site-visits-header {
@@ -200,7 +200,7 @@
 
 .visits-search-field:focus-within {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .visits-search-field>svg {
@@ -416,13 +416,13 @@
 }
 
 .visits-grid-action-primary {
-  border-color: #5145e5;
-  background: #5145e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #fff;
 }
 
 .visits-grid-action-primary:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--df-primary-hover);
 }
 
 .visits-grid-muted {
@@ -626,7 +626,7 @@
 
 .visits-column-option input,
 .requirements-column-option input {
-  accent-color: #5145e5;
+  accent-color: var(--df-primary);
 }
 
 .visits-column-menu-footer,
@@ -642,7 +642,7 @@
 .requirements-column-menu-footer button {
   border: 0;
   background: transparent;
-  color: #5145e5;
+  color: var(--df-primary);
   font: inherit;
   font-size: 11px;
   font-weight: 650;
@@ -764,7 +764,7 @@
 .site-visits-modal-body textarea:focus {
   outline: 0;
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 @media (max-width:760px) {
@@ -847,7 +847,7 @@
 
 .site-visits-modal .site-visits-eyebrow {
   display: inline-block;
-  color: #5145e5;
+  color: var(--df-primary);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -987,7 +987,7 @@
 .site-visits-modal .site-visits-field select:focus,
 .site-visits-modal .site-visits-field textarea:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 12%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
 .site-visits-modal .site-visits-field input:disabled,
@@ -1033,12 +1033,12 @@
 .site-visits-modal .site-visits-choice-group button.selected {
   border-color: #d5def0;
   background: #ffffff;
-  color: #4338ca;
+  color: var(--df-primary-hover);
   box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
 }
 
 .site-visits-modal .site-visits-choice-group button:hover:not(:disabled) {
-  color: #4338ca;
+  color: var(--df-primary-hover);
 }
 
 .site-visits-modal .site-visits-choice-group button:disabled {
@@ -1092,15 +1092,15 @@
 }
 
 .site-visits-modal button.site-visits-primary-button {
-  border-color: #5145e5;
-  background: #5145e5;
+  border-color: var(--df-primary);
+  background: var(--df-primary);
   color: #ffffff;
-  box-shadow: 0 2px 4px rgb(81 69 229 / 15%);
+  box-shadow: 0 2px 4px rgb(12 102 228 / 15%);
 }
 
 .site-visits-modal button.site-visits-primary-button:hover:not(:disabled) {
-  border-color: #4338ca;
-  background: #4338ca;
+  border-color: var(--df-primary-hover);
+  background: var(--df-primary-hover);
 }
 
 .site-visits-modal button.site-visits-secondary-button {
@@ -1251,8 +1251,8 @@
   --visits-line: #dbe3f0;
   --visits-surface: #ffffff;
   --visits-page: #f5f7fb;
-  --visits-primary: #5145e5;
-  --visits-primary-hover: #4338ca;
+  --visits-primary: var(--df-primary);
+  --visits-primary-hover: var(--df-primary-hover);
   width: 100%;
   min-width: 0;
   padding: 14px 16px 22px;
@@ -1606,7 +1606,7 @@
 .site-visits-modal .site-visits-field select:focus,
 .site-visits-modal .site-visits-field textarea:focus {
   border-color: #8b83ff;
-  box-shadow: 0 0 0 3px rgb(81 69 229 / 11%);
+  box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
 .site-visits-modal .site-visits-field small {
@@ -1661,12 +1661,12 @@
 
 .site-visits-modal button.site-visits-primary-button {
   border-color: transparent;
-  background: #5145e5;
+  background: var(--df-primary);
   color: #ffffff;
 }
 
 .site-visits-modal button.site-visits-primary-button:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--df-primary-hover);
 }
 
 .site-visits-modal button.site-visits-secondary-button {
@@ -1701,7 +1701,7 @@
 .site-visits-modal .site-visits-choice-group button[aria-pressed="true"] {
   border-color: #d9d5ff;
   background: #ffffff;
-  color: #5145e5;
+  color: var(--df-primary);
   box-shadow: 0 1px 2px rgb(24 45 80 / 7%);
 }
 
