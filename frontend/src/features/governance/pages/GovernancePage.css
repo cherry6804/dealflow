@@ -1,0 +1,134 @@
+.governance-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.governance-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.governance-tabs [role="tab"] {
+  padding: 8px 14px;
+  border: 1px solid #c9ced6;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.governance-tabs [role="tab"][aria-selected="true"] {
+  border-color: #1d4ed8;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.governance-tabs [role="tab"]:focus-visible,
+.governance-page button:focus-visible,
+.governance-page input:focus-visible,
+.governance-page select:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.governance-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0 24px;
+}
+
+.governance-table th,
+.governance-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: top;
+}
+
+.governance-group h3 {
+  margin-top: 24px;
+}
+
+.governance-muted {
+  color: #4b5563;
+}
+
+.governance-error {
+  color: #b91c1c;
+  font-weight: 500;
+}
+
+.governance-form {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+  margin: 16px 0;
+}
+
+.governance-checkbox {
+  display: block;
+  margin: 4px 0;
+}
+
+.governance-list li {
+  margin-bottom: 8px;
+}
+
+.governance-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.governance-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(15 23 42 / 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.governance-dialog {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  width: min(480px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.governance-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.governance-primary {
+  background: #1d4ed8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+}
+
+@media (max-width: 640px) {
+  .governance-table thead {
+    display: none;
+  }
+  .governance-table,
+  .governance-table tbody,
+  .governance-table tr,
+  .governance-table td,
+  .governance-table th {
+    display: block;
+    width: 100%;
+  }
+}
