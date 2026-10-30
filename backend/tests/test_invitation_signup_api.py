@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.api import invitation_signup as signup_api
 from app.api import team as team_api
 from app.api.invitation_signup import router as signup_router
+from app.db.models.membership import Membership
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 from app.db.session import get_db_session
@@ -311,3 +312,81 @@ def test_verified_user_can_accept_invitation(monkeypatch) -> None:
         assert invitation is not None
         assert invitation.status == "accepted"
         assert invitation.accepted_by_user_id == user.id
+
+
+def count_memberships_for(user_email: str, organization_id: UUID) -> int:
+    with TestingSessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == user_email))
+        if user is None:
+            return 0
+        return len(
+            db.scalars(
+                select(Membership).where(
+                    Membership.user_id == user.id,
+                    Membership.organization_id == organization_id,
+                )
+            ).all()
+        )
+
+
+def test_revoked_invitation_cannot_be_accepted(monkeypatch) -> None:
+    email = unique_email("revoked-team-accept")
+    invitation_id, token = create_pending_invitation(monkeypatch, email=email)
+    user = create_existing_user(email=email, verified=True)
+
+    with TestingSessionLocal() as db:
+        invitation = db.get(TeamInvitation, invitation_id)
+        assert invitation is not None
+        invitation.status = "revoked"
+        organization_id = invitation.organization_id
+        db.commit()
+
+    app = create_team_test_app(user=user)
+    with TestClient(app) as client:
+        response = client.post(TEAM_ACCEPT_URL, json={"token": token})
+
+    assert response.status_code == 409, response.text
+    assert count_memberships_for(email, organization_id) == 0
+
+
+def test_accepted_invitation_token_cannot_be_reused(monkeypatch) -> None:
+    email = unique_email("reused-team-accept")
+    invitation_id, token = create_pending_invitation(monkeypatch, email=email)
+    user = create_existing_user(email=email, verified=True)
+
+    app = create_team_test_app(user=user)
+    with TestClient(app) as client:
+        first = client.post(TEAM_ACCEPT_URL, json={"token": token})
+        second = client.post(TEAM_ACCEPT_URL, json={"token": token})
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+    with TestingSessionLocal() as db:
+        invitation = db.get(TeamInvitation, invitation_id)
+        assert invitation is not None
+        assert invitation.status == "accepted"
+    assert count_memberships_for(email, UUID(first.json()["organization_id"])) == 1
+
+
+def test_expired_invitation_cannot_be_accepted(monkeypatch) -> None:
+    email = unique_email("expired-team-accept")
+    invitation_id, token = create_pending_invitation(monkeypatch, email=email)
+    user = create_existing_user(email=email, verified=True)
+
+    with TestingSessionLocal() as db:
+        invitation = db.get(TeamInvitation, invitation_id)
+        assert invitation is not None
+        invitation.expires_at = datetime.now(UTC) - timedelta(minutes=5)
+        organization_id = invitation.organization_id
+        db.commit()
+
+    app = create_team_test_app(user=user)
+    with TestClient(app) as client:
+        response = client.post(TEAM_ACCEPT_URL, json={"token": token})
+
+    assert response.status_code == 410, response.text
+    with TestingSessionLocal() as db:
+        invitation = db.get(TeamInvitation, invitation_id)
+        assert invitation is not None
+        assert invitation.status == "expired"
+    assert count_memberships_for(email, organization_id) == 0
