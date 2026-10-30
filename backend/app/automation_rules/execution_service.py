@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import CurrentUserContext
+from app.db.models.audit_event import AuditEvent
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
@@ -20,6 +22,8 @@ from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
 from app.governance.policy import evaluate_capability
 from app.notifications.service import create_notification
+from app.rate_limits.limiter import REASON_RATE_LIMITED, RateLimitDecision, consume_or_deny
+from app.rate_limits.policy import AUTOMATION_DEAL_CREATED_EXECUTION
 
 
 SUPPORTED_CONDITION_FIELDS = {
@@ -267,6 +271,43 @@ def _notify_automation_execution(
     )
 
 
+RATE_LIMIT_EVENT_TYPE = "rate_limit"
+RATE_LIMIT_DENIED_ACTION = "rate_limit.denied"
+
+
+def _record_rate_limit_denial(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID | None,
+    deal: Deal,
+    rate: RateLimitDecision,
+) -> None:
+    """Audit a rate-limit denial. Records the scope and retry time, never a budget or usage figure."""
+    db.add(
+        AuditEvent(
+            user_id=actor_user_id,
+            organization_id=organization_id,
+            event_type=RATE_LIMIT_EVENT_TYPE,
+            action=RATE_LIMIT_DENIED_ACTION,
+            decision="denied",
+            permission_key=None,
+            resource_type="deal",
+            resource_id=str(deal.id),
+            correlation_id=str(uuid4()),
+            event_metadata=json.dumps(
+                {
+                    "execution_type": rate.execution_type,
+                    "scope": rate.scope,
+                    "limit": rate.limit,
+                    "retry_after_seconds": rate.retry_after_seconds,
+                },
+                separators=(",", ":"),
+            ),
+        )
+    )
+
+
 def execute_deal_created_automations(
     db: Session,
     *,
@@ -312,6 +353,29 @@ def execute_deal_created_automations(
             .order_by(AutomationRule.created_at, AutomationRule.id)
         ).all()
     )
+    if not rules:
+        return []
+
+    # Rate-limit gate (E13 hardening). Runs after the policy gate, so a request denied by policy
+    # uses no rate budget. One attempt is consumed per deal event, for the organization and the
+    # acting user. A denial creates no executions and leaves the deal untouched.
+    actor_user_id = user_context.user.id if user_context is not None else None
+    rate = consume_or_deny(
+        db,
+        organization_id=organization_id,
+        execution_type=AUTOMATION_DEAL_CREATED_EXECUTION,
+        actor_user_id=actor_user_id,
+    )
+    if not rate.allowed:
+        if rate.reason_code == REASON_RATE_LIMITED:
+            _record_rate_limit_denial(
+                db,
+                organization_id=organization_id,
+                actor_user_id=actor_user_id,
+                deal=deal,
+                rate=rate,
+            )
+        return []
 
     executions: list[AutomationExecution] = []
 

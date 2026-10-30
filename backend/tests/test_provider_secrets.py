@@ -39,7 +39,7 @@ from app.provider_secrets.errors import (
 )
 from app.provider_secrets.key_provider import build_key_provider
 from app.provider_secrets.redaction import REDACTED, ProviderSecret
-from tests.test_team_api import TestingSessionLocal, create_manager
+from tests.test_team_api import TestingSessionLocal, create_manager, create_owner_manager
 
 BASE = "/api/v1/provider-credentials"
 PROVIDER = "openai"
@@ -256,7 +256,7 @@ def test_malformed_keyring_fails_closed(monkeypatch, keyring_value: str) -> None
 
 
 def test_create_without_key_writes_nothing(monkeypatch, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     def no_keyring():
         raise ProviderSecretsConfigurationError("Provider secrets keyring is not configured.")
@@ -282,7 +282,7 @@ def test_create_without_key_writes_nothing(monkeypatch, cleanup) -> None:
 
 
 def test_create_stores_ciphertext_and_backend_retrieval_returns_the_secret(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     secret = _secret()
 
@@ -300,7 +300,7 @@ def test_create_stores_ciphertext_and_backend_retrieval_returns_the_secret(keyri
 
 
 def test_plaintext_is_never_persisted_in_any_column_or_audit_record(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     secret = _secret()
 
@@ -321,7 +321,7 @@ def test_plaintext_is_never_persisted_in_any_column_or_audit_record(keyring, cle
 
 
 def test_rotation_replaces_the_secret_and_increments_the_version(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     old_secret, new_secret = _secret(), _secret()
 
@@ -343,7 +343,7 @@ def test_rotation_replaces_the_secret_and_increments_the_version(keyring, cleanu
 
 
 def test_revocation_destroys_ciphertext_and_blocks_retrieval(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
 
     with SessionLocal() as db:
@@ -371,7 +371,7 @@ def test_revocation_destroys_ciphertext_and_blocks_retrieval(keyring, cleanup) -
 
 
 def test_only_one_active_credential_per_provider(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
 
     with SessionLocal() as db:
@@ -384,8 +384,8 @@ def test_only_one_active_credential_per_provider(keyring, cleanup) -> None:
 
 
 def test_cross_organization_access_is_denied(keyring, cleanup) -> None:
-    owner, org_a = create_manager(permissions=("provider_credentials.manage",))
-    _, org_b = create_manager(permissions=("provider_credentials.manage",))
+    owner, org_a = create_owner_manager(permissions=("provider_credentials.manage",))
+    _, org_b = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.extend([org_a.id, org_b.id])
 
     with SessionLocal() as db:
@@ -406,7 +406,7 @@ def test_cross_organization_access_is_denied(keyring, cleanup) -> None:
 
 
 def test_unsupported_provider_and_invalid_secret_are_refused(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     leaked = "has space sk-leak"
 
@@ -432,7 +432,7 @@ def test_unsupported_provider_and_invalid_secret_are_refused(keyring, cleanup) -
 
 
 def test_audit_records_create_rotate_and_revoke_without_the_secret(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     secret = _secret()
 
@@ -520,7 +520,7 @@ def _app_for(user) -> FastAPI:
 
 
 def test_api_create_returns_metadata_and_never_the_secret(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
     cleanup.append(organization.id)
     secret = _secret()
 
@@ -562,7 +562,7 @@ def test_api_listing_requires_the_read_permission(keyring, cleanup) -> None:
 
 
 def test_api_validation_error_does_not_echo_the_secret(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     marker = f"sk-marker-{uuid.uuid4().hex}"
 
@@ -576,8 +576,8 @@ def test_api_validation_error_does_not_echo_the_secret(keyring, cleanup) -> None
 
 
 def test_api_cross_organization_rotate_and_revoke_return_not_found(keyring, cleanup) -> None:
-    owner, org_a = create_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
-    other, org_b = create_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
+    owner, org_a = create_owner_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
+    other, org_b = create_owner_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
     cleanup.extend([org_a.id, org_b.id])
 
     with TestClient(_app_for(owner)) as client:
@@ -597,7 +597,7 @@ def test_api_fails_closed_without_key_configuration(monkeypatch, cleanup) -> Non
     monkeypatch.delenv("PROVIDER_SECRETS_KEYRING", raising=False)
     monkeypatch.delenv("PROVIDER_SECRETS_ACTIVE_KEY_ID", raising=False)
     get_settings.cache_clear()
-    user, organization = create_manager(permissions=("provider_credentials.manage",))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     try:
         with TestClient(_app_for(user)) as client:
@@ -616,7 +616,7 @@ def test_api_fails_closed_without_key_configuration(monkeypatch, cleanup) -> Non
 
 
 def test_api_revoke_clears_the_secret_and_reports_status(keyring, cleanup) -> None:
-    user, organization = create_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
+    user, organization = create_owner_manager(permissions=("provider_credentials.manage", "provider_credentials.read"))
     cleanup.append(organization.id)
 
     with TestClient(_app_for(user)) as client:

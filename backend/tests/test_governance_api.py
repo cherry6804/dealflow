@@ -16,7 +16,7 @@ from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.db.session import SessionLocal, get_db_session
 from app.governance.capabilities import AUTOMATION_MASTER
-from tests.test_team_api import TestingSessionLocal, create_manager
+from tests.test_team_api import TestingSessionLocal, create_manager, create_owner_manager
 
 BASE = "/api/v1/governance/capabilities"
 
@@ -96,7 +96,7 @@ def test_changing_a_capability_requires_the_manage_permission(cleanup) -> None:
 
 
 def test_change_requires_explicit_confirmation(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
 
     with TestClient(_app_for(user)) as client:
@@ -111,7 +111,7 @@ def test_change_requires_explicit_confirmation(cleanup) -> None:
 
 
 def test_unknown_capability_returns_not_found(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
 
     with TestClient(_app_for(user)) as client:
@@ -124,7 +124,7 @@ def test_unknown_capability_returns_not_found(cleanup) -> None:
 
 
 def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
-    user, organization = create_manager(
+    user, organization = create_owner_manager(
         permissions=("governance.capabilities.manage", "governance.capabilities.read")
     )
     cleanup.append(organization.id)
@@ -165,7 +165,7 @@ def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
 
 
 def test_settings_of_one_organization_cannot_be_changed_with_another_tenant(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
     _, other_organization = create_manager(permissions=())
     cleanup.append(other_organization.id)
