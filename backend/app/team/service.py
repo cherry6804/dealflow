@@ -62,7 +62,7 @@ DEFAULT_ROLE_TEMPLATES: dict[str, tuple[str, ...]] = {
     "DealFlow Owner": OWNER_ROLE_PERMISSION_KEYS,
     "Admin": tuple(
         key for key, _ in PERMISSION_CATALOG
-        if key not in {"organization.roles.manage", "billing.audit.read"}
+        if key not in {"organization.roles.manage", "billing.audit.read", "provider_credentials.manage"}
     ),
     "Manager": (
         "contacts.create", "contacts.read", "contacts.update",

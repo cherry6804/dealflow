@@ -5,6 +5,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.provider_secrets.redaction import REDACTED, SENSITIVE_FIELD_NAMES
+
 
 def _error_response(
     status_code: int,
@@ -56,12 +58,21 @@ async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    """Handle request validation errors consistently."""
+    """Handle request validation errors consistently.
+
+    Submitted values of sensitive fields are replaced before they reach the response.
+    """
+    details = []
+    for error in exc.errors():
+        location = error.get("loc", ())
+        if any(str(part) in SENSITIVE_FIELD_NAMES for part in location):
+            error = {**error, "input": REDACTED}
+        details.append(error)
     return _error_response(
         status_code=422,
         code="VALIDATION_ERROR",
         message="Request validation failed.",
-        details=jsonable_encoder(exc.errors()),
+        details=jsonable_encoder(details),
     )
 
 
