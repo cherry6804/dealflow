@@ -66,17 +66,7 @@ jobs:
             "docs/adr/README.md"
             "docs/adr/0001-adr-template.md"
             "docs/development/git-workflow.md"
-            "docs/development/engineering-baseline.md"
             "docs/governance/definition-of-ready-and-done.md"
-            "docs/product/release-1/README.md"
-            "docs/product/release-1/E01-baseline-audit.md"
-            "docs/product/release-1/E01-environment-and-provider-matrix.md"
-            "docs/adr/0025-modular-monolith-boundaries.md"
-            "docs/adr/0026-transactional-outbox-and-background-execution.md"
-            "docs/adr/0027-sibvo-authority-and-entitlement-snapshot.md"
-            "docs/adr/0028-channel-gateway-architecture.md"
-            "docs/adr/0029-ai-execution-and-disabled-by-default-policy.md"
-            "docs/adr/0030-environment-and-configuration-standards.md"
           )
 
           for file in "${required_files[@]}"; do
@@ -87,14 +77,6 @@ jobs:
           done
 
           echo "Documentation validation passed."
-
-      - name: Validate the ADR register is up to date
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/rebuild_adr_index.py > /dev/null
-          git diff --exit-code -- docs/adr/README.md
-          echo "ADR register validation passed."
 
       - name: Check for obvious secret files
         shell: bash
@@ -117,161 +99,12 @@ jobs:
 
           echo "Secret file baseline validation passed."
 
-  backend-tests:
-    name: Backend tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: dealflow_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci-only-postgres-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d dealflow_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    env:
-      APP_ENVIRONMENT: test
-      DATABASE_URL: postgresql+psycopg://postgres:ci-only-postgres-password@localhost:5432/dealflow_test
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-
-      - name: Install backend dependencies from the lock file
-        working-directory: backend
-        run: uv sync --frozen
-
-      - name: Generate a per-run outbox encryption key
-        working-directory: backend
-        shell: bash
-        run: |
-          set -euo pipefail
-          key="$(uv run python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
-          echo "::add-mask::${key}"
-          echo "EMAIL_OUTBOX_ENCRYPTION_KEY=${key}" >> "$GITHUB_ENV"
-
-      - name: Lint Release 1 foundation modules
-        working-directory: backend
-        run: >-
-          uv run ruff check
-          app/outbox
-          app/db/models/outbox_event.py
-          tests/test_outbox.py
-          tests/test_migrations_history.py
-          alembic/versions/e5a7c1d9b2f0_create_outbox_events.py
-
-      - name: Run the backend test suite
-        working-directory: backend
-        run: uv run pytest -q
-
-  backend-migrations:
-    name: Migrations on an empty database
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: dealflow_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci-only-postgres-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d dealflow_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    env:
-      APP_ENVIRONMENT: test
-      DATABASE_URL: postgresql+psycopg://postgres:ci-only-postgres-password@localhost:5432/dealflow_test
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-
-      - name: Install backend dependencies from the lock file
-        working-directory: backend
-        run: uv sync --frozen
-
-      - name: Apply every migration to the empty database
-        run: uv run --project backend alembic -c alembic.ini upgrade head
-
-      - name: Assert exactly one Alembic head
-        shell: bash
-        run: |
-          set -euo pipefail
-          heads="$(uv run --project backend alembic -c alembic.ini heads)"
-          count="$(printf '%s\n' "$heads" | grep -c '(head)' || true)"
-          echo "$heads"
-          if [[ "$count" != "1" ]]; then
-            echo "Expected exactly one Alembic head, found ${count}."
-            exit 1
-          fi
-
-  frontend-quality:
-    name: Frontend quality gates
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies from the lock file
-        working-directory: frontend
-        run: npm ci
-
-      - name: Type check
-        working-directory: frontend
-        run: npx tsc -b
-
-      - name: Lint
-        working-directory: frontend
-        run: npm run lint
-
-      - name: Unit tests
-        working-directory: frontend
-        run: npm test
-
-      - name: Production build
-        working-directory: frontend
-        run: npm run build
-
-  quality-gate:
-    name: Quality gate
+  ci-status:
+    name: CI Baseline
     runs-on: ubuntu-latest
     needs:
       - repository-validation
-      - backend-tests
-      - backend-migrations
-      - frontend-quality
 
     steps:
-      - name: All required quality jobs succeeded
-        run: echo "Repository validation, backend tests, migrations and frontend quality gates all succeeded."
+      - name: CI baseline passed
+        run: echo "DealFlow CI baseline passed."

@@ -86,10 +86,3 @@ coverage/
 # OS-specific local files
 .DS_Store
 Thumbs.db
-
-# Private runtime uploads and object storage
-/var/private_objects/
-/var/private_uploads/
-
-/backend/var/private_mailbox/
-/var/private_mailbox/

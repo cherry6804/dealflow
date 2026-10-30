@@ -1,1 +1,0 @@
-"""Customer requirement application package."""
