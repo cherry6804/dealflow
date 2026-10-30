@@ -1,1 +1,0 @@
-"""Property domain services and schemas for DealFlow."""
