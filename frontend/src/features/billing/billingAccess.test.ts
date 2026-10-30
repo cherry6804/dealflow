@@ -105,6 +105,6 @@ describe("display helpers", () => {
         limit_value: 10,
         limit_unit: "runs",
       }),
-    ).toBe("workflow automation (up to 10 runs)");
+    ).toBe("workflow automation (SIBVO limit 10 runs; not enforced in Dealsflo)");
   });
 });

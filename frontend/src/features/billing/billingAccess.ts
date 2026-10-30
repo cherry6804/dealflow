@@ -78,11 +78,15 @@ export function summarizeSeats(seats: SibvoSeats): SeatSummary {
   };
 }
 
+/**
+ * Describe an included feature. A limit is shown as SIBVO's catalog value, with an
+ * explicit note that Dealsflo does not enforce it. No limit is presented as enforced.
+ */
 export function formatEntitlement(item: SibvoEntitlement): string {
   const name = item.feature_key.replace(/_/g, " ");
   if (item.limit_value === null) {
     return name;
   }
   const unit = item.limit_unit ? ` ${item.limit_unit}` : "";
-  return `${name} (up to ${item.limit_value}${unit})`;
+  return `${name} (SIBVO limit ${item.limit_value}${unit}; not enforced in Dealsflo)`;
 }

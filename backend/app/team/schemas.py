@@ -71,11 +71,23 @@ class TeamMemberRoleUpdateRequest(BaseModel):
     role_id: UUID
 
 
+class TeamMemberRemovalRequest(BaseModel):
+    """Optional reason recorded with the removal."""
+
+    reason: str = Field(default="", max_length=500)
+
+
 class TeamMemberRemovalResponse(BaseModel):
-    """Result of deactivating an organization membership."""
+    """Result of removing a team member after SIBVO confirmed the seat outcome.
+
+    `seat_outcome` is one of released, already_released, not_held or not_linked.
+    A removal is never reported unless SIBVO confirmed it (or the member is not linked).
+    """
 
     membership_id: UUID
     is_active: bool
+    seat_outcome: str
+    already_removed: bool = False
     message: str
 
 

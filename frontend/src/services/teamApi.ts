@@ -68,9 +68,18 @@ export interface TeamRoleUpdateInput {
   permission_keys?: string[];
 }
 
+/** SIBVO's answer about the member's Dealsflo seat. Only confirmed outcomes are reported. */
+export type RemovalSeatOutcome =
+  | "released"
+  | "already_released"
+  | "not_held"
+  | "not_linked";
+
 export interface TeamMemberRemovalResponse {
   membership_id: string;
   is_active: boolean;
+  seat_outcome: RemovalSeatOutcome;
+  already_removed: boolean;
   message: string;
 }
 
@@ -138,9 +147,11 @@ export const teamApi = {
 
   removeMember(
     membershipId: string,
+    reason = "",
   ): Promise<TeamMemberRemovalResponse> {
     return api.post<TeamMemberRemovalResponse>(
       `/team/members/${membershipId}/remove`,
+      { reason },
     );
   },
 

@@ -1,135 +1,175 @@
 # SIBVO and Dealsflo entitlement, seat and usage contract
 
 - **Epic:** DFR1-E12, SIBVO Identity, Entitlement, Seat & Billing Integration
-- **Stories:** DFR1-004, DFR1-005, DFR1-053 (partial, see section 8)
+- **Stories:** DFR1-004, DFR1-005, DFR1-053 (partial, see section 10)
 - **Authority:** ADR-0027 (Proposed). This document records the contract as implemented on the E12 branches.
 - **Related:** `docs/architecture/sibvo-dealsflo-sso-contract.md`
-- **Repositories:** SIBVO (`backend/app/modules/identity/sso_router.py`, `backend/app/modules/entitlements/seat_service.py`) and Dealsflo (`backend/app/integrations/sibvo_client.py`, `backend/app/billing/entitlements.py`, `backend/app/auth/dependencies.py`, `backend/app/api/auth.py`).
+- **Repositories:**
+  - SIBVO: `backend/app/modules/identity/sso_router.py` (endpoints), `backend/app/modules/entitlements/seat_service.py` (seat rules), `backend/app/modules/billing/upgrade_requests.py` (plan changes), `backend/scripts/seed_e12_integration.py` (test seed).
+  - Dealsflo: `backend/app/integrations/sibvo_client.py` (the only SIBVO client), `backend/app/team/member_removal.py` (team removal), `backend/app/billing/entitlements.py`, `backend/app/auth/dependencies.py`, `backend/app/api/auth.py`, `backend/app/api/team.py`.
 
 ## 1. Ownership
 
 SIBVO owns identity, organizations, memberships, product membership, plans,
 subscriptions, trials, entitlements, seats and billing.
 
-Dealsflo owns its CRM records, its product roles and permissions, and its
-product usage events. Dealsflo never keeps a seat counter, never grants
-subscription access, and never computes SIBVO seat entitlements.
+Dealsflo owns its CRM records, its product roles and permissions, its own team
+membership rows, and its product usage events. Dealsflo never keeps a seat
+counter, never grants subscription access, and never computes SIBVO seat
+entitlements.
 
 ## 2. Service-to-service endpoints
 
-Both endpoints are `POST` form requests to SIBVO under `/api/v1/sso`, authenticated with
-Dealsflo's confidential client credentials (HTTP Basic). Both are read-only.
+All calls are `POST` form requests to SIBVO under `/api/v1/sso`, authenticated with
+Dealsflo's confidential client credentials (HTTP Basic). The client ID and secret
+are configured in SIBVO (`SSO_DEALSFLO_CLIENT_ID`, `SSO_DEALSFLO_CLIENT_SECRET`)
+and in Dealsflo (`SSO_DEALSFLO_CLIENT_ID`, `SSO_DEALSFLO_CLIENT_SECRET`).
 
-| Endpoint | Purpose | Denial |
-|---|---|---|
-| `/sso/introspect` | Access snapshot for a session | `{"active": false}` |
-| `/sso/seat-usage` | Seat capacity for the Dealsflo product | `{"active": false}` |
+| Endpoint | Purpose | Retry | Result on denial |
+|---|---|---|---|
+| `/sso/introspect` | Access snapshot for a session | safe (read) | `{"active": false}` |
+| `/sso/seat-usage` | Seat capacity for the Dealsflo product (owners) | safe (read) | `{"active": false}` |
+| `/sso/product-seats/release` | Revoke a removed member's Dealsflo product membership and release the seat | safe (idempotent state change, `idempotency_key`) | 403 or 409 with `{"error_code": ...}` |
 
-A denial never says which check failed. Client authentication failure returns 401.
+A read denial never says which check failed. Client authentication failure returns 401 on
+every endpoint. Dealsflo's health check uses SIBVO's public `GET /api/v1/ready`.
 
-### 2.1 Access snapshot (`/sso/introspect`)
+### 2.1 Access snapshot
 
-When access is granted, SIBVO returns `active: true` with:
+When access is granted, SIBVO returns `active: true` with `organization_id`,
+`product_key`, `subscription_status`, `plan_version_id`, `product_role` and `entitlements`
+(`feature_key`, `enabled`, `limit_value`, `limit_unit`).
 
-| Field | Meaning |
-|---|---|
-| `organization_id` | SIBVO organization the snapshot authorizes |
-| `product_key` | Product the snapshot authorizes (must equal Dealsflo's `SSO_DEALSFLO_PRODUCT_KEY`) |
-| `subscription_status` | SIBVO subscription status |
-| `plan_version_id` | Plan version in force |
-| `product_role` | Product role |
-| `entitlements` | `feature_key`, `enabled`, `limit_value`, `limit_unit` per feature |
+Dealsflo validates every revalidation. The snapshot's organization must equal the
+session's SIBVO organization, and its product must equal `sso_dealsflo_product_key`.
+A missing or mismatched binding, or a malformed response, fails closed with 503, and
+the stored snapshot is not replaced. `active: false` revokes the Dealsflo session.
+Feature checks for attested sessions require the session's organization to equal the
+requested organization, then read only the stored snapshot.
 
-Dealsflo validates every revalidation:
+Revalidation runs when the stored snapshot is older than `SSO_REVALIDATION_INTERVAL_SECONDS`
+(default 30, range 5–300). That interval is the maximum staleness of a revocation.
 
-- The snapshot's `organization_id` must equal the session's SIBVO organization.
-- The snapshot's `product_key` must equal `sso_dealsflo_product_key`.
-- The entitlement shape must be valid.
-- A missing or mismatched binding, or a malformed response, fails closed with 503. The stored snapshot is not replaced.
-- `active: false` revokes the Dealsflo session.
-- Feature checks for an attested session require the session's organization to equal the requested organization, then read only the stored snapshot.
+### 2.2 Seat capacity
 
-Revalidation runs when the stored snapshot is older than
-`SSO_REVALIDATION_INTERVAL_SECONDS` (default 30, range 5–300). That interval is
-the maximum staleness of a revocation.
+Returned when the caller is an active product owner with a valid subscription:
+`seat_limit` (null when not seat-based), `allocated` (active product memberships),
+`reserved` (pending, unexpired invitations for the product), `available`
+(`seat_limit - allocated - reserved`, floored at 0, null when unlimited).
 
-### 2.2 Seat capacity (`/sso/seat-usage`)
+Dealsflo exposes it as `GET /api/v1/auth/sibvo-seats`. The endpoint requires an attested
+session (404 otherwise), shows capacity to product owners only (403 otherwise), and calls
+SIBVO only with identifiers bound to the session. It returns 403 when SIBVO denies, and
+503 when SIBVO is unavailable or returns a malformed or mis-bound body.
 
-SIBVO returns, when the caller is an active product owner with a valid subscription:
+### 2.3 Product seat release (removal)
 
-| Field | Meaning |
-|---|---|
-| `organization_id`, `product_key` | Binding, checked by Dealsflo |
-| `seat_limit` | Plan version's `max_seats`, or `null` when the plan is not seat-based |
-| `allocated` | Active product memberships |
-| `reserved` | Pending, unexpired organization invitations for the product |
-| `available` | `seat_limit - allocated - reserved`, floored at 0; `null` when unlimited |
+Used only by Dealsflo's team removal (section 3). The request carries the acting
+administrator's SIBVO subject, session and organization, the target member's subject, an
+optional reason (max 500 characters) and an idempotency key. Dealsflo derives the key from
+the membership ID (`team-removal-<membership id>`), so every retry of the same removal uses
+the same key.
 
-Dealsflo exposes it as `GET /api/v1/auth/sibvo-seats`. The endpoint:
+Result on success: `{"released": true, "already_released": false, "reason": "released"}`.
+A repeat returns `already_released: true`. A member with no Dealsflo seat returns
+`{"released": false, "reason": "not_held"}`.
 
-- requires an attested session (404 otherwise);
-- shows capacity to product owners only, using the snapshot's `product_role` (403 otherwise);
-- calls SIBVO with the identifiers bound to the session, never client input;
-- returns 403 when SIBVO denies, and 503 when SIBVO is unavailable or returns a malformed or mis-bound body.
+Refusals: `403 actor_not_authorized` (the actor is not an active owner, the session is
+invalid or expired, or the actor targets themself); `409 last_owner_or_owner_seat` (the
+target holds an owner seat, which removal never releases).
 
-The Dealsflo client (`app/integrations/sibvo_client.py`) applies a timeout, one retry for
-connection errors, timeouts and server errors, normalized errors, and an
-`X-Correlation-ID` per call. It does not retry 401, does not log secrets or identity values,
-and rejects a body whose organization, product, counts or limit have the wrong shape.
+**Boundary.** This endpoint changes only the Dealsflo product membership, by setting its
+status to `suspended`. It never changes the organization membership or the global SIBVO
+identity. It does not depend on the subscription status, so a lapsed plan can still remove
+members. The audit event records the actor, organization, target product membership, reason
+and idempotency key.
 
-## 3. Seat lifecycle (SIBVO is the only seat authority)
+## 3. Team removal lifecycle (Dealsflo)
 
-Seats are counted in SIBVO by `count_seats`: allocated = active product memberships;
+Endpoint: `POST /api/v1/team/members/{membership_id}/remove` with optional body `{"reason": "..."}`.
+Requires `organization.members.manage`.
+
+Sequence, chosen so a failure never reports success:
+
+1. Lock the Dealsflo membership and apply the removal rules: an administrator cannot remove
+   themself, owners cannot be removed (the last owner is refused, and owner memberships are
+   refused).
+2. If the member has a SIBVO identity link and the organization has a SIBVO link, call
+   `/sso/product-seats/release` with the signed-in administrator's SIBVO identifiers. The
+   administrator must be SIBVO-attested in the linked organization (403 otherwise).
+   Nothing local changes until SIBVO answers.
+3. Only after SIBVO confirms: deactivate the Dealsflo membership, revoke the member's
+   sessions in this organization, write a `team_member_removals` row (actor, organization,
+   membership, affected user, reason, seat outcome, timestamp), and write the authorization
+   audit event `team.member.removed`. Then commit.
+
+Responses:
+
+| Condition | HTTP | Member state | Message |
+|---|---|---|---|
+| Removed; SIBVO released the seat | 200 | inactive | "Member removed. SIBVO confirmed the seat." |
+| Removed; member not linked to SIBVO | 200 | inactive | `seat_outcome: not_linked` |
+| Already removed; SIBVO confirms (retry) | 200 | inactive | `already_removed: true` |
+| SIBVO unavailable, rejected or malformed | 503 | **still active** | "SIBVO did not confirm the removal…" |
+| SIBVO refuses the actor | 403 | still active | "SIBVO did not authorize this removal." |
+| Owner seat or last owner | 409 | still active | Server reason |
+
+Retries are safe. A failed attempt changes nothing, so a retry starts clean. If the local
+commit fails after SIBVO released the seat, a retry gets `already_released` from SIBVO and
+completes the local removal.
+
+Authorization after removal: the member's Dealsflo sessions are revoked immediately. Their
+SIBVO product membership is suspended, so SIBVO's introspection returns `active: false` for
+any remaining session, and the session is revoked at its next revalidation.
+
+Frontend (`TeamAccessPage`): shows a pending notice while the request runs, a success
+message that states what SIBVO confirmed, and a failure message that never says the member
+was removed unless SIBVO confirmed it.
+
+## 4. Seat lifecycle (SIBVO is the only seat authority)
+
+Seats are counted by SIBVO's `count_seats`: allocated = active product memberships;
 reserved = pending, unexpired invitations for the product. Every operation that changes seat
 usage takes the subscription row lock (`SELECT ... FOR UPDATE`), so two requests cannot both
-take the last seat. A PostgreSQL concurrency test covers this, and a mutation check confirms
-the test fails when the lock is removed (`backend/tests/test_seat_concurrency.py`).
-
-Consumption points, as implemented in SIBVO:
+take the last seat.
 
 | Lifecycle event | Seat effect | Where |
 |---|---|---|
 | Invitation created (product invitation) | **Reserves** a seat. Rejected when allocated + reserved ≥ limit | `reserve_invitation_seat` |
-| Invitation accepted | **Allocates** the reserved seat. Rejected when allocated ≥ limit, excluding its own reservation. Idempotent if the user already holds an active seat | `allocate_invitation_seat` |
+| Invitation accepted | **Allocates** the reserved seat. Rejected when allocated ≥ limit, excluding its own reservation. Idempotent for an active seat | `allocate_invitation_seat` |
 | Membership activated by an owner (direct assignment) | **Allocates**. Rejected for duplicates and when full | `assign_product_member` |
-| Organization membership deactivated | **No flow exists in SIBVO.** Nothing releases the seat | Gap, see section 3.1 |
-| Product membership removed | **Releases** (status `suspended`). The last active owner cannot be removed | `release_product_seat` |
-| Invitation expired | Stops counting as a reservation (`expires_at` check). Status set to `expired` by the invitation service | `count_seats` |
-| Invitation revoked | Stops counting as a reservation (status `revoked`) | `count_seats` |
-| Subscription downgrade | **No downgrade path exists.** Plan changes come only from upgrade-request activation | Gap, see section 3.1 |
-| Seat limit change | Limit is the plan version's `max_seats`. It changes only with a new version through activation | `seat_limit` |
+| Dealsflo team removal | **Releases** the product seat (status `suspended`) after SIBVO confirms (section 3) | `release_seat_for_removed_member` |
+| Product membership removed by an owner | **Releases** (status `suspended`). The last active owner cannot be removed | `release_product_seat` |
+| Organization membership deactivated | **No SIBVO flow exists.** See gap 1 | Gap |
+| Invitation expired or revoked | Stops counting as a reservation | `count_seats` |
+| Plan activation (upgrade or downgrade) | **Checked**: allocated + reserved must fit the purchased seat count, capped by the target plan's `max_seats`. Rejected with `seat_capacity_insufficient` and the counts. The subscription row is locked first | `activate` |
 
-### 3.1 Gaps that must be decided before seat enforcement is complete
+### 4.1 Plan activation: capacity check
+
+`activate` (upgrade or downgrade) counts allocated seats and pending reservations under the
+subscription lock. Capacity is `request.seat_count`, reduced to the target plan's `max_seats`
+when the plan is seat-based. If `allocated + reserved` exceeds that capacity, activation is
+refused with HTTP 409 and the message "Seat usage (N) exceeds the seats available on this
+plan (M)…". Expired, revoked and accepted invitations are not counted.
+
+Concurrency is covered by a PostgreSQL test. A reservation holds the subscription lock, an
+activation waits for it, and the activation then sees the reservation. Removing the
+activation's lock makes that test fail, which was confirmed by a mutation check
+(`backend/tests/test_seat_concurrency.py`).
+
+### 4.2 Remaining seat gaps (blockers for complete seat enforcement)
 
 1. **Organization membership deactivation has no SIBVO flow.** No code path sets
-   `OrganizationMembership.status` to anything but `active`. A removed member's product seat
-   is therefore never released automatically. Required: a SIBVO flow that suspends the
-   product membership and releases the seat when an organization membership ends.
-2. **Upgrade activation ignores pending reservations.** `activate_upgrade_request` checks
-   `allocated > request.seat_count` and does not count `reserved`. A pending invitation can
-   therefore exceed the purchased seat count after activation. Required: include `reserved`
-   in that check, or define that acceptance re-checks the new limit (acceptance already does).
-3. **Subscription downgrade is not implemented.** If a downgrade path is added, it must run
-   the same allocated-plus-reserved check against the lower limit before it takes effect.
+   `OrganizationMembership.status` to anything but `active`. Removal in Dealsflo covers the
+   Dealsflo product membership only. An organization-level deactivation needs its own SIBVO
+   decision, because it also affects the global identity boundary.
+2. **Subscription downgrade is available only through plan activation** (section 4.1). There is
+   no separate downgrade endpoint, and none is defined.
 
-### 3.2 Dealsflo team invitations do not consume a SIBVO seat
+## 5. Local entitlement authority
 
-Verified in code and in the master plan. A Dealsflo team invitation is a Dealsflo role
-assignment. A user can sign in to Dealsflo only with an active SIBVO product membership
-(`access_decision.py` returns `access_granted: false` with `product_membership_required`
-otherwise). The seat is therefore consumed in SIBVO, when the membership is created by a
-SIBVO invitation or by an owner. Accepting a Dealsflo invitation does not allocate a seat,
-and Dealsflo does not call a seat-mutating SIBVO endpoint.
-
-**Open business decision:** whether removing a user from a Dealsflo team should also end
-that user's SIBVO product membership and free the seat. The workbook and master plan do not
-decide this. Until they do, Dealsflo performs no seat mutation, so removing a Dealsflo team
-member leaves the SIBVO seat allocated. This is a known gap, not an implemented release.
-
-## 4. Local entitlement authority
-
-Dealsflo's local `plan`, `subscription` and `plan_entitlement` tables can decide access only
-for unattested sessions, and only when `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `true`.
+Dealsflo's local `plan`, `subscription` and `plan_entitlement` tables decide access only for
+unattested sessions, and only when `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `true`.
 
 | Environment | Flag | Behaviour |
 |---|---|---|
@@ -142,28 +182,36 @@ for unattested sessions, and only when `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `
 Environment detection never enables the fallback. The flag is validated when settings load
 (`app/config.py`, `validate_security`).
 
-## 5. Entitlement limits: determination and enforcement
+## 6. Feature limits: definitions, enforcement owner, and status
 
-`limit_value` and `limit_unit` are stored on `plan_version_entitlements`, validated as
-non-negative, and returned in the snapshot. Determination from the code:
+A limit is enforced only when all of the following are defined for the feature key. Until
+then, the limit is not enforced and is not presented as enforced.
 
-| Question | Finding |
+| Required definition | Meaning |
 |---|---|
-| Does SIBVO enforce the limit? | **No.** `limit_value` is read only when it is serialized into catalog and snapshot responses. No code compares it with usage |
-| Must Dealsflo enforce it? | Only for product operations whose unit and counting rule the business has agreed. None has been agreed |
-| What does `limit_unit` mean? | Free text up to 40 characters, set by the plan author. No unit catalogue exists |
-| Which operation consumes the limit? | None is defined. No feature key has a counting rule |
-| How is usage counted? | Not counted anywhere. SIBVO has no usage-ingestion endpoint (section 6) |
-| Concurrency | Not applicable until a counting rule exists |
-| Limit changes and revocations | A revoked or disabled entitlement takes effect at the next revalidation (≤ the revalidation interval). A changed limit reaches Dealsflo the same way |
+| Unit | Business meaning and unit, for example "records", "automation runs" |
+| Counting rule | What is counted, which Dealsflo operation consumes the limit, and when a use is counted |
+| Reset period | Calendar month, subscription period, or none (cumulative) |
+| Enforcement owner | The system that enforces it: Dealsflo at the consuming operation, with SIBVO as the source of the limit value |
+| Concurrency rule | How concurrent requests are serialized before the count is checked |
 
-**Result:** Dealsflo enforces no limit, and no limit is reported as enforced. The billing page
-shows a limit only as plan information (`up to N unit`). Enforcing a limit requires, for
-each feature key: a unit definition agreed with the business, the Dealsflo operation that
-consumes it, and a counter Dealsflo owns or SIBVO exposes. Adding enforcement without those
-would invent limit semantics, which this epic does not do.
+Current state, by feature key in the SIBVO catalogue:
 
-## 6. Usage reporting (DFR1-053 dependency)
+| Feature key | Type | Limit | Unit | Counting rule | Reset | Owner | Status |
+|---|---|---|---|---|---|---|---|
+| `workflow_automation` | Boolean | none | none | none | none | Dealsflo (`require_entitlement`) | Enforced as a boolean (on/off). No numeric limit exists |
+
+**Result.** No numeric limit is enforced. The billing page shows any SIBVO limit as
+"SIBVO limit N unit; not enforced in Dealsflo". Enforcing a limit requires a feature
+owner to define the five items above. Inventing units or counting rules for an unlimited
+feature would be creating limit semantics that the business has not agreed.
+
+What SIBVO enforces today: none of the `limit_value` fields. They are stored on
+`plan_version_entitlements`, validated as non-negative, and returned in the snapshot. Limit
+changes and revocations reach Dealsflo at the next revalidation (within the revalidation
+interval).
+
+## 7. Usage reporting (DFR1-053 dependency)
 
 **Blocked.** SIBVO has no usage-ingestion endpoint, and Dealsflo has no usage client or
 ledger. Usage reconciliation is not verified and is not reported as reconciled.
@@ -171,48 +219,74 @@ ledger. Usage reconciliation is not verified and is not reported as reconciled.
 Proposed event contract, for approval:
 
 - Identity: `event_id` (UUID, client-generated), unique per organization and product.
-- Idempotency: SIBVO stores `(organization_id, product_key, event_id)` and returns the
-  existing result for a repeated `event_id`.
+- Idempotency: SIBVO stores `(organization_id, product_key, event_id)` and returns the existing result for a repeat.
 - Scope: `organization_id`, `product_key`, `user_id` (optional), `feature_key`.
-- Measure: `quantity` (integer), `unit` (agreed per feature; see section 5).
+- Measure: `quantity` (integer) in the unit agreed for the feature (section 6).
 - Time: `occurred_at` (timezone-aware UTC).
-- Delivery: at-least-once, with bounded backoff, from the transactional outbox (ADR-0026). Only idempotent events are sent.
-- Reconciliation: SIBVO compares accepted events with its meters; mismatches are recorded for review.
+- Delivery: at-least-once with bounded backoff, from the transactional outbox (ADR-0026). Only idempotent events are sent.
+- Reconciliation: SIBVO compares accepted events with its meters and records mismatches for review.
 
-Depends on DFR1-017 (AI usage ledger, E13, Sprint 3) for the metering model.
+Depends on DFR1-017 (AI usage ledger, E13, Sprint 3), DFR1-036, and an approved SIBVO ingestion endpoint.
 
-## 7. Provider-independent integration boundary
+## 8. Provider-independent integration boundary
 
-- **Implemented:** one typed SIBVO client (`app/integrations/sibvo_client.py`) for every
-  Dealsflo-to-SIBVO access call. It has timeouts, bounded retry for read calls, normalized
-  errors (`SibvoUnavailable`, `SibvoRejected`, `SibvoInvalidResponse`), and a correlation ID.
-  Its tests use a deterministic double and cover retries, errors and binding checks.
-- **Not implemented:** a health-check interface, a circuit breaker, a provider-capability
-  registry, and a separate audit trace of SIBVO calls. The client logs failures with the path,
-  attempt and correlation ID only. Add these when a second integration needs them.
-- **Test adapters:** the test double never grants access outside the test database. It
-  returns only the responses a test scripts.
+Implemented in `app/integrations/sibvo_client.py`, the only Dealsflo code that calls SIBVO:
 
-## 8. Story status
+- **Timeout** on every request (`SSO_HTTP_TIMEOUT_SECONDS`, default 5 seconds).
+- **Bounded retry:** at most 2 attempts, only for connection failures, timeouts and 5xx
+  responses, and only for operations that are safe to repeat (all three endpoints are).
+  A 401 is never retried.
+- **Circuit breaker:** opens after 5 consecutive unavailability failures and suspends calls
+  for 30 seconds. After the cooldown, one trial call is allowed. Success closes the circuit.
+  While open, calls fail at once with "SIBVO calls are temporarily suspended." Authentication
+  failures do not open the circuit, because SIBVO did answer.
+- **Health check:** `check_health` calls SIBVO's `GET /api/v1/ready` once, for operators.
+  It reports `ready` or `unavailable`, and the current circuit state. Request paths do not
+  call it.
+- **Normalized errors:** `SibvoUnavailable`, `SibvoRejected` (401), `SibvoInvalidResponse`
+  (malformed or mis-bound body), `SibvoRequestDenied` (4xx with the stable `error_code`).
+- **Request tracing:** one correlation ID per operation (`X-Correlation-ID`), and one
+  structured `sibvo_call` log line per attempt with the operation name, attempt number,
+  outcome, status code and duration in milliseconds. Logs never carry secrets, tokens,
+  subjects, emails or session identifiers.
+
+Not implemented: a provider-capability registry, and a separate audit table for SIBVO calls.
+Add them when a second integration needs them.
+
+## 9. Operations
+
+- **Startup:** Dealsflo refuses to start in staging or production if `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `true`.
+- **Health:** run `check_health` from an operator shell against the configured SIBVO base URL. `unavailable` means the authorization of every attested session is failing closed.
+- **Breaker open:** attested feature checks and team removals return 503 until SIBVO recovers. Team removal never reports success while the breaker is open.
+- **Cross-repository check:** with a SIBVO test database seeded by `backend/scripts/seed_e12_integration.py`
+  and SIBVO running locally, set `SIBVO_LIVE_BASE_URL`, `SIBVO_LIVE_CLIENT_SECRET` and `SIBVO_LIVE_IDS_JSON`,
+  then run `uv run pytest tests/integration/test_sibvo_live.py` in Dealsflo. Reseed before each run:
+  the checks change SIBVO state.
+
+## 10. Story status
 
 | Story | Status | Evidence / gap |
 |---|---|---|
-| DFR1-004 identity and organization contract | Implemented and tested | Snapshot binding on every revalidation; tenant binding on feature checks; client boundary. Live SIBVO not exercised |
-| DFR1-005 entitlement, seat and limit contract | **Partially implemented** | Fallback removed for staging and production. Seat capacity read path implemented and tested, including concurrency. **Open:** organization-membership deactivation release (3.1-1), upgrade reservation check (3.1-2), downgrade path (3.1-3), Dealsflo team removal decision (3.2). **Limits:** not enforced, pending agreed units (section 5) |
-| DFR1-053 usage reconciliation and lifecycle tests | **Blocked** | Usage contract proposed (section 6). Depends on DFR1-017, DFR1-036 and a SIBVO ingestion endpoint. Not claimed as complete |
+| DFR1-004 identity and organization contract | Implemented and tested | Snapshot binding on every revalidation; tenant binding on feature checks; client boundary; live cross-repository checks pass against a running SIBVO |
+| DFR1-005 subscription, entitlement, seat and limit contract | **Partially implemented** | Done: fallback removed for staging and production; seat capacity read; team removal releases the seat after SIBVO confirms; plan activation checks reservations and downgrade capacity, with PostgreSQL race and lock tests. **Open:** organization-membership deactivation flow (4.2-1); numeric limits (none defined, section 6); browser verification with a live SIBVO sign-in (section 11) |
+| DFR1-053 usage reconciliation and lifecycle tests | **Blocked** | Usage contract proposed (section 7). Depends on DFR1-017, DFR1-036 and an approved SIBVO ingestion endpoint. Not claimed as complete |
 
-## 9. Rollout order
+## 11. Not verified
 
-1. Deploy SIBVO first. It adds `organization_id` and `product_key` to the introspection response, and it adds `/sso/seat-usage`.
+- **Browser verification with a real SIBVO-attested session is not performed.** An attested
+  Dealsflo session requires a completed SIBVO sign-in, which sets an HttpOnly session cookie that
+  the browser tooling cannot set. The billing and team screens are verified by unit tests and the
+  production build only.
+- The cross-repository checks run against a locally started SIBVO with a seeded test database. No deployed environment was exercised.
+- Team removal's SIBVO interaction is verified by stubbed unit tests and by the live checks for the SIBVO side. The full UI path through a real attested session is part of the browser verification above.
+
+## 12. Rollout order
+
+1. Deploy SIBVO first. It adds `organization_id` and `product_key` to the introspection response, `/sso/seat-usage`, and `/sso/product-seats/release`, and it adds plan-activation capacity checks.
 2. Confirm `SSO_DEALSFLO_PRODUCT_KEY` matches SIBVO's value in every environment.
-3. Deploy Dealsflo. Existing SSO sessions revalidate on their next request.
+3. Deploy the Dealsflo migration `a1e2c3d4f5b6` (team member removal record) and the Dealsflo code.
 4. Dealsflo refuses to start in staging or production if `LOCAL_ENTITLEMENT_FALLBACK_ENABLED` is `true`.
 
-Deploying Dealsflo before SIBVO fails closed: every attested session returns 503 until SIBVO
-returns the binding fields. The seat page shows "temporarily unavailable" until SIBVO
-exposes `/sso/seat-usage`.
-
-## 10. Not verified
-
-- No live SIBVO or Dealsflo environment was exercised. Verification is automated tests with a deterministic double, and a PostgreSQL run of the SIBVO suite and the seat concurrency test.
-- The frontend billing page was verified by unit tests and the production build. It was not checked in a browser against a running SIBVO session.
+Deploying Dealsflo before SIBVO fails closed: attested sessions return 503 until SIBVO returns
+the binding fields. Team removal returns 503 until SIBVO exposes `/sso/product-seats/release`,
+so no member is removed without SIBVO confirmation.

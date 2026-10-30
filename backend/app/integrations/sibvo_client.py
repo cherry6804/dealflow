@@ -1,17 +1,32 @@
-"""Typed client for SIBVO's Dealsflo-facing access endpoints.
+"""Typed client for SIBVO's Dealsflo-facing endpoints.
 
 SIBVO is the authority for identity, access, seats and entitlements. This
-module is the only place that calls those endpoints. It applies the timeout,
-the single bounded retry for these read-only calls, error normalization and a
-correlation ID. Secrets and identity values are never logged.
+module is the only place Dealsflo calls those endpoints. Every call goes through
+one request path that applies:
+
+- a timeout on every request;
+- a bounded retry (MAX_ATTEMPTS) for connection failures, timeouts and 5xx
+  responses. Only idempotent operations are retried. Writes are safe to retry
+  because SIBVO records their state and an idempotency key;
+- a circuit breaker that stops calls after repeated SIBVO unavailability and
+  probes again after a cooldown;
+- normalized errors: `SibvoUnavailable`, `SibvoRejected`, `SibvoInvalidResponse`
+  and `SibvoRequestDenied`;
+- one correlation ID per operation and a structured trace line per attempt.
+
+Logs carry operation names, attempt numbers, status codes and timings only.
+They never carry secrets, tokens, subjects, emails or session identifiers.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -21,6 +36,8 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 2
+BREAKER_FAILURE_THRESHOLD = 5
+BREAKER_COOLDOWN_SECONDS = 30.0
 
 
 class SibvoError(Exception):
@@ -28,7 +45,7 @@ class SibvoError(Exception):
 
 
 class SibvoUnavailable(SibvoError):
-    """SIBVO did not answer in time, could not be reached, or failed server-side."""
+    """SIBVO did not answer, failed server-side, or its circuit is open."""
 
 
 class SibvoRejected(SibvoError):
@@ -37,6 +54,76 @@ class SibvoRejected(SibvoError):
 
 class SibvoInvalidResponse(SibvoError):
     """SIBVO answered with a body that does not match the contract."""
+
+
+class SibvoRequestDenied(SibvoError):
+    """SIBVO refused a specific request. `error_code` is stable and safe to show."""
+
+    def __init__(self, status_code: int, error_code: str | None) -> None:
+        self.status_code = status_code
+        self.error_code = error_code
+        super().__init__(f"SIBVO denied the request ({status_code}, {error_code}).")
+
+
+class CircuitBreaker:
+    """Stops calling SIBVO after repeated unavailability, then probes once per cooldown."""
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = BREAKER_FAILURE_THRESHOLD,
+        cooldown_seconds: float = BREAKER_COOLDOWN_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._failure_threshold = failure_threshold
+        self._cooldown_seconds = cooldown_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._failures = 0
+        self._opened_at: float | None = None
+        self._trial_in_flight = False
+
+    @property
+    def state(self) -> Literal["closed", "open", "half_open"]:
+        with self._lock:
+            if self._opened_at is None:
+                return "closed"
+            if self._clock() - self._opened_at >= self._cooldown_seconds:
+                return "half_open"
+            return "open"
+
+    def before_call(self) -> None:
+        """Raise when the circuit is open, or when a half-open trial is already running."""
+        with self._lock:
+            if self._opened_at is None:
+                return
+            if self._clock() - self._opened_at < self._cooldown_seconds:
+                raise SibvoUnavailable("SIBVO calls are temporarily suspended.")
+            if self._trial_in_flight:
+                raise SibvoUnavailable("SIBVO calls are temporarily suspended.")
+            self._trial_in_flight = True
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._failures = 0
+            self._opened_at = None
+            self._trial_in_flight = False
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._failures += 1
+            self._trial_in_flight = False
+            if self._opened_at is not None or self._failures >= self._failure_threshold:
+                self._opened_at = self._clock()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._failures = 0
+            self._opened_at = None
+            self._trial_in_flight = False
+
+
+breaker = CircuitBreaker()
 
 
 @dataclass(frozen=True)
@@ -51,109 +138,175 @@ class SibvoSeatUsage:
     available: int | None
 
 
-def _post_form(settings: Settings, path: str, data: dict[str, str]) -> dict[str, Any]:
-    """POST a form to SIBVO with client authentication and a bounded retry.
+@dataclass(frozen=True)
+class SibvoSeatRelease:
+    """SIBVO's answer to a removal-time seat release."""
 
-    Only idempotent read endpoints use this helper, so a retry is always safe.
-    """
+    released: bool
+    already_released: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class SibvoHealth:
+    """Health of the SIBVO dependency as seen from Dealsflo."""
+
+    status: Literal["ready", "unavailable"]
+    circuit: Literal["closed", "open", "half_open"]
+
+
+def _credentials(settings: Settings) -> tuple[str, str]:
     secret = settings.sso_dealsflo_client_secret
     if secret is None or not secret.get_secret_value().strip():
         raise SibvoUnavailable("SIBVO client credentials are not configured.")
+    return settings.sso_dealsflo_client_id, secret.get_secret_value()
 
+
+def _json_object(response: httpx.Response) -> dict[str, Any]:
+    try:
+        body = response.json()
+    except ValueError:
+        raise SibvoInvalidResponse("SIBVO returned a malformed body.") from None
+    if not isinstance(body, dict):
+        raise SibvoInvalidResponse("SIBVO returned a non-object body.")
+    return body
+
+
+def _send(
+    settings: Settings,
+    *,
+    operation: str,
+    path: str,
+    data: dict[str, str],
+    retry_safe: bool,
+) -> dict[str, Any]:
+    """Send one form request through the breaker, with bounded retry and tracing.
+
+    `retry_safe` is False for operations that must not be repeated. Such
+    operations get exactly one attempt.
+    """
+    client_id, secret = _credentials(settings)
     url = settings.sso_sibvo_base_url.rstrip("/") + path
     correlation_id = str(uuid.uuid4())
+    attempts = MAX_ATTEMPTS if retry_safe else 1
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, attempts + 1):
+        breaker.before_call()
+        started = time.monotonic()
+        last_attempt = attempt == attempts
         try:
-            with httpx.Client(
-                timeout=settings.sso_http_timeout_seconds,
-                follow_redirects=False,
-            ) as client:
+            with httpx.Client(timeout=settings.sso_http_timeout_seconds, follow_redirects=False) as client:
                 response = client.post(
                     url,
                     data=data,
-                    auth=(
-                        settings.sso_dealsflo_client_id,
-                        secret.get_secret_value(),
-                    ),
+                    auth=(client_id, secret),
                     headers={"X-Correlation-ID": correlation_id},
                 )
         except (httpx.TimeoutException, httpx.ConnectError):
-            logger.warning(
-                "SIBVO call failed to connect; retrying if attempts remain",
-                extra={"path": path, "attempt": attempt, "correlation_id": correlation_id},
-            )
-            if attempt == MAX_ATTEMPTS:
+            breaker.record_failure()
+            _trace(operation, correlation_id, attempt, "unreachable", started)
+            if last_attempt:
                 raise SibvoUnavailable("SIBVO could not be reached.") from None
             continue
         except httpx.HTTPError:
+            breaker.record_failure()
+            _trace(operation, correlation_id, attempt, "http_error", started)
             raise SibvoUnavailable("SIBVO call failed.") from None
 
-        if response.status_code == 401:
-            logger.error(
-                "SIBVO rejected Dealsflo client credentials",
-                extra={"path": path, "correlation_id": correlation_id},
-            )
+        status_code = response.status_code
+        if status_code == 401:
+            # SIBVO answered, so the dependency is reachable. The credentials are wrong.
+            breaker.record_success()
+            _trace(operation, correlation_id, attempt, "rejected", started, status_code)
             raise SibvoRejected("SIBVO rejected Dealsflo client credentials.")
-        if response.status_code >= 500:
-            logger.warning(
-                "SIBVO returned a server error",
-                extra={"path": path, "status": response.status_code, "correlation_id": correlation_id},
-            )
-            if attempt == MAX_ATTEMPTS:
+        if status_code >= 500:
+            breaker.record_failure()
+            _trace(operation, correlation_id, attempt, "server_error", started, status_code)
+            if last_attempt:
                 raise SibvoUnavailable("SIBVO failed to answer.")
             continue
-        if response.status_code >= 400:
-            raise SibvoInvalidResponse("SIBVO rejected the request.")
 
-        try:
-            body = response.json()
-        except ValueError:
-            raise SibvoInvalidResponse("SIBVO returned a malformed body.") from None
-        if not isinstance(body, dict):
-            raise SibvoInvalidResponse("SIBVO returned a non-object body.")
+        breaker.record_success()
+        if status_code >= 400:
+            _trace(operation, correlation_id, attempt, "denied", started, status_code)
+            error_code = None
+            try:
+                body = response.json()
+                if isinstance(body, dict) and isinstance(body.get("error_code"), str):
+                    error_code = body["error_code"]
+            except ValueError:
+                pass
+            raise SibvoRequestDenied(status_code, error_code)
+
+        body = _json_object(response)
+        _trace(operation, correlation_id, attempt, "ok", started, status_code)
         return body
 
     raise SibvoUnavailable("SIBVO failed to answer.")
 
 
-def _parse_seat_usage(
-    body: dict[str, Any],
-    *,
-    organization_id: UUID,
-    product_key: str,
-) -> SibvoSeatUsage | None:
-    """Return seat usage, or None when SIBVO reports no access. Malformed bodies raise."""
-    if body.get("active") is not True:
+def _trace(
+    operation: str,
+    correlation_id: str,
+    attempt: int,
+    outcome: str,
+    started: float,
+    status_code: int | None = None,
+) -> None:
+    logger.info(
+        "sibvo_call",
+        extra={
+            "sibvo_operation": operation,
+            "correlation_id": correlation_id,
+            "attempt": attempt,
+            "outcome": outcome,
+            "status_code": status_code,
+            "duration_ms": round((time.monotonic() - started) * 1000, 1),
+        },
+    )
+
+
+def _count(body: dict[str, Any], name: str) -> int:
+    value = body.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SibvoInvalidResponse(f"Seat field {name} is invalid.")
+    return value
+
+
+def _optional_count(body: dict[str, Any], name: str) -> int | None:
+    value = body.get(name)
+    if value is None:
         return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SibvoInvalidResponse(f"Seat field {name} is invalid.")
+    return value
 
+
+def _check_binding(body: dict[str, Any], *, organization_id: UUID, product_key: str) -> None:
     if body.get("organization_id") != str(organization_id):
-        raise SibvoInvalidResponse("Seat usage is not bound to this organization.")
+        raise SibvoInvalidResponse("Response is not bound to this organization.")
     if body.get("product_key") != product_key:
-        raise SibvoInvalidResponse("Seat usage is not bound to this product.")
+        raise SibvoInvalidResponse("Response is not bound to this product.")
 
-    def count(name: str) -> int:
-        value = body.get(name)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise SibvoInvalidResponse(f"Seat field {name} is invalid.")
-        return value
 
-    limit = body.get("seat_limit")
-    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 0):
-        raise SibvoInvalidResponse("Seat limit is invalid.")
-    available = body.get("available")
-    if available is not None and (
-        isinstance(available, bool) or not isinstance(available, int) or available < 0
-    ):
-        raise SibvoInvalidResponse("Seat availability is invalid.")
-
-    return SibvoSeatUsage(
-        organization_id=organization_id,
-        product_key=product_key,
-        seat_limit=limit,
-        allocated=count("allocated"),
-        reserved=count("reserved"),
-        available=available,
+def fetch_introspection(
+    settings: Settings,
+    *,
+    subject: UUID,
+    session_id: UUID,
+    organization_id: UUID,
+) -> dict[str, Any]:
+    """Return SIBVO's raw introspection body for a session. Callers validate it."""
+    return _send(
+        settings,
+        operation="introspect",
+        path="/sso/introspect",
+        data={
+            "subject": str(subject),
+            "session_id": str(session_id),
+            "organization_id": str(organization_id),
+        },
+        retry_safe=True,
     )
 
 
@@ -165,36 +318,82 @@ def fetch_seat_usage(
     organization_id: UUID,
 ) -> SibvoSeatUsage | None:
     """Return SIBVO's seat usage for an attested session, or None when SIBVO denies it."""
-    body = _post_form(
+    body = _send(
         settings,
-        "/sso/seat-usage",
-        {
+        operation="seat_usage",
+        path="/sso/seat-usage",
+        data={
             "subject": str(subject),
             "session_id": str(session_id),
             "organization_id": str(organization_id),
         },
+        retry_safe=True,
     )
-    return _parse_seat_usage(
-        body,
+    if body.get("active") is not True:
+        return None
+    _check_binding(body, organization_id=organization_id, product_key=settings.sso_dealsflo_product_key)
+    seat_limit = _optional_count(body, "seat_limit")
+    available = _optional_count(body, "available")
+    return SibvoSeatUsage(
         organization_id=organization_id,
         product_key=settings.sso_dealsflo_product_key,
+        seat_limit=seat_limit,
+        allocated=_count(body, "allocated"),
+        reserved=_count(body, "reserved"),
+        available=available,
     )
 
 
-def fetch_introspection(
+def release_product_seat(
     settings: Settings,
     *,
-    subject: UUID,
-    session_id: UUID,
+    actor_subject: UUID,
+    actor_session_id: UUID,
     organization_id: UUID,
-) -> dict[str, Any]:
-    """Return SIBVO's raw introspection body for a session. Callers validate it."""
-    return _post_form(
+    target_subject: UUID,
+    reason: str,
+    idempotency_key: str,
+) -> SibvoSeatRelease:
+    """Revoke a member's Dealsflo product membership in SIBVO and release the seat.
+
+    Safe to retry: SIBVO reports an already released seat as `already_released`.
+    Raises SibvoRequestDenied when SIBVO refuses, and SibvoUnavailable when the
+    outcome is unknown. Callers must not report success on either.
+    """
+    body = _send(
         settings,
-        "/sso/introspect",
-        {
-            "subject": str(subject),
-            "session_id": str(session_id),
+        operation="seat_release",
+        path="/sso/product-seats/release",
+        data={
+            "subject": str(actor_subject),
+            "session_id": str(actor_session_id),
             "organization_id": str(organization_id),
+            "target_subject": str(target_subject),
+            "reason": reason[:500],
+            "idempotency_key": idempotency_key,
         },
+        retry_safe=True,
     )
+    released = body.get("released")
+    already = body.get("already_released", False)
+    reason_value = body.get("reason")
+    if not isinstance(released, bool) or not isinstance(already, bool) or not isinstance(reason_value, str):
+        raise SibvoInvalidResponse("SIBVO returned an invalid release result.")
+    return SibvoSeatRelease(released=released, already_released=already, reason=reason_value)
+
+
+def check_health(settings: Settings) -> SibvoHealth:
+    """Probe SIBVO's readiness endpoint once. Used by operators, never by request paths."""
+    url = settings.sso_sibvo_base_url.rstrip("/") + "/ready"
+    try:
+        with httpx.Client(timeout=settings.sso_http_timeout_seconds, follow_redirects=False) as client:
+            response = client.get(url)
+    except httpx.HTTPError:
+        return SibvoHealth(status="unavailable", circuit=breaker.state)
+    ready = False
+    if response.status_code == 200:
+        try:
+            ready = response.json().get("status") == "ready"
+        except ValueError:
+            ready = False
+    return SibvoHealth(status="ready" if ready else "unavailable", circuit=breaker.state)

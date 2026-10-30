@@ -22,6 +22,11 @@ import PendingInvitations from "../components/PendingInvitations";
 import InviteMemberDialog from "../components/InviteMemberDialog";
 import OrganizationRolesPanel from "../components/OrganizationRolesPanel";
 import "./TeamAccessPage.css";
+import {
+  removalErrorMessage,
+  removalPendingMessage,
+  removalSuccessMessage,
+} from "../teamRemoval";
 
 type ActiveTab = "members" | "invitations" | "roles";
 
@@ -280,15 +285,16 @@ export default function TeamAccessPage() {
 
     setBusyId(member.membership_id);
     setError(null);
-    setNotice(null);
+    setNotice(removalPendingMessage(member.display_name));
 
     try {
       const result = await teamApi.removeMember(member.membership_id);
 
-      setNotice(result.message || `${member.display_name} was removed.`);
+      setNotice(removalSuccessMessage(member.display_name, result));
       await loadTeam(true);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setNotice(null);
+      setError(removalErrorMessage(member.display_name, cause));
     } finally {
       setBusyId(null);
     }

@@ -17,12 +17,15 @@ from app.db.models.permission import Permission
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.session import get_db_session
+from app.config import get_settings
+from app.team.member_removal import SibvoActor, remove_member_and_release_seat
 from app.team.schemas import (
     PermissionCatalogueItem,
     TeamInvitationAcceptRequest,
     TeamInvitationAcceptResponse,
     TeamInvitationCreateRequest,
     TeamInvitationResponse,
+    TeamMemberRemovalRequest,
     TeamMemberRemovalResponse,
     TeamMemberResponse,
     TeamMemberRoleUpdateRequest,
@@ -41,7 +44,6 @@ from app.team.service import (
     list_organization_roles,
     list_team_invitations,
     list_team_members,
-    remove_team_member,
     resend_team_invitation,
     revoke_team_invitation,
     update_organization_role,
@@ -457,24 +459,43 @@ def put_team_member_role(
 )
 def post_remove_team_member(
     membership_id: UUID,
+    payload: TeamMemberRemovalRequest | None = None,
     tenant: TenantContext = Depends(
         require_permission("organization.members.manage")
     ),
     current_user: CurrentUserContext = Depends(get_current_user_context),
     db: Session = Depends(get_db_session),
 ) -> TeamMemberRemovalResponse:
+    """Remove a team member and release their SIBVO product seat.
+
+    The removal is reported only after SIBVO confirms the seat outcome. When SIBVO
+    does not confirm, the member stays active and the request fails with 503.
+    """
     try:
-        membership = remove_team_member(
+        outcome = remove_member_and_release_seat(
             db,
+            settings=get_settings(),
             organization_id=tenant.organization_id,
             membership_id=membership_id,
             actor_user_id=current_user.user_id,
+            actor=SibvoActor(
+                subject=current_user.sibvo_subject,
+                session_id=current_user.sibvo_session_id,
+                organization_id=current_user.sibvo_organization_id,
+            ),
+            reason=(payload.reason if payload else "").strip(),
         )
         db.commit()
         return TeamMemberRemovalResponse(
-            membership_id=membership.id,
-            is_active=membership.is_active,
-            message="Organization membership deactivated.",
+            membership_id=outcome.membership_id,
+            is_active=outcome.is_active,
+            seat_outcome=outcome.seat_outcome,
+            already_removed=outcome.already_removed,
+            message=(
+                "Member was already removed. SIBVO confirmed the seat."
+                if outcome.already_removed
+                else "Member removed. SIBVO confirmed the seat."
+            ),
         )
     except Exception:
         db.rollback()

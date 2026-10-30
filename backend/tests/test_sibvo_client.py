@@ -9,11 +9,23 @@ from pydantic import SecretStr
 from app.config import Settings
 from app.integrations import sibvo_client
 from app.integrations.sibvo_client import (
+    CircuitBreaker,
     SibvoInvalidResponse,
     SibvoRejected,
+    SibvoRequestDenied,
     SibvoUnavailable,
+    check_health,
     fetch_seat_usage,
+    release_product_seat,
 )
+
+
+@pytest.fixture(autouse=True)
+def fresh_breaker(monkeypatch: pytest.MonkeyPatch) -> CircuitBreaker:
+    """Each test starts with a closed circuit, so failures never leak between tests."""
+    breaker = CircuitBreaker()
+    monkeypatch.setattr(sibvo_client, "breaker", breaker)
+    return breaker
 
 ORG = uuid.uuid4()
 
@@ -182,11 +194,13 @@ def test_rejected_client_credentials_are_not_retried(monkeypatch: pytest.MonkeyP
 
 
 def test_client_error_is_normalized_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    script = Script(http_response(403, {"detail": "forbidden"}))
+    script = Script(http_response(403, {"error_code": "actor_not_authorized"}))
     install(monkeypatch, script)
 
-    with pytest.raises(SibvoInvalidResponse):
+    with pytest.raises(SibvoRequestDenied) as denied:
         call()
+    assert denied.value.status_code == 403
+    assert denied.value.error_code == "actor_not_authorized"
     assert script.calls == 1
 
 
@@ -204,3 +218,147 @@ def test_missing_credentials_fail_before_any_request(monkeypatch: pytest.MonkeyP
     with pytest.raises(SibvoUnavailable):
         call(make_settings(sso_dealsflo_client_secret=None))
     assert script.calls == 0
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_breaker_opens_after_repeated_unavailability_and_suspends_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    breaker = CircuitBreaker(failure_threshold=2, cooldown_seconds=30, clock=clock)
+    monkeypatch.setattr(sibvo_client, "breaker", breaker)
+    script = Script(httpx.ConnectError("down"), httpx.ConnectError("down"))
+    install(monkeypatch, script)
+
+    with pytest.raises(SibvoUnavailable):
+        call()
+    assert breaker.state == "open"
+
+    untouched = Script(http_response(200, bound_body()))
+    install(monkeypatch, untouched)
+    with pytest.raises(SibvoUnavailable, match="temporarily suspended"):
+        call()
+    assert untouched.calls == 0
+
+
+def test_breaker_probes_once_after_cooldown_and_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    breaker = CircuitBreaker(failure_threshold=1, cooldown_seconds=30, clock=clock)
+    monkeypatch.setattr(sibvo_client, "breaker", breaker)
+    install(monkeypatch, Script(httpx.ConnectError("down"), httpx.ConnectError("down")))
+    with pytest.raises(SibvoUnavailable):
+        call()
+
+    clock.now += 31
+    assert breaker.state == "half_open"
+    install(monkeypatch, Script(http_response(200, bound_body())))
+
+    assert call() is not None
+    assert breaker.state == "closed"
+
+
+def test_rejected_credentials_do_not_open_the_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    breaker = CircuitBreaker(failure_threshold=1, cooldown_seconds=30, clock=clock)
+    monkeypatch.setattr(sibvo_client, "breaker", breaker)
+    install(monkeypatch, Script(http_response(401, {"detail": "no"})))
+
+    with pytest.raises(SibvoRejected):
+        call()
+    assert breaker.state == "closed"
+
+
+def test_release_returns_sibvo_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    install(
+        monkeypatch,
+        Script(http_response(200, {"released": True, "already_released": False, "reason": "released"})),
+    )
+
+    result = release_product_seat(
+        make_settings(),
+        actor_subject=uuid.uuid4(),
+        actor_session_id=uuid.uuid4(),
+        organization_id=ORG,
+        target_subject=uuid.uuid4(),
+        reason="Left the team",
+        idempotency_key="team-removal-0001",
+    )
+
+    assert result.released is True
+    assert result.already_released is False
+
+
+def test_release_refusal_is_reported_not_treated_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    install(monkeypatch, Script(http_response(409, {"error_code": "last_owner_or_owner_seat"})))
+
+    with pytest.raises(SibvoRequestDenied) as denied:
+        release_product_seat(
+            make_settings(),
+            actor_subject=uuid.uuid4(),
+            actor_session_id=uuid.uuid4(),
+            organization_id=ORG,
+            target_subject=uuid.uuid4(),
+            reason="",
+            idempotency_key="team-removal-0002",
+        )
+    assert denied.value.error_code == "last_owner_or_owner_seat"
+
+
+def test_release_outcome_unknown_after_retries_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    install(monkeypatch, Script(httpx.ReadTimeout("slow"), httpx.ReadTimeout("slow")))
+
+    with pytest.raises(SibvoUnavailable):
+        release_product_seat(
+            make_settings(),
+            actor_subject=uuid.uuid4(),
+            actor_session_id=uuid.uuid4(),
+            organization_id=ORG,
+            target_subject=uuid.uuid4(),
+            reason="",
+            idempotency_key="team-removal-0003",
+        )
+
+
+def test_health_reports_ready_only_for_a_ready_sibvo(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ReadyClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            return http_response(200, {"status": "ready"})
+
+    monkeypatch.setattr(sibvo_client.httpx, "Client", ReadyClient)
+
+    assert check_health(make_settings()).status == "ready"
+
+
+def test_health_is_unavailable_when_sibvo_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DownClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(sibvo_client.httpx, "Client", DownClient)
+
+    assert check_health(make_settings()).status == "unavailable"
