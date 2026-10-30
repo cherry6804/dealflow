@@ -237,3 +237,77 @@ def test_provisioned_admin_role_holds_no_owner_only_permission_rows() -> None:
 
     assert granted.isdisjoint(OWNER_ONLY_PERMISSION_KEYS)
     assert set(READ_GOVERNANCE_KEYS) <= granted
+
+
+def test_alert_recipients_require_the_owner_role_not_just_the_permission() -> None:
+    from app.governance.alert_delivery import administrator_user_ids
+
+    with SessionLocal() as db:
+        _, organization, _ = _org_with_provisioned_roles(db, owner=True)
+        # Same organization: a real Owner, and a non-owner whose custom role carries a budget key.
+        owner_person = create_user(db)
+        owner_membership = create_membership(db, user=owner_person, organization=organization)
+        attach_role(
+            db,
+            membership=owner_membership,
+            role=db.scalar(select(Role).where(Role.organization_id == organization.id, Role.name == OWNER_ROLE_NAME)),
+        )
+        drift_person = create_user(db)
+        drift_membership = create_membership(db, user=drift_person, organization=organization)
+        _custom_role_with(
+            db,
+            organization_id=organization.id,
+            permission_key="governance.budgets.manage",
+            membership=drift_membership,
+        )
+        db.commit()
+        owner_id, drift_id, org_id = owner_person.id, drift_person.id, organization.id
+        recipients = administrator_user_ids(db, organization_id=org_id)
+
+    assert owner_id in recipients
+    assert drift_id not in recipients
+
+
+def test_custom_role_cannot_take_the_reserved_owner_name() -> None:
+    from fastapi import HTTPException
+
+    from app.team.service import create_organization_role
+
+    with SessionLocal() as db:
+        _, organization, _ = _org_with_provisioned_roles(db, owner=True)
+        with pytest.raises(HTTPException) as refused:
+            create_organization_role(
+                db,
+                organization_id=organization.id,
+                name="dealflow owner",
+                description=None,
+                permission_keys=["deals.read"],
+            )
+        db.rollback()
+
+    assert refused.value.status_code == 403  # the existing owner-name guard
+
+
+def test_provisioning_refuses_to_promote_a_custom_role_named_owner() -> None:
+    from fastapi import HTTPException
+
+    with SessionLocal() as db:
+        person = create_user(db)
+        organization = create_organization(db)
+        create_membership(db, user=person, organization=organization)
+        squatter = Role(
+            name=OWNER_ROLE_NAME,
+            organization_id=organization.id,
+            is_system=False,
+            is_active=True,
+        )
+        db.add(squatter)
+        db.commit()
+
+        with pytest.raises(HTTPException) as refused:
+            provision_default_organization_roles(db, organization_id=organization.id)
+        db.rollback()
+        still_custom = db.get(Role, squatter.id)
+        assert still_custom.is_system is False
+
+    assert refused.value.status_code == 409

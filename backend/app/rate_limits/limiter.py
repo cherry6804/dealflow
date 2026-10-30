@@ -10,17 +10,20 @@ The limiter records no usage and no cost. It never writes to the usage ledger.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, delete
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db.models.execution_rate_limit_window import ExecutionRateLimitWindow
-from app.rate_limits.policy import RateLimitRule, get_rule
+from app.rate_limits.policy import RETENTION, RateLimitRule, get_rule
+
+logger = logging.getLogger(__name__)
 
 SCOPE_ORGANIZATION = "organization"
 SCOPE_ACTOR = "actor"
@@ -28,9 +31,6 @@ SCOPE_ACTOR = "actor"
 REASON_ALLOWED = "allowed"
 REASON_RATE_LIMITED = "rate_limited"
 REASON_UNAVAILABLE = "rate_limit_unavailable"
-
-# Counters older than this are removed. They are operational state, not records.
-RETENTION = timedelta(days=2)
 
 
 class RateLimitUnavailableError(RuntimeError):
@@ -105,9 +105,13 @@ def consume(
 
     The caller owns the transaction. The function does not commit. Both scopes are updated even
     when one is exceeded, so the two counters stay consistent with the attempts made.
+
+    Window times come from the database clock (``now()``), not from the application server. Every
+    backend instance therefore agrees on the window, whatever its own clock says. A caller may
+    inject ``now`` for deterministic tests only.
     """
     rule = get_rule(execution_type)
-    moment = now or datetime.now(UTC)
+    moment = now if now is not None else _database_now(db)
 
     _prune_expired(db, organization_id=organization_id, moment=moment)
 
@@ -176,7 +180,15 @@ def consume_or_deny(
                 actor_user_id=actor_user_id,
                 now=now,
             )
-    except (SQLAlchemyError, RateLimitUnavailableError, KeyError):
+    except (SQLAlchemyError, RateLimitUnavailableError, KeyError) as exc:
+        # The protected execution stays off. The log line is the operational signal. It records
+        # the exception class only, never the SQL text or parameters.
+        logger.error(
+            "rate_limit_unavailable execution_type=%s organization_id=%s error_type=%s",
+            execution_type,
+            organization_id,
+            type(exc).__name__,
+        )
         return RateLimitDecision(
             allowed=False,
             reason_code=REASON_UNAVAILABLE,
@@ -186,6 +198,14 @@ def consume_or_deny(
             remaining=0,
             retry_after_seconds=0,
         )
+
+
+def _database_now(db: Session) -> datetime:
+    """Return the database server's current time as an aware datetime."""
+    moment = db.scalar(select(func.now()))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment
 
 
 def _prune_expired(db: Session, *, organization_id: UUID, moment: datetime) -> None:

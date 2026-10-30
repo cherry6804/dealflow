@@ -45,8 +45,10 @@ def upgrade() -> None:
     op.create_table(
         BACKUP_TABLE,
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("role_id", sa.Uuid(), sa.ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("permission_id", sa.Uuid(), sa.ForeignKey("permissions.id", ondelete="RESTRICT"), nullable=False),
+        # Deliberately no foreign keys. A backup must never block a later role or permission
+        # change. The downgrade restores only grants whose role and permission still exist.
+        sa.Column("role_id", sa.Uuid(), nullable=False),
+        sa.Column("permission_id", sa.Uuid(), nullable=False),
         sa.Column("original_created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
@@ -75,6 +77,8 @@ def downgrade() -> None:
             f"INSERT INTO role_permissions (id, role_id, permission_id, created_at) "
             f"SELECT gen_random_uuid(), b.role_id, b.permission_id, b.original_created_at "
             f"FROM {BACKUP_TABLE} b "
+            f"JOIN roles r ON r.id = b.role_id "
+            f"JOIN permissions p ON p.id = b.permission_id "
             f"WHERE NOT EXISTS (SELECT 1 FROM role_permissions rp "
             f"WHERE rp.role_id = b.role_id AND rp.permission_id = b.permission_id)"
         )

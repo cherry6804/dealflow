@@ -22,7 +22,9 @@ Three different limits govern executions. They answer different questions, are e
 - **Denied attempts count.** A denied request still increments both counters. Repeated attempts cannot slip past a window.
 - **Tenant isolation:** every counter row carries `organization_id`, and the unique key includes it. Organizations have independent counters.
 - **Defaults** (in `app/rate_limits/policy.py`): `automation.deal_created` allows 600 per minute per organization and 120 per minute per actor. These are starting points. Per-organization overrides are not part of this change.
-- **Retention:** counters older than two days are removed for the organization being updated. They are operational state.
+- **Time source:** window times come from the database clock (`now()`), not from each application server. All backend instances therefore agree on window boundaries and retry times, whatever their own clocks say. Tests inject a fixed time explicitly.
+- **Retention and cleanup:** counters older than two days are removed, for the organization being updated, on every consumption. Cleanup can never delete an active window, because every rule's window must be shorter than the retention period, and the policy rejects a rule that violates this.
+- **Cleanup cost:** cleanup runs on each consumption and is bounded by the organization's index. It is operational state, not a record.
 - **No usage is recorded here.** The limiter never writes to the usage ledger, so a rate-limited attempt is not counted as usage and an allowed attempt is not double-counted as usage.
 
 ### Enforcement points
@@ -37,7 +39,8 @@ The rate limit runs after the policy gate and only when the organization has act
 ### Failure behavior (fail closed for the protected execution)
 
 - If the counter store raises a database error, or the rule is not configured, the decision is "unavailable". The protected execution does not run. The error is caught inside a savepoint, so the surrounding transaction stays usable.
-- The unavailable decision is not audited, because the audit write may depend on the same failing store. This is a known limitation.
+- The unavailable decision is not written to the audit trail, because the audit write may depend on the same failing store. This is a known limitation.
+- **Operational signal:** every unavailable decision writes one ERROR log line from `app.rate_limits.limiter`: `rate_limit_unavailable execution_type=... organization_id=... error_type=...`. It records the exception class only, never SQL text or parameters. Operators must alert on this line. The log does not depend on the audit store, but it does depend on the application's log pipeline reaching an alerting system. That pipeline is not defined in this repository, so the alert itself is an operational prerequisite (see the Release 1 operations work, DFR1-052).
 - Non-PostgreSQL databases fail closed, because the atomic upsert is PostgreSQL-specific.
 
 ### Structured responses
@@ -74,4 +77,4 @@ Providers enforce their own limits. Dealsflo cannot raise them.
 - Counters are per execution type. Adding an execution type requires a rule in `policy.py`.
 - The unavailable path is not audited (see above).
 - The concurrency guarantee is verified by a 40-attempt concurrent test (exactly the configured limit is allowed). It is not a load test.
-- Clock-based windows assume the application servers' clocks are reasonably synchronized (within seconds).
+- Windows depend on the database clock only. A deployment whose database clock is wrong gets wrong windows everywhere at once, so the database host's time must be kept accurate.

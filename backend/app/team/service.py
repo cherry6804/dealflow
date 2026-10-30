@@ -188,6 +188,13 @@ def provision_default_organization_roles(
             )
             db.add(role)
             db.flush()
+        elif role_name == OWNER_ROLE_NAME and not role.is_system:
+            # The Owner name is reserved for the system role. Refuse rather than promote a
+            # custom role that happens to carry the name.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A custom role uses the reserved Owner role name in this organization.",
+            )
         else:
             role.is_system = True
             role.is_active = True

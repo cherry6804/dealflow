@@ -149,3 +149,32 @@ def test_rate_limit_windows_table_is_created_and_dropped_cleanly(schema: str) ->
     _alembic(schema, "upgrade", HEAD)
     with _connect(schema) as connection:
         assert _table_exists(connection, "execution_rate_limit_windows")
+
+
+def test_backup_does_not_block_role_removal_and_downgrade_skips_removed_roles(schema: str) -> None:
+    _alembic(schema, "upgrade", PRE)
+    with _connect(schema) as connection:
+        organization_id = _organization(connection)
+        admin = _org_admin_role(connection, organization_id)
+        permission = _permission_id(connection, GOV_MANAGE)
+        custom = uuid.uuid4()
+        connection.execute(
+            "INSERT INTO roles (id, organization_id, name, is_system, is_active) VALUES (%s, %s, 'Custom', false, true)",
+            (custom, organization_id),
+        )
+        _grant(connection, admin, permission)
+        _grant(connection, custom, permission)
+    _alembic(schema, "upgrade", REVOKE)
+
+    # The backup holds the custom role's grant. Removing the role must still succeed.
+    with _connect(schema) as connection:
+        connection.execute("DELETE FROM roles WHERE id = %s", (custom,))
+        assert connection.execute("SELECT count(*) FROM roles WHERE id = %s", (custom,)).fetchone()[0] == 0
+
+    _alembic(schema, "downgrade", PRE)
+
+    with _connect(schema) as connection:
+        assert _grants_for(connection, admin, GOV_MANAGE) == 1
+        assert connection.execute(
+            "SELECT count(*) FROM role_permissions WHERE role_id = %s", (custom,)
+        ).fetchone()[0] == 0

@@ -12,6 +12,10 @@ from datetime import timedelta
 
 AUTOMATION_DEAL_CREATED_EXECUTION = "automation.deal_created"
 
+# Counters older than this are removed. They are operational state, not records. A window must be
+# shorter than this, or cleanup could delete a window that is still active.
+RETENTION = timedelta(days=2)
+
 
 @dataclass(frozen=True)
 class RateLimitRule:
@@ -23,6 +27,8 @@ class RateLimitRule:
     def __post_init__(self) -> None:
         if self.window <= timedelta(0):
             raise ValueError("A rate-limit window must be positive.")
+        if self.window >= RETENTION:
+            raise ValueError("A rate-limit window must be shorter than the counter retention period.")
         if self.organization_limit < 1 or self.actor_limit < 1:
             raise ValueError("Rate-limit values must be at least 1.")
 

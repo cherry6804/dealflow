@@ -30,7 +30,7 @@ from app.governance.usage_ledger import (
     reserve,
 )
 from app.outbox.service import dispatch_due_events, unregister_handler
-from tests.test_team_api import create_manager
+from tests.test_team_api import create_manager, create_owner_manager
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 
@@ -44,7 +44,7 @@ def handlers() -> Iterator[None]:
 
 @pytest.fixture
 def org_with_admin() -> Iterator[tuple[UUID, UUID, UUID]]:
-    admin, organization = create_manager(permissions=("governance.budgets.manage",))
+    admin, organization = create_owner_manager(permissions=("governance.budgets.manage",))
     reader, _ = create_manager(permissions=("governance.usage.read",))
     # The reader is in another organization; it must never receive this organization's alerts.
     yield organization.id, admin.id, reader.id

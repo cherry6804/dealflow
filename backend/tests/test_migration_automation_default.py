@@ -41,21 +41,36 @@ def _schema_url(schema: str) -> str:
     return f"{_base_url()}{separator}options=-csearch_path%3D{schema}"
 
 
+ALEMBIC_TIMEOUT_SECONDS = 300
+ALEMBIC_ATTEMPTS = 2
+
+
 def _alembic(schema: str, *args: str) -> None:
     env = {
         **os.environ,
         "DATABASE_URL": _schema_url(schema).replace("postgresql://", "postgresql+psycopg://", 1),
         "APP_ENVIRONMENT": "test",
     }
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", "alembic.ini", *args],
-        cwd=REPO_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
+    for attempt in range(ALEMBIC_ATTEMPTS):
+        try:
+            # Each attempt keeps the full timeout. The standard library measures the deadline with
+            # time.monotonic(). A machine suspend can advance that clock past the deadline while the
+            # child is healthy, which reports a timeout with a negative remaining time. Migrations run
+            # in transactions, so a killed attempt rolls back and a second attempt is safe. A genuine
+            # hang still fails on the final attempt.
+            result = subprocess.run(
+                [sys.executable, "-m", "alembic", "-c", "alembic.ini", *args],
+                cwd=REPO_DIR,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=ALEMBIC_TIMEOUT_SECONDS,
+                check=False,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == ALEMBIC_ATTEMPTS - 1:
+                raise
     if result.returncode != 0:
         raise RuntimeError(f"alembic {' '.join(args)} failed:\n{result.stderr[-2000:]}")
 

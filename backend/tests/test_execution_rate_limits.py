@@ -471,3 +471,47 @@ def test_counters_are_shared_across_separate_processes(monkeypatch) -> None:
     total_allowed = sum(int(stdout.strip()) for stdout, _ in outputs)
     # Four processes each make ten attempts (forty in total) against a limit of fifteen.
     assert total_allowed == 15
+
+
+def test_window_start_comes_from_the_database_clock(monkeypatch) -> None:
+    from sqlalchemy import func as sql_func
+
+    _set_rule(monkeypatch, organization_limit=100, actor_limit=100)
+    organization_id = _new_organization()[1]
+    with SessionLocal() as db:
+        consume(db, organization_id=organization_id, execution_type=EXECUTION, actor_user_id=None)
+        window_started = db.scalar(
+            select(ExecutionRateLimitWindow.window_started_at).where(
+                ExecutionRateLimitWindow.organization_id == organization_id,
+            )
+        )
+        database_now = db.scalar(select(sql_func.now()))
+        db.rollback()
+
+    # Both values come from the same transaction clock, so they are identical.
+    assert window_started == database_now
+
+
+def test_a_window_as_long_as_retention_is_rejected() -> None:
+    from app.rate_limits.policy import RETENTION
+
+    with pytest.raises(ValueError):
+        RateLimitRule(execution_type="x", window=RETENTION, organization_limit=1, actor_limit=1)
+
+
+def test_unavailable_store_is_logged_without_sql_text(monkeypatch, caplog) -> None:
+    def broken(*args, **kwargs):
+        raise OperationalError("UPDATE secret_table SET count = 1", {"p": "hidden"}, Exception("store down"))
+
+    monkeypatch.setattr(limiter_module, "_increment", broken)
+    organization_id = _new_organization()[1]
+
+    with caplog.at_level("ERROR", logger="app.rate_limits.limiter"), SessionLocal() as db:
+        decision = consume_or_deny(
+            db, organization_id=organization_id, execution_type=EXECUTION, actor_user_id=None,
+        )
+
+    assert not decision.allowed
+    messages = [record.getMessage() for record in caplog.records if record.name == "app.rate_limits.limiter"]
+    assert any("rate_limit_unavailable" in message for message in messages)
+    assert all("secret_table" not in message and "hidden" not in message for message in messages)
