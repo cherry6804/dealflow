@@ -138,3 +138,37 @@ describe("personal workspace preferences", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("workspace preference round trip", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("restores saved space order and collapsed spaces after a reload", () => {
+    const modules = [...WORKSPACE_MODULE_LABELS];
+    const saved: WorkspacePreferences = {
+      ...DEFAULT_WORKSPACE_PREFERENCES,
+      spaceOrder: ["operations", "partners", "property", "deals-revenue", "sales"],
+      collapsedSpaces: ["partners"],
+    };
+
+    saveWorkspacePreferences("org-1", "alice", saved);
+
+    const restored = loadWorkspacePreferences("org-1", "alice", modules);
+
+    expect(restored.spaceOrder).toEqual(saved.spaceOrder);
+    expect(restored.collapsedSpaces).toEqual(["partners"]);
+  });
+
+  it("recovers from a stored space order that is not an array", () => {
+    localStorage.setItem(
+      "dealflow:workspace-preferences:org-1:alice",
+      JSON.stringify({ spaceOrder: "sales", collapsedSpaces: 7 }),
+    );
+
+    const restored = loadWorkspacePreferences("org-1", "alice", [...WORKSPACE_MODULE_LABELS]);
+
+    expect(restored.spaceOrder).toEqual([...WORKSPACE_SPACE_IDS]);
+    expect(restored.collapsedSpaces).toEqual([]);
+  });
+});

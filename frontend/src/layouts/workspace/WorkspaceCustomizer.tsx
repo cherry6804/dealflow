@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import type { WorkspacePreferences } from "./workspacePreferences";
-import { WORKSPACE_SPACES } from "./workspaceSpaces";
+import { WORKSPACE_SPACE_IDS, WORKSPACE_SPACES } from "./workspaceSpaces";
 
 interface WorkspaceCustomizerProps {
   open: boolean;
@@ -71,6 +71,16 @@ export default function WorkspaceCustomizer({
     }
 
     update({ pinnedModules: [...pinned] });
+  }
+
+  const spaceOrderIsDefault =
+    preferences.spaceOrder.length === WORKSPACE_SPACE_IDS.length &&
+    preferences.spaceOrder.every(
+      (spaceId, index) => spaceId === WORKSPACE_SPACE_IDS[index],
+    );
+
+  function resetSpaceOrder() {
+    update({ spaceOrder: [...WORKSPACE_SPACE_IDS] });
   }
 
   function moveSpace(spaceId: string, direction: -1 | 1) {
@@ -206,6 +216,18 @@ export default function WorkspaceCustomizer({
                     </button>
                   </div>
                 ))}
+            </div>
+
+            <div className="workspace-setting-actions">
+              <button
+                type="button"
+                className="button button-secondary button-sm"
+                onClick={resetSpaceOrder}
+                disabled={spaceOrderIsDefault}
+              >
+                <RotateCcw size={14} aria-hidden="true" />
+                Reset space order
+              </button>
             </div>
           </section>
 

@@ -326,13 +326,6 @@ export default function WorkspaceLayout() {
         aria-label="Workspace sidebar"
       >
         <div className="workspace-brand">
-          <img
-            className="workspace-brand-mark"
-            src={dealsfloMark}
-            alt=""
-            aria-hidden="true"
-          />
-
           <span className="workspace-brand-copy">
             <strong>Dealsflo</strong>
             <small>Real estate operations</small>

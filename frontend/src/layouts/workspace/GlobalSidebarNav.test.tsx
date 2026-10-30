@@ -189,3 +189,42 @@ describe("GlobalSidebarNav", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
   });
 });
+
+describe("GlobalSidebarNav navigation callback", () => {
+  it("calls onNavigate when a destination is chosen so the drawer can close", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <nav aria-label="Main navigation">
+          <GlobalSidebarNav
+            preferences={preferences()}
+            onToggleSpace={vi.fn()}
+            onNavigate={onNavigate}
+          />
+        </nav>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("link", { name: "Contacts" }));
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows space headers when icons-only is off even if the saved preference is collapsed", () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <nav aria-label="Main navigation">
+          <GlobalSidebarNav
+            preferences={preferences({ sidebarCollapsed: true })}
+            onToggleSpace={vi.fn()}
+            iconsOnly={false}
+          />
+        </nav>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Sales" })).toBeTruthy();
+  });
+});

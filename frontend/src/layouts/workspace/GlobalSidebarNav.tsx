@@ -52,7 +52,9 @@ export default function GlobalSidebarNav({
     <>
       {sections.pinned.length > 0 && (
         <>
-          <span className="workspace-nav-caption">PINNED</span>
+          {!collapsed && (
+            <span className="workspace-nav-caption">PINNED</span>
+          )}
           {sections.pinned.map(renderItem)}
           <div className="workspace-nav-separator" aria-hidden="true" />
         </>
@@ -60,7 +62,7 @@ export default function GlobalSidebarNav({
 
       {sections.global.map(renderItem)}
 
-      {sections.spaces.length > 0 && (
+      {!collapsed && sections.spaces.length > 0 && (
         <span className="workspace-nav-caption">SPACES</span>
       )}
 

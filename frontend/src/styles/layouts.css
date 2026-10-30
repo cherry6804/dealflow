@@ -81,13 +81,6 @@ body {
   padding: 2px 5px 10px;
 }
 
-.workspace-brand-mark {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  object-fit: contain;
-}
-
 .workspace-topbar-logo {
   width: 28px;
   height: 28px;
@@ -367,8 +360,7 @@ body {
 /* Collapsed desktop rail */
 
 .workspace-sidebar.is-collapsed .workspace-brand {
-  justify-content: center;
-  padding-inline: 0;
+  display: none;
 }
 
 .workspace-sidebar.is-collapsed .workspace-brand-copy,
