@@ -255,5 +255,6 @@ Never silently rewrite architectural history.
 | 0028 | Communication Channel Gateway Architecture | Proposed |
 | 0029 | AI Execution and Disabled-by-Default Enablement Policy | Accepted |
 | 0030 | Environment and Configuration Standards | Proposed |
+| 0031 | AI API Namespace and Legacy Route Compatibility | Accepted |
 
 New ADRs should be added to this index when created.

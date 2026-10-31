@@ -115,20 +115,22 @@ Disablement and revocation are recorded the same way, with `action` set to `disa
 
 | Method and path | Permission | Notes |
 |---|---|---|
-| `GET /api/v1/governance/access` | authenticated tenant member | Which governance permissions the caller holds. Shapes the UI only. |
-| `GET /api/v1/governance/capabilities` | `governance.capabilities.read` | Stored switch plus effective decision. |
-| `PATCH /api/v1/governance/capabilities/{key}` | `governance.capabilities.manage` (owner-only) | Requires `confirm: true`. Audited. |
-| `GET /api/v1/governance/usage/budgets` | `governance.usage.read` | Current UTC month. |
-| `PUT /api/v1/governance/usage/budgets/{unit}` | `governance.budgets.manage` (owner-only) | Requires `confirm: true`. Audited with before and after. |
-| `GET /api/v1/governance/privacy/categories` | `governance.privacy.read` | Classification register, including `producer_exists`. |
-| `GET /api/v1/governance/privacy/retention` | `governance.privacy.read` | Current retention per category. |
-| `PUT /api/v1/governance/privacy/retention/{category}` | `governance.privacy.manage` (owner-only) | Versioned. Audited. |
-| `GET /api/v1/governance/privacy/legal-holds` | `governance.privacy.read` | Organization-scoped. |
-| `POST /api/v1/governance/privacy/legal-holds` | `governance.privacy.manage` (owner-only) | Reason required. Audited. |
-| `POST /api/v1/governance/privacy/legal-holds/{id}/release` | `governance.privacy.manage` (owner-only) | Audited. |
-| `GET /api/v1/governance/privacy/requests` | `governance.privacy.read` | Also expires ready exports past their window. |
-| `POST /api/v1/governance/privacy/requests` | `governance.privacy.manage` (owner-only) | Export or deletion. Requires `confirm: true`. |
-| `POST /api/v1/governance/privacy/requests/{id}/cancel` | `governance.privacy.manage` (owner-only) | Audited. |
+| `GET /api/v1/ai/governance/access` | authenticated tenant member | Which governance permissions the caller holds. Shapes the UI only. |
+| `GET /api/v1/ai/governance/capabilities` | `governance.capabilities.read` | Stored switch plus effective decision. |
+| `PATCH /api/v1/ai/governance/capabilities/{key}` | `governance.capabilities.manage` (owner-only) | Requires `confirm: true`. Audited. |
+| `GET /api/v1/ai/governance/usage/budgets` | `governance.usage.read` | Current UTC month. |
+| `PUT /api/v1/ai/governance/usage/budgets/{unit}` | `governance.budgets.manage` (owner-only) | Requires `confirm: true`. Audited with before and after. |
+| `GET /api/v1/ai/governance/privacy/categories` | `governance.privacy.read` | Classification register, including `producer_exists`. |
+| `GET /api/v1/ai/governance/privacy/retention` | `governance.privacy.read` | Current retention per category. |
+| `PUT /api/v1/ai/governance/privacy/retention/{category}` | `governance.privacy.manage` (owner-only) | Versioned. Audited. |
+| `GET /api/v1/ai/governance/privacy/legal-holds` | `governance.privacy.read` | Organization-scoped. |
+| `POST /api/v1/ai/governance/privacy/legal-holds` | `governance.privacy.manage` (owner-only) | Reason required. Audited. |
+| `POST /api/v1/ai/governance/privacy/legal-holds/{id}/release` | `governance.privacy.manage` (owner-only) | Audited. |
+| `GET /api/v1/ai/governance/privacy/requests` | `governance.privacy.read` | Also expires ready exports past their window. |
+| `POST /api/v1/ai/governance/privacy/requests` | `governance.privacy.manage` (owner-only) | Export or deletion. Requires `confirm: true`. |
+| `POST /api/v1/ai/governance/privacy/requests/{id}/cancel` | `governance.privacy.manage` (owner-only) | Audited. |
+
+**Namespace and legacy aliases (ADR-0031).** Governance and provider-credential routes live under `/api/v1/ai/`. The previous `/api/v1/governance/...` and `/api/v1/provider-credentials/...` paths remain as legacy aliases for existing consumers. They call the same handlers, enforce the same permissions and tenant checks, and return the same responses. They are hidden from the OpenAPI schema and documented here as deprecated. They are not removed in this change, and no `Deprecation` or `Sunset` header is sent yet. Removal requires a separate, approved change (ADR-0031, section 4).
 
 Every organization comes from the server-side tenant context. A request for an organization the caller
 does not belong to is refused with 403. Owner-only keys are in `OWNER_ONLY_PERMISSION_KEYS`.
