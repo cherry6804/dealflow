@@ -12,3 +12,7 @@ documented in:
 
 Staging and production are not provisioned. Adding infrastructure code requires
 an approved decision recorded as an ADR.
+
+`local/docker-compose.yml` is the only file here today. It starts a local
+development database with pgvector, using the same pinned image as CI. It is not a
+deployment definition. See `docs/development/local-postgres-with-pgvector.md`.
