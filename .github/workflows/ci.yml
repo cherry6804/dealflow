@@ -123,7 +123,8 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        # Pinned pgvector image (PostgreSQL 16). Digest pinned so a tag cannot change under CI.
+        image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_DB: dealflow_test
           POSTGRES_USER: postgres
@@ -138,6 +139,8 @@ jobs:
     env:
       APP_ENVIRONMENT: test
       DATABASE_URL: postgresql+psycopg://postgres:ci-only-postgres-password@localhost:5432/dealflow_test
+      # This job runs on the pgvector image, so the pgvector guard test expects the extension.
+      DEALFLOW_PGVECTOR_EXPECTED: present
 
     steps:
       - name: Checkout repository
@@ -162,14 +165,21 @@ jobs:
           echo "::add-mask::${key}"
           echo "EMAIL_OUTBOX_ENCRYPTION_KEY=${key}" >> "$GITHUB_ENV"
 
+      - name: Install and verify the pgvector extension
+        working-directory: backend
+        run: uv run python -m scripts.verify_pgvector --expect present --create
+
       - name: Lint Release 1 foundation modules
         working-directory: backend
         run: >-
           uv run ruff check
           app/outbox
           app/db/models/outbox_event.py
+          app/db/pgvector.py
+          scripts/verify_pgvector.py
           tests/test_outbox.py
           tests/test_migrations_history.py
+          tests/test_pgvector_support.py
           alembic/versions/e5a7c1d9b2f0_create_outbox_events.py
 
       - name: Run the backend test suite
@@ -182,7 +192,8 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        # Pinned pgvector image (PostgreSQL 16). Digest pinned so a tag cannot change under CI.
+        image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_DB: dealflow_test
           POSTGRES_USER: postgres
@@ -212,6 +223,10 @@ jobs:
         working-directory: backend
         run: uv sync --frozen
 
+      - name: Install and verify the pgvector extension
+        working-directory: backend
+        run: uv run python -m scripts.verify_pgvector --expect present --create
+
       - name: Apply every migration to the empty database
         run: uv run --project backend alembic -c alembic.ini upgrade head
 
@@ -226,6 +241,69 @@ jobs:
             echo "Expected exactly one Alembic head, found ${count}."
             exit 1
           fi
+
+  backend-pgvector-absent:
+    # Proves two things on the official PostgreSQL image, which has no pgvector:
+    # the existing migration chain does not depend on the extension, and the guard fails cleanly.
+    name: Migrations and pgvector guard without pgvector
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Official PostgreSQL 16 image, digest pinned. It does not ship pgvector.
+        image: postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+        env:
+          POSTGRES_DB: dealflow_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dealflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENVIRONMENT: test
+      DATABASE_URL: postgresql+psycopg://postgres:ci-only-postgres-password@localhost:5432/dealflow_test
+      DEALFLOW_PGVECTOR_EXPECTED: absent
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies from the lock file
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Assert pgvector is absent on this image
+        working-directory: backend
+        run: uv run python -m scripts.verify_pgvector --expect absent
+
+      - name: Apply every migration without pgvector
+        run: uv run --project backend alembic -c alembic.ini upgrade head
+
+      - name: Assert exactly one Alembic head
+        shell: bash
+        run: |
+          set -euo pipefail
+          heads="$(uv run --project backend alembic -c alembic.ini heads)"
+          count="$(printf '%s\n' "$heads" | grep -c '(head)' || true)"
+          echo "$heads"
+          if [[ "$count" != "1" ]]; then
+            echo "Expected exactly one Alembic head, found ${count}."
+            exit 1
+          fi
+
+      - name: Run the pgvector guard tests without the extension
+        working-directory: backend
+        run: uv run pytest tests/test_pgvector_support.py -q -p no:cacheprovider
 
   frontend-quality:
     name: Frontend quality gates
@@ -270,6 +348,7 @@ jobs:
       - repository-validation
       - backend-tests
       - backend-migrations
+      - backend-pgvector-absent
       - frontend-quality
 
     steps:
