@@ -27,6 +27,15 @@ export const REASON_LABELS: Record<string, string> = {
   capability_disabled: "Turned off",
   provider_not_connected: "No verified provider connection",
   consent_not_configured: "Consent policy not configured",
+  execution_gates_pending: "Waiting for the remaining approval gates",
+  entitlement_disabled: "Not included in the organization's plan",
+  entitlement_missing: "Not included in the organization's plan",
+  entitlement_unverified: "Plan could not be verified",
+  snapshot_missing: "Plan could not be verified",
+  snapshot_expired: "Plan could not be verified",
+  snapshot_unavailable: "Plan could not be verified right now",
+  snapshot_rejected: "Plan could not be verified",
+  organization_access_denied: "No current access to the product",
 };
 
 export const UNIT_LABELS: Record<string, string> = {

@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         gt=0,
         le=30,
     )
+    # Organization-level AI entitlement snapshot (WS5, ADR-0027). The key is shared with SIBVO, and the
+    # snapshot is valid for at most 30 seconds. Retry backoff is capped at 300 seconds and never extends it.
+    sibvo_org_snapshot_signing_key: SecretStr | None = Field(default=None, repr=False)
+    sibvo_org_snapshot_key_id: str = Field(default="v1", min_length=1, max_length=32)
     sso_revalidation_interval_seconds: int = Field(
         default=30,
         ge=5,

@@ -68,12 +68,14 @@ from app.db.models.subscription import Subscription
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 
+from app.db.models.organization_entitlement_snapshot import OrganizationEntitlementSnapshot
 from app.db.models.outbox_event import OutboxEvent
 from app.db.models.outbox_replay_record import OutboxReplayRecord
 from app.db.models.provider_connection import ProviderConnection
 from app.db.models.provider_verification_attempt import ProviderVerificationAttempt
 
 __all__ = [
+    "OrganizationEntitlementSnapshot",
     "OutboxEvent",
     "OutboxReplayRecord",
     "ProviderConnection",

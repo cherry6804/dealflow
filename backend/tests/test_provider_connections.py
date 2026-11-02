@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -669,7 +670,20 @@ def _decision(organization_id: uuid.UUID):
         return evaluate_capability(db, organization_id=organization_id, capability_key=CAPABILITY)
 
 
-def test_a_connected_provider_does_not_enable_ai_execution(cleanup, stub_adapter) -> None:
+def test_a_connected_provider_does_not_enable_ai_execution(cleanup, stub_adapter, monkeypatch) -> None:
+    """Readiness, plus an entitled SIBVO snapshot, still leaves AI execution closed (WS5)."""
+    from app.governance import org_entitlement
+    from tests.test_org_entitlement_snapshot import KEY, KEY_ID, FakeSibvo, signed
+
+    settings = get_settings().model_copy(update={
+        "sibvo_org_snapshot_signing_key": SecretStr(KEY),
+        "sibvo_org_snapshot_key_id": KEY_ID,
+    })
+    monkeypatch.setattr(org_entitlement, "get_settings", lambda: settings)
+    sibvo = FakeSibvo()
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    monkeypatch.setattr(org_entitlement, "fetch_organization_entitlements", sibvo)
+
     owner, organization = create_owner_manager(permissions=("provider_credentials.manage",))
     cleanup.append(organization.id)
     _create_via_service(organization.id, owner.id)
