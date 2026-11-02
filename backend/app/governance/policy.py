@@ -34,6 +34,7 @@ from app.governance.capabilities import (
     ancestry,
 )
 from app.governance.entitlement import (
+    ORG_SNAPSHOT_FEATURES,
     REASON_ENTITLEMENT_DISABLED,
     REASON_ENTITLEMENT_MISSING,
     REASON_ENTITLEMENT_UNVERIFIED,
@@ -43,6 +44,7 @@ from app.governance.entitlement import (
     REASON_WRONG_ORGANIZATION,
     verify_entitlement,
 )
+from app.governance.org_entitlement import organization_entitlement_verdict
 from app.providers.readiness import any_provider_ready
 from app.providers.registry import providers_for_capability
 
@@ -66,6 +68,11 @@ _EXPLANATIONS: dict[str, str] = {
         "A provider is connected, but the consent, budget, approval and activation gates "
         "are not yet enforced, so this capability stays disabled."
     ),
+    "snapshot_missing": "No current SIBVO entitlement snapshot is available for this organization.",
+    "snapshot_expired": "The SIBVO entitlement snapshot has expired and could not be refreshed.",
+    "snapshot_unavailable": "SIBVO could not be reached to confirm the entitlement.",
+    "snapshot_rejected": "The SIBVO entitlement response could not be verified.",
+    "organization_access_denied": "SIBVO reports that this organization has no current access.",
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
     ),
@@ -142,7 +149,10 @@ def evaluate_capability(
             capability_key, organization_id, REASON_UNKNOWN_CAPABILITY, 0, correlation_id
         )
 
-    if definition.entitlement_feature is not None:
+    if (
+        definition.entitlement_feature is not None
+        and definition.entitlement_feature not in ORG_SNAPSHOT_FEATURES
+    ):
         verdict = verify_entitlement(
             user_context,
             organization_id=organization_id,
@@ -189,7 +199,23 @@ def evaluate_capability(
                 definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
                 correlation_id,
             )
-        # Readiness is one gate. It never grants execution, so the decision stays closed.
+
+    if definition.entitlement_feature in ORG_SNAPSHOT_FEATURES:
+        # Organization-level SIBVO snapshot (WS5). Valid for background and synchronous callers alike.
+        org_verdict = organization_entitlement_verdict(
+            db,
+            organization_id=organization_id,
+            feature_key=definition.entitlement_feature,
+        )
+        if not org_verdict.allowed:
+            return _decision(
+                definition.key, organization_id, org_verdict.reason_code, policy_version,
+                correlation_id,
+            )
+
+    if definition.requires_provider:
+        # Entitlement and readiness are gates, never grants. Consent, budget, approval and activation
+        # are not built, so execution stays closed even when every gate above passes.
         return _decision(
             definition.key, organization_id, REASON_EXECUTION_GATES_PENDING, policy_version,
             correlation_id,

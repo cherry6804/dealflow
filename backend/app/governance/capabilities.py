@@ -42,6 +42,8 @@ class CapabilityDefinition:
 
 
 AI_MASTER = "ai.master"
+# SIBVO entitlement that gates every AI capability (WS5, ADR-0027). Boolean only; no limits.
+AI_GATEWAY_ENTITLEMENT = "ai_gateway"
 AUTOMATION_MASTER = "automation.master"
 AUTOMATION_DEAL_CREATED_RULES = "automation.deal_created_rules"
 
@@ -50,25 +52,32 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(AI_MASTER, CapabilityCategory.MASTER, None),
     CapabilityDefinition(AUTOMATION_MASTER, CapabilityCategory.MASTER, None),
     CapabilityDefinition(
-        "ai.assistant", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.assistant", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.agents", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.agents", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.workflow_execution", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.workflow_execution", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.predictions", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.predictions", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.content_generation", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.content_generation", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.document_processing", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.document_processing", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
         "ai.voice", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT,
         requires_consent=True,
     ),
     CapabilityDefinition(

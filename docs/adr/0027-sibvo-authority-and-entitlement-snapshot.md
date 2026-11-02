@@ -19,6 +19,13 @@ SIBVO owns identity, organizations, memberships, the product catalogue, plans, s
 
 This ADR states the target. E12 implements it.
 
+**WS5 addendum (AI entitlement).** Background and synchronous AI execution do not use the user's
+session snapshot. They use SIBVO's authenticated, signed, organization-level snapshot (contract
+section 2.4 of `sibvo-dealsflo-entitlement-contract.md`). It is valid for 30 seconds. An expired
+snapshot never authorizes execution, and a refresh failure denies it. The boolean `ai_gateway`
+feature is the only entitlement it carries. It is default off and is mapped to no commercial plan
+until a separate approval.
+
 ## Alternatives Considered
 
 - **Keep the local tables as an authoritative second source:** rejected.
