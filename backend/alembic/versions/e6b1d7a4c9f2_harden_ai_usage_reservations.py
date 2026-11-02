@@ -17,6 +17,11 @@ If an existing row already violates either rule, this migration fails and change
 Downgrade drops the constraints, index and columns. Reservations that are still open remain in
 the RESERVED state and lose their expiry, so they must be settled or released manually after a
 downgrade. Released and reversed history is kept.
+
+DOWNGRADE RESTRICTION: settle or release every open reservation (status 'reserved') before running
+this downgrade. The pre-WP1 code has no reaper, so an open reservation would hold its budget
+indefinitely. The downgrade does not enforce this. See docs/architecture/ai-usage-reservations.md,
+section 9.1.
 """
 
 from collections.abc import Sequence

@@ -122,8 +122,36 @@ REVERSED rows are not changed.
 
 If any existing row violates a new check constraint, the migration fails and changes nothing.
 
-Downgrade removes the columns and constraints. Open reservations remain RESERVED and lose their
-expiry. They must then be settled or released by hand. Released and reversed history is kept.
+### 9.1 Downgrade restriction: settle or release open reservations first
+
+**Operators must settle or release every open reservation before downgrading past this revision.**
+A downgrade is not safe while any row has `status = 'reserved'`.
+
+What a downgrade does:
+- Drops `request_fingerprint`, `reservation_expires_at` and `released_reason`, and both check
+  constraints and the partial index.
+- Keeps every row. Released, reversed and recorded rows keep their status and quantities.
+- Leaves open reservations in `reserved` with no expiry. The pre-WP1 code has no reaper, so nothing
+  will ever release them, and their `reserved_quantity` stays held in the budget indefinitely.
+- Loses the distinction between an expired and a manually released reservation. Both become
+  `released`, because the `released_reason` column is removed.
+
+Why this is not enforced by the migration: the downgrade could refuse when open reservations exist,
+but that changes the downgrade contract and blocks a rollback that may be urgent. It is a
+decision for the engineering lead, recorded as an open item in the WP1 PR.
+
+Procedure before a downgrade:
+1. Count open reservations: `SELECT count(*) FROM ai_usage_events WHERE status = 'reserved';`
+2. For each, settle with the actual quantity, or release it, using the existing operations.
+   Settle and release are idempotent, so running them twice is safe.
+3. Confirm the count is zero, then downgrade.
+
+The downgrade test in `backend/tests/test_migration_usage_reservation_hardening.py` deliberately
+includes an open reservation and proves that it survives the downgrade and the re-upgrade. That
+test documents the behaviour. It is not a claim that the downgrade is safe with open reservations.
+
+Re-upgrade gives the surviving open reservation a new expiry of `created_at + 15 minutes`. Because
+`created_at` is in the past, the reaper releases it on its next cycle.
 
 ## 10. Known limitations
 
