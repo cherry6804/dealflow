@@ -69,9 +69,11 @@ from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.outbox_replay_record import OutboxReplayRecord
 
 __all__ = [
     "OutboxEvent",
+    "OutboxReplayRecord",
     "Activity",
     "AuditEvent",
     "AuthLoginRateLimit",

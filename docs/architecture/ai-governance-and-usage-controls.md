@@ -169,19 +169,24 @@ reservations against one budget; exactly one is refused.
 `70`, `85` and `100` percent thresholds enqueue `ai.usage.threshold_reached` to the transactional outbox.
 One event is enqueued per period at the highest threshold newly crossed.
 
-**Delivery.** The outbox worker registers `deliver_usage_threshold_alert`
+**Delivery.** The worker process registers `deliver_usage_threshold_alert`
 (`app/governance/alert_delivery.py`). It creates an **in-app notification** for each active member whose
 role grants `governance.budgets.manage`. It sends no email, SMS, or other external message. Notifications
 are keyed by event, recipient and threshold, so a retry does not duplicate them. An administrator who has
 turned off notifications for this type is skipped, which is their preference.
 
-**Failure.** If no notification can be created (no administrator, or every administrator has notifications
-off), the handler raises. The event is retried and then dead-lettered, so the failure stays visible. The
-event is marked `delivered` only after the handler returns without error.
+**Failure.** If no administrator can receive the alert, or every administrator has notifications off, the
+handler raises a permanent error. The event is dead-lettered at once with reason `no_administrator` or
+`no_recipient_accepts_alerts`, and it is not retried, because no retry can succeed until a person corrects the
+configuration. An operator replays it after the correction (WS3, ADR-0026). The event is marked `delivered` only
+after the handler returns without error.
 
-**The worker must run.** Delivery happens only in the outbox worker process (`python -m app.outbox.worker`).
-The repository defines no deployment of that worker, so until an operator runs it, an alert remains pending.
-An enqueued alert is not a delivered alert.
+**Alert state.** The budget's `last_alert_percent` advances only in the transaction that records a successful
+delivery. A failed alert therefore stays re-announceable, and a replay re-announces it.
+
+**The worker must run.** Delivery happens only in the worker process (`python -m app.outbox.worker --serve`,
+see `docs/development/worker-deployment.md`). The repository defines no deployment of that worker, so until an
+operator deploys it, an alert remains pending. An enqueued alert is not a delivered alert.
 
 **Tested.** `tests/test_usage_alert_delivery.py`: delivery to the administrator and `delivered` status;
 no notification for a user without the permission; idempotent redelivery; and dead-lettering when no
@@ -295,7 +300,7 @@ legal-hold bypass by external deletion.
 - Consent, channel policy, approvals, provider health, and the AI gateway are not built. Channel and voice
   capabilities deny until they exist.
 - No production usage is recorded (section 4.6).
-- Threshold alerts are delivered only by a running outbox worker (section 4.4).
+- Threshold alerts are delivered only by a running worker process (section 4.4). Dead-lettered alerts need an operator replay.
 - Retention is not enforced (section 5.2). Export artifacts and deletion execution are not built.
 - The entitlement snapshot is bounded by the E12 revalidation interval (section 2.2).
 - Transactional account email is outside the capability model (section 11, entry 7).
@@ -344,7 +349,7 @@ ADR-0029 Amendment C.
 | Story | Status | Reason |
 |---|---|---|
 | DFR1-006 | **Partial** | Foundation, entitlement enforcement and one entry point. DFR1-002 open. Consent, provider, approval and budget gates not implemented for any AI capability. |
-| DFR1-017 | **Partial** | Ledger and budgets verified by tests. Alert delivery to administrators implemented (in-app, outbox worker). No production producer. |
+| DFR1-017 | **Partial** | Ledger and budgets verified by tests. Alert delivery to administrators implemented (in-app, worker process; permanent failures dead-lettered and replayable). No production producer. |
 | DFR1-050 | **Partial** | Classification, legal holds, eligibility and request records. No retention enforcement, deletion, anonymization, export artifacts or provider deletion. |
 | DFR1-053 | **Blocked** | Dependencies not delivered. |
 
