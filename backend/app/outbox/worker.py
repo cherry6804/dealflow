@@ -48,8 +48,10 @@ def run_forever(
 def _register_handlers() -> None:
     # Governance handlers (usage alert delivery) must be registered before any dispatch.
     from app.governance.alert_delivery import register_governance_handlers
+    from app.providers.verification import register_provider_handlers
 
     register_governance_handlers()
+    register_provider_handlers()
 
 
 def main(argv: list[str] | None = None) -> int:

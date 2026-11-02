@@ -66,7 +66,7 @@ CATEGORIES: tuple[DataCategory, ...] = (
     DataCategory("ai.execution_traces", "AI execution traces", Sensitivity.SENSITIVE_CONTENT, RetentionTreatment.ORGANIZATION_CONFIGURABLE, False,
                  "Agent runtime (DFR1-019) is not built."),
     DataCategory("security.credentials", "Provider credentials and secret references", Sensitivity.SECRET_REFERENCE, RetentionTreatment.NEVER_DELETE_BY_CUSTOMER, False,
-                 "Secrets are never exported. No provider connection exists yet."),
+                 "Secrets are never exported. Provider connection status is not part of any export yet (ADR-0032)."),
 )
 
 CATEGORY_BY_KEY: dict[str, DataCategory] = {category.key: category for category in CATEGORIES}

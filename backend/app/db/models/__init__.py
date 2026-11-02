@@ -70,10 +70,14 @@ from app.db.models.user import User
 
 from app.db.models.outbox_event import OutboxEvent
 from app.db.models.outbox_replay_record import OutboxReplayRecord
+from app.db.models.provider_connection import ProviderConnection
+from app.db.models.provider_verification_attempt import ProviderVerificationAttempt
 
 __all__ = [
     "OutboxEvent",
     "OutboxReplayRecord",
+    "ProviderConnection",
+    "ProviderVerificationAttempt",
     "Activity",
     "AuditEvent",
     "AuthLoginRateLimit",

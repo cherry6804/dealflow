@@ -157,6 +157,14 @@ class Settings(BaseSettings):
     database_statement_timeout_ms: int = Field(default=0, ge=0, le=3600000)
     database_idle_transaction_timeout_ms: int = Field(default=0, ge=0, le=3600000)
 
+    # Provider connections (ADR-0032). Live adapters are off by default and never enabled in CI.
+    provider_live_adapters_enabled: bool = False
+    provider_verification_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    provider_verification_failure_threshold: int = Field(default=3, ge=1, le=20)
+    provider_verification_interval_hours: int = Field(default=12, ge=1, le=720)
+    provider_verification_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
+    provider_connection_freshness_hours: int = Field(default=24, ge=1, le=720)
+
     # Encrypted transactional email outbox.
     email_outbox_encryption_key: SecretStr | None = Field(
         default=None,
