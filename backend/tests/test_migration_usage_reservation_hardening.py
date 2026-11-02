@@ -119,16 +119,34 @@ def _organization(connection: psycopg.Connection) -> uuid.UUID:
     return organization_id
 
 
-def _columns(connection: psycopg.Connection) -> set[str]:
+WP1_COLUMNS = {"request_fingerprint", "reservation_expires_at", "released_reason"}
+WP1_CONSTRAINTS = {"ck_ai_usage_events_status", "ck_ai_usage_events_reservation_expiry"}
+
+
+# The helpers below are scoped to the disposable schema by name. information_schema lists every
+# schema the role can see, and the suite's own create_all also builds public.ai_usage_events with
+# the WP1 columns. An unscoped lookup therefore reports public's columns and says nothing about the
+# schema under test.
+def _columns(connection: psycopg.Connection, schema: str) -> set[str]:
     rows = connection.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = 'ai_usage_events'"
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = 'ai_usage_events'
+        """,
+        (schema,),
     ).fetchall()
     return {row[0] for row in rows}
 
 
-def _constraint_names(connection: psycopg.Connection) -> set[str]:
+def _constraint_names(connection: psycopg.Connection, schema: str) -> set[str]:
     rows = connection.execute(
-        "SELECT conname FROM pg_constraint WHERE conrelid = 'ai_usage_events'::regclass"
+        """
+        SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = %s AND t.relname = 'ai_usage_events'
+        """,
+        (schema,),
     ).fetchall()
     return {row[0] for row in rows}
 
@@ -167,8 +185,8 @@ def test_wp1_adds_columns_and_constraints_that_guard_expiry_and_status(schema) -
     _alembic(schema, "upgrade", WP1)
 
     with _connect(schema) as connection:
-        assert {"request_fingerprint", "reservation_expires_at", "released_reason"} <= _columns(connection)
-        assert {"ck_ai_usage_events_status", "ck_ai_usage_events_reservation_expiry"} <= _constraint_names(connection)
+        assert _columns(connection, schema) >= WP1_COLUMNS
+        assert _constraint_names(connection, schema) >= WP1_CONSTRAINTS
 
         organization_id = _organization(connection)
         # A reserved row without an expiry must be rejected by the database, not only by the code.
@@ -195,6 +213,18 @@ def test_wp1_adds_columns_and_constraints_that_guard_expiry_and_status(schema) -
             )
 
 
+HISTORY_QUERY = """
+    SELECT idempotency_key, status, reserved_quantity, quantity, occurred_at, created_at
+    FROM ai_usage_events
+    WHERE organization_id = %s
+    ORDER BY idempotency_key
+"""
+
+
+def _history(connection: psycopg.Connection, organization_id: uuid.UUID) -> list[tuple]:
+    return connection.execute(HISTORY_QUERY, (organization_id,)).fetchall()
+
+
 def test_downgrade_and_reupgrade_preserve_history(schema) -> None:
     _alembic(schema, "upgrade", PRE_WP1)
     with _connect(schema) as connection:
@@ -203,23 +233,40 @@ def test_downgrade_and_reupgrade_preserve_history(schema) -> None:
             connection, organization_id=organization_id, key="cycle-recorded",
             status="recorded", created_at="2024-05-01T09:00:00+00:00",
         )
+        _insert_usage(
+            connection, organization_id=organization_id, key="cycle-released",
+            status="released", created_at="2024-05-01T09:00:00+00:00",
+        )
+        _insert_usage(
+            connection, organization_id=organization_id, key="cycle-open",
+            status="reserved", created_at="2024-05-01T09:00:00+00:00",
+        )
+        before = _history(connection, organization_id)
 
     _alembic(schema, "upgrade", WP1)
+    with _connect(schema) as connection:
+        # WP1 backfills an expiry on the open reservation. That is the only change to existing data.
+        assert _history(connection, organization_id) == before
+
     _alembic(schema, "downgrade", PRE_WP1)
 
     with _connect(schema) as connection:
-        assert not ({"request_fingerprint", "reservation_expires_at", "released_reason"} & _columns(connection))
-        assert "ck_ai_usage_events_status" not in _constraint_names(connection)
-        kept = connection.execute(
-            "SELECT count(*) FROM ai_usage_events WHERE idempotency_key = 'cycle-recorded'"
-        ).fetchone()
-        assert kept[0] == 1
+        assert _columns(connection, schema).isdisjoint(WP1_COLUMNS)
+        assert _constraint_names(connection, schema).isdisjoint(WP1_CONSTRAINTS)
+        # Downgrade must keep every row exactly as it was before WP1 existed.
+        assert _history(connection, organization_id) == before
 
     _alembic(schema, "upgrade", WP1)
 
     with _connect(schema) as connection:
-        assert {"request_fingerprint", "reservation_expires_at", "released_reason"} <= _columns(connection)
-        kept = connection.execute(
-            "SELECT count(*) FROM ai_usage_events WHERE idempotency_key = 'cycle-recorded'"
+        assert _columns(connection, schema) >= WP1_COLUMNS
+        assert _constraint_names(connection, schema) >= WP1_CONSTRAINTS
+        # Re-upgrade is safe: the same history is present, and the open reservation is given an expiry
+        # again. Its created_at is in the past, so the reaper will release it on its next run.
+        assert _history(connection, organization_id) == before
+        expiry = connection.execute(
+            "SELECT reservation_expires_at, created_at FROM ai_usage_events "
+            "WHERE organization_id = %s AND idempotency_key = 'cycle-open'",
+            (organization_id,),
         ).fetchone()
-        assert kept[0] == 1
+        assert expiry[0] == expiry[1] + timedelta(minutes=15)
