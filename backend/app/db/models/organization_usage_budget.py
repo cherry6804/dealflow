@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Date,
     DateTime,
@@ -22,8 +23,10 @@ class OrganizationUsageBudget(Base):
     """A limit on one usage unit for one organization over one period.
 
     ``reserved_quantity`` holds quantity promised to in-flight billable work.
-    ``consumed_quantity`` holds settled usage. ``last_alert_percent`` is the highest
-    threshold (70, 85 or 100) already announced, so each alert fires once.
+    ``consumed_quantity`` holds settled usage. ``alerted_thresholds`` lists every configured
+    threshold already covered by a delivered alert for this period, so each alert fires once even
+    when the organization changes its thresholds. ``last_alert_percent`` is kept as the highest
+    delivered threshold for compatibility with WP1 readers. It is derived, not a source of truth.
     """
 
     __tablename__ = "organization_usage_budgets"
@@ -47,6 +50,11 @@ class OrganizationUsageBudget(Base):
     reserved_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     consumed_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_alert_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # A JSON list rather than a PostgreSQL array, so every model compiles on the SQLite engine that some
+    # test modules use. Values are whole numbers from 1 to 100, validated before they are stored.
+    alerted_thresholds: Mapped[list[int]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

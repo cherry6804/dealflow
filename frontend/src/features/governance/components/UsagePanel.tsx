@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { governanceApi, type BudgetList, type BudgetStatus } from "../../../services/governanceApi";
 import { formatUnitQuantity, unitLabel } from "../governanceLabels";
+import AlertThresholdsPanel from "./AlertThresholdsPanel";
 import ConfirmChangeDialog from "./ConfirmChangeDialog";
 
 interface UsagePanelProps {
@@ -145,6 +146,8 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
           })}
         </tbody>
       </table>
+
+      <AlertThresholdsPanel canManage={canManage} />
 
       {editing !== null ? (
         <ConfirmChangeDialog

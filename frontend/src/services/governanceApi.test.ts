@@ -29,6 +29,8 @@ describe("governanceApi", () => {
     await governanceApi.setCapability("automation.master", true);
     await governanceApi.getBudgets();
     await governanceApi.setBudget("tokens_input", 1000);
+    await governanceApi.getAlertThresholds();
+    await governanceApi.setAlertThresholds([70, 85, 100]);
     await governanceApi.listDataCategories();
     await governanceApi.listRetention();
     await governanceApi.setRetention("crm.leads", 90);
@@ -46,9 +48,10 @@ describe("governanceApi", () => {
       ...patch.mock.calls.map(([path]) => path),
     ];
 
-    expect(paths).toHaveLength(14);
+    expect(paths).toHaveLength(16);
     expect(paths.every((path) => path.startsWith("/ai/governance/"))).toBe(true);
     expect(paths).toContain("/ai/governance/access");
+    expect(paths).toContain("/ai/governance/usage/alert-thresholds");
     expect(paths).toContain("/ai/governance/privacy/legal-holds/hold-1/release");
     expect(paths).toContain("/ai/governance/privacy/requests/request-1/cancel");
   });
@@ -63,6 +66,15 @@ describe("governanceApi", () => {
     });
     expect(put).toHaveBeenCalledWith("/ai/governance/privacy/retention/crm.leads", {
       retention_days: null,
+      confirm: true,
+    });
+  });
+
+  it("sends the three alert thresholds as an explicit, confirmed change", async () => {
+    await governanceApi.setAlertThresholds([50, 80, 100]);
+
+    expect(put).toHaveBeenCalledWith("/ai/governance/usage/alert-thresholds", {
+      thresholds: [50, 80, 100],
       confirm: true,
     });
   });

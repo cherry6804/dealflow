@@ -37,6 +37,13 @@ export interface BudgetList {
   items: BudgetStatus[];
 }
 
+export interface AlertThresholds {
+  thresholds: number[];
+  is_default: boolean;
+  version: number;
+  updated_at: string | null;
+}
+
 export interface DataCategory {
   category_key: string;
   label: string;
@@ -103,6 +110,17 @@ export const governanceApi = {
   setBudget(unit: string, limitQuantity: number): Promise<BudgetStatus> {
     return api.put<BudgetStatus>(`/ai/governance/usage/budgets/${unit}`, {
       limit_quantity: limitQuantity,
+      confirm: true,
+    });
+  },
+
+  getAlertThresholds(): Promise<AlertThresholds> {
+    return api.get<AlertThresholds>("/ai/governance/usage/alert-thresholds");
+  },
+
+  setAlertThresholds(thresholds: readonly number[]): Promise<AlertThresholds> {
+    return api.put<AlertThresholds>("/ai/governance/usage/alert-thresholds", {
+      thresholds: [...thresholds],
       confirm: true,
     });
   },
