@@ -39,6 +39,7 @@ from sqlalchemy import text
 from app.auth.email_outbox_worker import process_one_email
 from app.config import get_settings
 from app.db.session import SessionLocal
+from app.governance.usage_ledger import expire_stale_reservations
 from app.outbox.service import dispatch_due_events, registered_event_types
 from app.providers.service import schedule_due_verifications
 
@@ -253,6 +254,19 @@ def _outbox_cycle(worker_id: str, stop: threading.Event) -> bool:
     with SessionLocal() as db:
         schedule_due_verifications(db, now=datetime.now(UTC))
         db.commit()
+    # Open AI usage reservations past their expiry are released here. Bounded per cycle (WS6 WP1).
+    with SessionLocal() as db:
+        reaped = expire_stale_reservations(db)
+        db.commit()
+    if reaped.expired or reaped.skipped:
+        logger.info(
+            "Usage reservation reaper finished",
+            extra={
+                "worker_id": worker_id,
+                "expired": reaped.expired,
+                "skipped": reaped.skipped,
+            },
+        )
     with SessionLocal() as db:
         result = dispatch_due_events(db, worker_id=worker_id, should_stop=stop.is_set)
     if result.claimed:
