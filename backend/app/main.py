@@ -28,6 +28,9 @@ from app.api.notifications import router as notifications_router
 from app.api.organizations import router as organizations_router
 from app.api.payment_milestones import router as payment_milestones_router
 from app.api.properties import router as properties_router
+from app.api.provider_connections import (
+    canonical_router as ai_provider_connections_router,
+)
 from app.api.provider_credentials import (
     canonical_router as ai_provider_credentials_router,
 )
@@ -116,6 +119,7 @@ def create_app() -> FastAPI:
     application.include_router(ai_governance_router)
     application.include_router(governance_router)
     application.include_router(ai_provider_credentials_router)
+    application.include_router(ai_provider_connections_router)
     application.include_router(provider_credentials_router)
     application.include_router(invitation_signup_router)
     application.include_router(sso_router)

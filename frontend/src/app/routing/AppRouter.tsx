@@ -76,6 +76,9 @@ const NotificationPreferencesPage = lazy(
 const TeamAccessPage = lazy(
   () => import("../../features/settings/pages/TeamAccessPage"),
 );
+const AiProvidersPage = lazy(
+  () => import("../../features/ai-providers/AiProvidersPage"),
+);
 const GovernancePage = lazy(
   () => import("../../features/governance/pages/GovernancePage"),
 );
@@ -215,6 +218,7 @@ export default function AppRouter() {
             {/* Organization and team settings */}
             <Route path="/settings" element={<TeamAccessPage />} />
             <Route path="/settings/governance" element={<GovernancePage />} />
+            <Route path="/settings/ai-providers" element={<AiProvidersPage />} />
 
             {/* Modules not yet implemented */}
             <Route path="/follow-ups" element={<FollowUpsPage />} />

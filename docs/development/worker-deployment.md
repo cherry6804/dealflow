@@ -78,6 +78,10 @@ Workers that predate the migration do not set `claim_token`, so the new fence ca
 
 Run more worker processes to increase throughput. Each process claims its own batch with row locks, and claims are fenced, so processes never handle the same claim at the same time. Start with two replicas for availability and scale from there. The test suite runs four concurrent workers against one database.
 
+## Provider verification
+
+The worker also verifies external provider connections (ADR-0032). Each cycle it queues due re-checks, then runs queued checks under a row lock, so two checks for one connection never overlap. Connections stay `verifying` or `unverified` until a check succeeds, and freshness expiry makes an unchecked connection not ready. Without a running worker, provider connections cannot become ready. Live provider calls are off unless `PROVIDER_LIVE_ADAPTERS_ENABLED` is set, and that flag must never be enabled in CI.
+
 ## Logs
 
 Each line is a JSON object with `timestamp`, `level`, `logger`, `message` and, where relevant, `worker_id`, `loop`, `outbox_event_id`, `event_type`, `organization_id`, `correlation_id`, `attempt`, `outcome`, `dead_letter_reason`, `error_type`. Payloads, recipients, tokens and exception messages are never logged. Useful outcomes:

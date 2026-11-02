@@ -25,9 +25,9 @@ from app.provider_secrets.cipher import (
 from app.provider_secrets.errors import ProviderSecretsDecryptionError
 from app.provider_secrets.key_provider import build_key_provider
 from app.provider_secrets.redaction import ProviderSecret
+from app.providers.registry import SUPPORTED_PROVIDER_KEYS
 
-# Only providers with a working adapter are accepted. Others are not claimed as supported.
-SUPPORTED_PROVIDER_KEYS = frozenset({"openai"})
+# SUPPORTED_PROVIDER_KEYS comes from the code-owned provider registry (ADR-0032).
 
 MAX_SECRET_LENGTH = 512
 MAX_LABEL_LENGTH = 120

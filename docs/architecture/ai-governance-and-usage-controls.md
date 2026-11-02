@@ -51,7 +51,7 @@ first failing gate decides the reason:
    - feature absent from the plan: `entitlement_missing`; present but disabled: `entitlement_disabled`.
 3. **Organization switches:** walk the chain from the top master down. `master_disabled` above the
    capability, `capability_disabled` on the capability itself.
-4. **Provider required:** denied (`provider_not_connected`). No provider integration exists.
+4. **Provider required:** denied (`provider_not_connected`) unless a verified provider connection is ready (ADR-0032). A ready provider is still denied with `execution_gates_pending`, because the consent, budget, approval and activation gates are not built. A connection never enables execution by itself.
 5. **Consent required:** denied (`consent_not_configured`). No consent model exists.
 6. Otherwise allowed (`allowed`).
 

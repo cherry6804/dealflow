@@ -40,6 +40,7 @@ from app.auth.email_outbox_worker import process_one_email
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.outbox.service import dispatch_due_events, registered_event_types
+from app.providers.service import schedule_due_verifications
 
 logger = logging.getLogger("dealflow.worker")
 
@@ -248,6 +249,10 @@ def _run_loop(
 
 
 def _outbox_cycle(worker_id: str, stop: threading.Event) -> bool:
+    # Due provider checks are queued here, in the worker, and never on an API request (ADR-0032).
+    with SessionLocal() as db:
+        schedule_due_verifications(db, now=datetime.now(UTC))
+        db.commit()
     with SessionLocal() as db:
         result = dispatch_due_events(db, worker_id=worker_id, should_stop=stop.is_set)
     if result.claimed:
@@ -287,8 +292,10 @@ def serve(
     port = settings.outbox_worker_probe_port if probe_port is None else probe_port
 
     from app.governance.alert_delivery import register_governance_handlers
+    from app.providers.verification import register_provider_handlers
 
     register_governance_handlers()
+    register_provider_handlers()
     configure_worker_logging()
 
     stop = stop_event or threading.Event()

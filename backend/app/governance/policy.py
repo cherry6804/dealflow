@@ -8,8 +8,9 @@ code. The frontend never decides; every execution entry point calls this engine.
 Gates implemented here:
 1. Capability is known to the catalogue.
 2. Master and capability switches are enabled, checked from the top of the chain.
-3. Capabilities that need a provider are denied until a provider connection exists
-   (no provider integration is built yet, so these always deny).
+3. Capabilities that need a provider are denied until a verified provider connection exists
+   (ADR-0032). A ready provider is not an execution grant: the capability is then denied with
+   ``execution_gates_pending`` until consent, budget, approval and activation gates are built.
 4. Capabilities that need consent are denied until a consent model exists (not built).
 
 Gates not implemented in this slice, and therefore not claimed: SIBVO entitlement,
@@ -42,6 +43,8 @@ from app.governance.entitlement import (
     REASON_WRONG_ORGANIZATION,
     verify_entitlement,
 )
+from app.providers.readiness import any_provider_ready
+from app.providers.registry import providers_for_capability
 
 REASON_ALLOWED = "allowed"
 REASON_UNKNOWN_CAPABILITY = "unknown_capability"
@@ -49,6 +52,7 @@ REASON_MASTER_DISABLED = "master_disabled"
 REASON_CAPABILITY_DISABLED = "capability_disabled"
 REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
 REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
+REASON_EXECUTION_GATES_PENDING = "execution_gates_pending"
 
 _EXPLANATIONS: dict[str, str] = {
     REASON_ALLOWED: "The capability is enabled for this organization.",
@@ -57,6 +61,10 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_CAPABILITY_DISABLED: "This capability is turned off for the organization.",
     REASON_PROVIDER_NOT_CONNECTED: (
         "A verified provider connection is required and none is available."
+    ),
+    REASON_EXECUTION_GATES_PENDING: (
+        "A provider is connected, but the consent, budget, approval and activation gates "
+        "are not yet enforced, so this capability stays disabled."
     ),
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
@@ -171,8 +179,19 @@ def evaluate_capability(
             )
 
     if definition.requires_provider:
+        provider_ready = any_provider_ready(
+            db,
+            organization_id=organization_id,
+            provider_keys=providers_for_capability(definition.key),
+        )
+        if not provider_ready:
+            return _decision(
+                definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
+                correlation_id,
+            )
+        # Readiness is one gate. It never grants execution, so the decision stays closed.
         return _decision(
-            definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
+            definition.key, organization_id, REASON_EXECUTION_GATES_PENDING, policy_version,
             correlation_id,
         )
 
