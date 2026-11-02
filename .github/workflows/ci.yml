@@ -176,11 +176,15 @@ jobs:
           app/outbox
           app/db/models/outbox_event.py
           app/db/pgvector.py
+          app/db/models/outbox_replay_record.py
+          app/governance/alert_delivery.py
           scripts/verify_pgvector.py
           tests/test_outbox.py
+          tests/test_outbox_worker_operations.py
           tests/test_migrations_history.py
           tests/test_pgvector_support.py
           alembic/versions/e5a7c1d9b2f0_create_outbox_events.py
+          alembic/versions/a1f7c3e9d2b6_outbox_worker_operating_model.py
 
       - name: Run the backend test suite
         working-directory: backend

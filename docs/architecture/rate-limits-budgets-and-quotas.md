@@ -57,7 +57,7 @@ No public endpoint uses this response yet. The automation path records the denia
 Budgets are monthly limits on metered usage per organization and unit. They are enforced through `app/governance/usage_ledger.py`:
 
 - `reserve` before a metered call and `settle` with actual usage after it, keyed by an idempotency key, so retries never double-count.
-- Thresholds at 70, 85 and 100 percent produce in-app alerts, delivered by the outbox worker when it runs.
+- Thresholds at 70, 85 and 100 percent produce in-app alerts, delivered by the worker process when it runs. The alert state advances only on delivery.
 - No production producer exists yet. Budget enforcement for AI calls will be exercised by the AI gateway (DFR1-015).
 
 Rate limits never replace budgets. A request can pass the rate limit and still be denied by a budget, and the reverse is also true.

@@ -140,6 +140,22 @@ class Settings(BaseSettings):
     outbox_max_backoff_seconds: int = Field(default=3600, ge=1, le=86400)
     outbox_lease_seconds: int = Field(default=300, ge=10, le=3600)
     outbox_batch_size: int = Field(default=50, ge=1, le=500)
+    outbox_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+    # Full-jitter retry delays between 50% and 100% of the capped backoff.
+    outbox_jitter_enabled: bool = True
+    # Comma-separated operator names allowed to run the replay command. Empty refuses every replay.
+    outbox_operator_allowlist: str = Field(default="", max_length=1000)
+    # Background worker runtime (``python -m app.outbox.worker --serve``).
+    outbox_worker_probe_host: str = Field(default="127.0.0.1", max_length=255)
+    outbox_worker_probe_port: int = Field(default=8081, ge=1, le=65535)
+    # A loop without a heartbeat for this long makes liveness fail.
+    outbox_worker_stale_seconds: float = Field(default=120.0, gt=0, le=3600)
+    outbox_worker_max_consecutive_errors: int = Field(default=10, ge=1, le=1000)
+    outbox_worker_shutdown_grace_seconds: float = Field(default=30.0, gt=0, le=600)
+    # Server-side limits applied to every database session when greater than zero. Zero keeps the
+    # PostgreSQL defaults. Worker deployments should set both (see docs/development/worker-deployment.md).
+    database_statement_timeout_ms: int = Field(default=0, ge=0, le=3600000)
+    database_idle_transaction_timeout_ms: int = Field(default=0, ge=0, le=3600000)
 
     # Encrypted transactional email outbox.
     email_outbox_encryption_key: SecretStr | None = Field(

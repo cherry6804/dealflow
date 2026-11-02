@@ -188,9 +188,10 @@ def _announce_threshold(
     after_used: int,
 ) -> None:
     crossed = _threshold_crossed(before_used, after_used, budget.limit_quantity)
+    # last_alert_percent advances only when the alert is delivered (WS3, D-5). Until then the
+    # idempotency key stops a second event for the same threshold from being queued.
     if crossed is None or crossed <= budget.last_alert_percent:
         return
-    budget.last_alert_percent = crossed
     enqueue_event(
         db,
         organization_id=budget.organization_id,

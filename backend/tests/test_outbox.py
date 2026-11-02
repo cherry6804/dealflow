@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.db.base import Base
 from app.db.models.organization import Organization
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.outbox_replay_record import OutboxReplayRecord
 from app.db.session import SessionLocal, engine
 from app.outbox import reporting
 from app.outbox.service import (
@@ -39,10 +40,12 @@ def clean_outbox() -> Generator[None]:
     """
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
+        db.execute(delete(OutboxReplayRecord))
         db.execute(delete(OutboxEvent))
         db.commit()
     yield
     with SessionLocal() as db:
+        db.execute(delete(OutboxReplayRecord))
         db.execute(delete(OutboxEvent))
         db.commit()
 
