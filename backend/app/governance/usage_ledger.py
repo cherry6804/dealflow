@@ -60,11 +60,11 @@ from app.db.models.ai_usage_event import (
     AiUsageEvent,
 )
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
+from app.governance.alert_thresholds import read_alert_thresholds
 from app.outbox.service import enqueue_event
 
 logger = logging.getLogger(__name__)
 
-THRESHOLDS: tuple[int, ...] = (70, 85, 100)
 THRESHOLD_EVENT_TYPE = "ai.usage.threshold_reached"
 
 # How long a reservation may stay open before the reaper releases it. A settlement after this
@@ -310,27 +310,41 @@ def configure_budget(
     return budget
 
 
-def _threshold_crossed(before: int, after: int, limit: int) -> int | None:
-    """Return the highest threshold newly reached, or None. ``limit`` must be positive."""
+def highest_pending_threshold(
+    thresholds: tuple[int, ...],
+    *,
+    limit: int,
+    used: int,
+    alerted: list[int],
+) -> int | None:
+    """Return the highest configured threshold that usage has reached and no delivered alert covers.
+
+    State-based, not crossing-based. A threshold reached before the organization configured it, or
+    reached while the alert was being queued, is still pending until its alert is delivered. The
+    comparison ``used * 100 >= threshold * limit`` is exact for whole numbers. Only the highest pending
+    threshold is returned, so one change that reaches several thresholds yields one alert.
+    """
     if limit <= 0:
         return None
-    before_pct = before * 100 // limit
-    after_pct = after * 100 // limit
-    reached = [t for t in THRESHOLDS if before_pct < t <= after_pct]
-    return max(reached) if reached else None
+    pending = [t for t in thresholds if used * 100 >= t * limit and t not in alerted]
+    return max(pending) if pending else None
 
 
-def _announce_threshold(
-    db: Session,
-    *,
-    budget: OrganizationUsageBudget,
-    before_used: int,
-    after_used: int,
-) -> None:
-    crossed = _threshold_crossed(before_used, after_used, budget.limit_quantity)
-    # last_alert_percent advances only when the alert is delivered (WS3, D-5). Until then the
-    # idempotency key stops a second event for the same threshold from being queued.
-    if crossed is None or crossed <= budget.last_alert_percent:
+def _announce_threshold(db: Session, *, budget: OrganizationUsageBudget) -> None:
+    """Queue the alert for the highest pending threshold, if any.
+
+    Delivery marks the threshold as covered (see ``deliver_usage_threshold_alert``). Until then the
+    idempotency key ``usage-threshold:{budget}:{threshold}`` makes a repeat call return the queued event,
+    so retries and concurrent usage queue at most one alert per threshold.
+    """
+    settings = read_alert_thresholds(db, organization_id=budget.organization_id)
+    pending = highest_pending_threshold(
+        settings.values,
+        limit=budget.limit_quantity,
+        used=_used(budget),
+        alerted=list(budget.alerted_thresholds or []),
+    )
+    if pending is None:
         return
     enqueue_event(
         db,
@@ -338,14 +352,19 @@ def _announce_threshold(
         event_type=THRESHOLD_EVENT_TYPE,
         aggregate_type="organization_usage_budget",
         aggregate_id=str(budget.id),
-        idempotency_key=f"usage-threshold:{budget.id}:{crossed}",
+        idempotency_key=f"usage-threshold:{budget.id}:{pending}",
         payload={
             "unit": budget.unit,
-            "threshold_percent": crossed,
+            "threshold_percent": pending,
             "limit_quantity": budget.limit_quantity,
             "period_start": budget.period_start.isoformat(),
         },
     )
+
+
+def announce_pending_threshold(db: Session, *, budget: OrganizationUsageBudget) -> None:
+    """Public entry point for callers that change a budget or its thresholds."""
+    _announce_threshold(db, budget=budget)
 
 
 def reserve(
@@ -434,10 +453,9 @@ def reserve(
     if not created:
         return entry
 
-    before = _used(budget)
     budget.reserved_quantity += quantity
     db.flush()
-    _announce_threshold(db, budget=budget, before_used=before, after_used=_used(budget))
+    _announce_threshold(db, budget=budget)
     db.flush()
     return entry
 
@@ -482,13 +500,12 @@ def settle(
     if event.reservation_expires_at is None or event.reservation_expires_at <= moment:
         raise ReservationExpiredError("The reservation expired and cannot be settled.")
 
-    before = _used(budget)
     _free_reservation(budget, event)
     budget.consumed_quantity += actual_quantity
     event.quantity = actual_quantity
     event.status = AiUsageEvent.STATUS_RECORDED
     db.flush()
-    _announce_threshold(db, budget=budget, before_used=before, after_used=_used(budget))
+    _announce_threshold(db, budget=budget)
     db.flush()
     return event
 
@@ -678,10 +695,9 @@ def record(
     if not created:
         return entry
 
-    before = _used(budget)
     budget.consumed_quantity += quantity
     db.flush()
-    _announce_threshold(db, budget=budget, before_used=before, after_used=_used(budget))
+    _announce_threshold(db, budget=budget)
     db.flush()
     return entry
 
@@ -787,6 +803,8 @@ def change_budget(
         limit_quantity=limit_quantity,
         moment=moment,
     )
+    # A lower limit can put current usage over a threshold with no new usage. Evaluate it now (WP2).
+    _announce_threshold(db, budget=budget)
     db.add(
         AuditEvent(
             user_id=actor_user_id,

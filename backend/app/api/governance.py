@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session
 from app.authz.dependencies import permission_granted, require_permission
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
 from app.db.session import get_db_session
+from app.governance.alert_threshold_service import update_alert_thresholds
+from app.governance.alert_thresholds import (
+    InvalidAlertThresholdsError,
+    read_alert_thresholds,
+)
 from app.governance.capabilities import CapabilityCategory
 from app.governance.data_classification import CATEGORIES
 from app.governance.privacy import (
@@ -221,6 +226,68 @@ def set_usage_budget(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
     return _budget_response(result)
+
+
+# ---------------------------------------------------------------------------
+# AI usage alert thresholds (WS6 WP2)
+# ---------------------------------------------------------------------------
+
+
+class AlertThresholdsResponse(BaseModel):
+    thresholds: list[int]
+    is_default: bool
+    version: int
+    updated_at: datetime | None
+
+
+class AlertThresholdsUpdateRequest(BaseModel):
+    thresholds: list[int] = Field(..., min_length=3, max_length=3)
+    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+def _thresholds_response(result) -> AlertThresholdsResponse:
+    return AlertThresholdsResponse(
+        thresholds=list(result.values),
+        is_default=result.is_default,
+        version=result.version,
+        updated_at=result.updated_at,
+    )
+
+
+@governance_routes.get("/usage/alert-thresholds", response_model=AlertThresholdsResponse)
+def get_alert_thresholds(
+    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
+    db: Session = Depends(get_db_session),
+) -> AlertThresholdsResponse:
+    """The organization's AI usage alert thresholds. Defaults apply until an owner changes them."""
+    return _thresholds_response(read_alert_thresholds(db, organization_id=tenant.organization_id))
+
+
+@governance_routes.put("/usage/alert-thresholds", response_model=AlertThresholdsResponse)
+def set_alert_thresholds(
+    payload: AlertThresholdsUpdateRequest,
+    tenant: TenantContext = Depends(require_permission("governance.budgets.manage")),
+    db: Session = Depends(get_db_session),
+) -> AlertThresholdsResponse:
+    """Set the three alert thresholds. Owner-only. Validated and audited on the server.
+
+    Alerts are in-app notifications to administrators. No email or external message is sent.
+    """
+    try:
+        result = update_alert_thresholds(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            values=payload.thresholds,
+        )
+    except InvalidAlertThresholdsError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": error.reason_code, "message": error.message},
+        ) from None
+    db.commit()
+    return _thresholds_response(result)
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,11 @@ from app.db.models.permission import Permission
 from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
+from app.governance.alert_thresholds import (
+    MAX_THRESHOLD,
+    MIN_THRESHOLD,
+    read_alert_thresholds,
+)
 from app.governance.usage_ledger import THRESHOLD_EVENT_TYPE
 from app.notifications.service import create_notification
 from app.outbox.service import PermanentHandlerError, register_handler
@@ -82,7 +87,13 @@ def deliver_usage_threshold_alert(db: Session, event) -> None:
     unit = payload.get("unit")
     threshold = payload.get("threshold_percent")
     period_start = payload.get("period_start")
-    if not isinstance(unit, str) or not isinstance(threshold, int) or not isinstance(period_start, str):
+    if (
+        not isinstance(unit, str)
+        or not isinstance(threshold, int)
+        or isinstance(threshold, bool)
+        or not MIN_THRESHOLD <= threshold <= MAX_THRESHOLD
+        or not isinstance(period_start, str)
+    ):
         raise AlertDeliveryError("Usage alert payload is incomplete.", reason_code=REASON_INVALID_PAYLOAD)
 
     try:
@@ -131,6 +142,12 @@ def deliver_usage_threshold_alert(db: Session, event) -> None:
             reason_code=REASON_NO_RECIPIENT_ACCEPTS_ALERTS,
         )
 
+    # Delivery covers this threshold and every configured threshold below it. Those lower alerts are
+    # superseded by this one, as they were before configurable thresholds. A lower threshold that is
+    # configured later is still announced on its own, because it is not in this list.
+    settings = read_alert_thresholds(db, organization_id=event.organization_id)
+    covered = {t for t in settings.values if t <= threshold} | {threshold}
+    budget.alerted_thresholds = sorted(set(budget.alerted_thresholds or []) | covered)
     budget.last_alert_percent = max(budget.last_alert_percent, threshold)
 
 
