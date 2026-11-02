@@ -22,6 +22,7 @@ from app.api.deals import router as deals_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
+from app.api.governance import canonical_router as ai_governance_router
 from app.api.governance import router as governance_router
 from app.api.imports import router as imports_router
 from app.api.invitation_signup import router as invitation_signup_router
@@ -29,8 +30,11 @@ from app.api.leads import router as leads_router
 from app.api.notifications import router as notifications_router
 from app.api.organizations import router as organizations_router
 from app.api.payment_milestones import router as payment_milestones_router
-from app.api.provider_credentials import router as provider_credentials_router
 from app.api.properties import router as properties_router
+from app.api.provider_credentials import (
+    canonical_router as ai_provider_credentials_router,
+)
+from app.api.provider_credentials import router as provider_credentials_router
 from app.api.referrals import router as referrals_router
 from app.api.requirements import router as requirements_router
 from app.api.site_visits import router as site_visits_router
@@ -148,7 +152,9 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     application.include_router(billing_audit_router)
     application.include_router(team_router)
+    application.include_router(ai_governance_router)
     application.include_router(governance_router)
+    application.include_router(ai_provider_credentials_router)
     application.include_router(provider_credentials_router)
     application.include_router(invitation_signup_router)
     application.include_router(sso_router)

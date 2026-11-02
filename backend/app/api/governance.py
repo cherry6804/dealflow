@@ -42,7 +42,8 @@ from app.governance.usage_ledger import (
 )
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
-router = APIRouter(prefix="/api/v1/governance", tags=["governance"])
+# Handlers are defined once here and mounted under two prefixes (ADR-0031).
+governance_routes = APIRouter(tags=["governance"])
 
 
 class CapabilityDecisionResponse(BaseModel):
@@ -95,7 +96,7 @@ def _state_response(state: CapabilityState) -> CapabilityStateResponse:
     )
 
 
-@router.get("/capabilities", response_model=CapabilityListResponse)
+@governance_routes.get("/capabilities", response_model=CapabilityListResponse)
 def get_capability_settings(
     tenant: TenantContext = Depends(require_permission("governance.capabilities.read")),
     db: Session = Depends(get_db_session),
@@ -109,7 +110,7 @@ def get_capability_settings(
     )
 
 
-@router.patch("/capabilities/{capability_key}", response_model=CapabilityStateResponse)
+@governance_routes.patch("/capabilities/{capability_key}", response_model=CapabilityStateResponse)
 def update_capability_setting(
     capability_key: str,
     payload: CapabilityUpdateRequest,
@@ -178,7 +179,7 @@ def _budget_response(result) -> BudgetStatusResponse:
     )
 
 
-@router.get("/usage/budgets", response_model=BudgetListResponse)
+@governance_routes.get("/usage/budgets", response_model=BudgetListResponse)
 def get_usage_budgets(
     tenant: TenantContext = Depends(require_permission("governance.usage.read")),
     db: Session = Depends(get_db_session),
@@ -194,7 +195,7 @@ def get_usage_budgets(
     return BudgetListResponse(period_start=period.start, period_end=period.end, items=items)
 
 
-@router.put("/usage/budgets/{unit}", response_model=BudgetStatusResponse)
+@governance_routes.put("/usage/budgets/{unit}", response_model=BudgetStatusResponse)
 def set_usage_budget(
     unit: str,
     payload: BudgetUpdateRequest,
@@ -312,7 +313,7 @@ def _request_response(row) -> PrivacyRequestResponse:
     )
 
 
-@router.get("/privacy/categories", response_model=list[DataCategoryResponse])
+@governance_routes.get("/privacy/categories", response_model=list[DataCategoryResponse])
 def list_data_categories(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
 ) -> list[DataCategoryResponse]:
@@ -320,7 +321,7 @@ def list_data_categories(
     return [_category_response(category) for category in CATEGORIES]
 
 
-@router.get("/privacy/retention", response_model=list[RetentionPolicyResponse])
+@governance_routes.get("/privacy/retention", response_model=list[RetentionPolicyResponse])
 def list_retention_policies(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
     db: Session = Depends(get_db_session),
@@ -338,7 +339,7 @@ def list_retention_policies(
     return responses
 
 
-@router.put("/privacy/retention/{category_key}", response_model=RetentionPolicyResponse)
+@governance_routes.put("/privacy/retention/{category_key}", response_model=RetentionPolicyResponse)
 def update_retention_policy(
     category_key: str,
     payload: RetentionUpdateRequest,
@@ -364,7 +365,7 @@ def update_retention_policy(
     )
 
 
-@router.post("/privacy/legal-holds", response_model=LegalHoldResponse, status_code=status.HTTP_201_CREATED)
+@governance_routes.post("/privacy/legal-holds", response_model=LegalHoldResponse, status_code=status.HTTP_201_CREATED)
 def create_legal_hold(
     payload: LegalHoldCreateRequest,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -385,7 +386,7 @@ def create_legal_hold(
     return _hold_response(hold)
 
 
-@router.post("/privacy/legal-holds/{hold_id}/release", response_model=LegalHoldResponse)
+@governance_routes.post("/privacy/legal-holds/{hold_id}/release", response_model=LegalHoldResponse)
 def end_legal_hold(
     hold_id: UUID,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -405,7 +406,7 @@ def end_legal_hold(
     return _hold_response(hold)
 
 
-@router.get("/privacy/requests", response_model=list[PrivacyRequestResponse])
+@governance_routes.get("/privacy/requests", response_model=list[PrivacyRequestResponse])
 def list_privacy_requests(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
     db: Session = Depends(get_db_session),
@@ -422,7 +423,7 @@ def list_privacy_requests(
     return [_request_response(row) for row in rows]
 
 
-@router.post("/privacy/requests", response_model=PrivacyRequestResponse, status_code=status.HTTP_201_CREATED)
+@governance_routes.post("/privacy/requests", response_model=PrivacyRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_privacy_request_endpoint(
     payload: PrivacyRequestCreate,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -446,7 +447,7 @@ def create_privacy_request_endpoint(
     return _request_response(row)
 
 
-@router.post("/privacy/requests/{request_id}/cancel", response_model=PrivacyRequestResponse)
+@governance_routes.post("/privacy/requests/{request_id}/cancel", response_model=PrivacyRequestResponse)
 def cancel_privacy_request(
     request_id: UUID,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -468,7 +469,7 @@ def cancel_privacy_request(
     return _request_response(row)
 
 
-@router.get("/privacy/legal-holds", response_model=list[LegalHoldResponse])
+@governance_routes.get("/privacy/legal-holds", response_model=list[LegalHoldResponse])
 def list_legal_holds(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
     db: Session = Depends(get_db_session),
@@ -495,7 +496,7 @@ class GovernanceAccessResponse(BaseModel):
     privacy_manage: bool
 
 
-@router.get("/access", response_model=GovernanceAccessResponse)
+@governance_routes.get("/access", response_model=GovernanceAccessResponse)
 def get_governance_access(
     tenant: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db_session),
@@ -511,3 +512,12 @@ def get_governance_access(
         privacy_read=granted("governance.privacy.read"),
         privacy_manage=granted("governance.privacy.manage"),
     )
+
+
+# Canonical AI namespace (ADR-0031). Visible in OpenAPI.
+canonical_router = APIRouter(tags=["governance"])
+canonical_router.include_router(governance_routes, prefix="/api/v1/ai/governance")
+
+# Legacy alias for existing consumers (ADR-0031). Same handlers, hidden from OpenAPI.
+router = APIRouter(tags=["governance"])
+router.include_router(governance_routes, prefix="/api/v1/governance", include_in_schema=False)

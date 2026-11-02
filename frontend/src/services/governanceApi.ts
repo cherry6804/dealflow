@@ -82,52 +82,52 @@ export interface GovernanceAccess {
 
 export const governanceApi = {
   getAccess(): Promise<GovernanceAccess> {
-    return api.get<GovernanceAccess>("/governance/access");
+    return api.get<GovernanceAccess>("/ai/governance/access");
   },
 
   listCapabilities(): Promise<{ items: CapabilityState[] }> {
-    return api.get<{ items: CapabilityState[] }>("/governance/capabilities");
+    return api.get<{ items: CapabilityState[] }>("/ai/governance/capabilities");
   },
 
   setCapability(capabilityKey: string, isEnabled: boolean): Promise<CapabilityState> {
-    return api.patch<CapabilityState>(`/governance/capabilities/${capabilityKey}`, {
+    return api.patch<CapabilityState>(`/ai/governance/capabilities/${capabilityKey}`, {
       is_enabled: isEnabled,
       confirm: true,
     });
   },
 
   getBudgets(): Promise<BudgetList> {
-    return api.get<BudgetList>("/governance/usage/budgets");
+    return api.get<BudgetList>("/ai/governance/usage/budgets");
   },
 
   setBudget(unit: string, limitQuantity: number): Promise<BudgetStatus> {
-    return api.put<BudgetStatus>(`/governance/usage/budgets/${unit}`, {
+    return api.put<BudgetStatus>(`/ai/governance/usage/budgets/${unit}`, {
       limit_quantity: limitQuantity,
       confirm: true,
     });
   },
 
   listDataCategories(): Promise<DataCategory[]> {
-    return api.get<DataCategory[]>("/governance/privacy/categories");
+    return api.get<DataCategory[]>("/ai/governance/privacy/categories");
   },
 
   listRetention(): Promise<RetentionPolicy[]> {
-    return api.get<RetentionPolicy[]>("/governance/privacy/retention");
+    return api.get<RetentionPolicy[]>("/ai/governance/privacy/retention");
   },
 
   setRetention(categoryKey: string, retentionDays: number | null): Promise<RetentionPolicy> {
-    return api.put<RetentionPolicy>(`/governance/privacy/retention/${categoryKey}`, {
+    return api.put<RetentionPolicy>(`/ai/governance/privacy/retention/${categoryKey}`, {
       retention_days: retentionDays,
       confirm: true,
     });
   },
 
   listLegalHolds(): Promise<LegalHold[]> {
-    return api.get<LegalHold[]>("/governance/privacy/legal-holds");
+    return api.get<LegalHold[]>("/ai/governance/privacy/legal-holds");
   },
 
   placeLegalHold(categoryKey: string, reason: string): Promise<LegalHold> {
-    return api.post<LegalHold>("/governance/privacy/legal-holds", {
+    return api.post<LegalHold>("/ai/governance/privacy/legal-holds", {
       category_key: categoryKey,
       reason,
       confirm: true,
@@ -135,15 +135,15 @@ export const governanceApi = {
   },
 
   releaseLegalHold(holdId: string): Promise<LegalHold> {
-    return api.post<LegalHold>(`/governance/privacy/legal-holds/${holdId}/release`);
+    return api.post<LegalHold>(`/ai/governance/privacy/legal-holds/${holdId}/release`);
   },
 
   listPrivacyRequests(): Promise<PrivacyRequest[]> {
-    return api.get<PrivacyRequest[]>("/governance/privacy/requests");
+    return api.get<PrivacyRequest[]>("/ai/governance/privacy/requests");
   },
 
   createPrivacyRequest(requestType: "export" | "deletion", categories: string[]): Promise<PrivacyRequest> {
-    return api.post<PrivacyRequest>("/governance/privacy/requests", {
+    return api.post<PrivacyRequest>("/ai/governance/privacy/requests", {
       request_type: requestType,
       categories,
       confirm: true,
@@ -151,6 +151,6 @@ export const governanceApi = {
   },
 
   cancelPrivacyRequest(requestId: string): Promise<PrivacyRequest> {
-    return api.post<PrivacyRequest>(`/governance/privacy/requests/${requestId}/cancel`);
+    return api.post<PrivacyRequest>(`/ai/governance/privacy/requests/${requestId}/cancel`);
   },
 };

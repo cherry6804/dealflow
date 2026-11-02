@@ -30,7 +30,8 @@ from app.provider_secrets.service import (
 )
 from app.tenant.dependencies import TenantContext
 
-router = APIRouter(prefix="/api/v1/provider-credentials", tags=["provider-credentials"])
+# Handlers are defined once here and mounted under two prefixes (ADR-0031).
+provider_credential_routes = APIRouter(tags=["provider-credentials"])
 
 
 class ProviderCredentialCreateRequest(BaseModel):
@@ -80,7 +81,7 @@ def _http_error(exc: Exception) -> HTTPException:
     raise exc
 
 
-@router.get("", response_model=ProviderCredentialListResponse)
+@provider_credential_routes.get("", response_model=ProviderCredentialListResponse)
 def list_credentials(
     tenant: TenantContext = Depends(require_permission("provider_credentials.read")),
     db: Session = Depends(get_db_session),
@@ -92,7 +93,7 @@ def list_credentials(
     )
 
 
-@router.post("", response_model=ProviderCredentialResponse, status_code=status.HTTP_201_CREATED)
+@provider_credential_routes.post("", response_model=ProviderCredentialResponse, status_code=status.HTTP_201_CREATED)
 def create_credential(
     payload: ProviderCredentialCreateRequest,
     tenant: TenantContext = Depends(require_permission("provider_credentials.manage")),
@@ -116,7 +117,7 @@ def create_credential(
     return ProviderCredentialResponse.model_validate(credential)
 
 
-@router.post("/{credential_id}/rotate", response_model=ProviderCredentialResponse)
+@provider_credential_routes.post("/{credential_id}/rotate", response_model=ProviderCredentialResponse)
 def rotate_credential(
     credential_id: UUID,
     payload: ProviderCredentialRotateRequest,
@@ -140,7 +141,7 @@ def rotate_credential(
     return ProviderCredentialResponse.model_validate(credential)
 
 
-@router.post("/{credential_id}/revoke", response_model=ProviderCredentialResponse)
+@provider_credential_routes.post("/{credential_id}/revoke", response_model=ProviderCredentialResponse)
 def revoke_credential(
     credential_id: UUID,
     tenant: TenantContext = Depends(require_permission("provider_credentials.manage")),
@@ -160,3 +161,16 @@ def revoke_credential(
         db.rollback()
         raise _http_error(exc) from None
     return ProviderCredentialResponse.model_validate(credential)
+
+
+# Canonical AI namespace (ADR-0031). Visible in OpenAPI.
+canonical_router = APIRouter(tags=["provider-credentials"])
+canonical_router.include_router(provider_credential_routes, prefix="/api/v1/ai/provider-credentials")
+
+# Legacy alias for existing consumers (ADR-0031). Same handlers, hidden from OpenAPI.
+router = APIRouter(tags=["provider-credentials"])
+router.include_router(
+    provider_credential_routes,
+    prefix="/api/v1/provider-credentials",
+    include_in_schema=False,
+)
