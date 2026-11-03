@@ -35,6 +35,7 @@ export const REASON_LABELS: Record<string, string> = {
   snapshot_expired: "Plan could not be verified",
   snapshot_unavailable: "Plan could not be verified right now",
   snapshot_rejected: "Plan could not be verified",
+  snapshot_stale: "Plan could not be verified",
   organization_access_denied: "No current access to the product",
 };
 

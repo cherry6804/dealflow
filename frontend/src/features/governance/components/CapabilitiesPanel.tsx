@@ -10,6 +10,7 @@ import {
   reasonLabel,
 } from "../governanceLabels";
 import ConfirmChangeDialog from "./ConfirmChangeDialog";
+import EntitlementStatusPanel from "./EntitlementStatusPanel";
 
 interface CapabilitiesPanelProps {
   canManage: boolean;
@@ -76,6 +77,7 @@ export default function CapabilitiesPanel({ canManage }: CapabilitiesPanelProps)
   return (
     <section aria-labelledby="capabilities-heading">
       <h2 id="capabilities-heading">AI and automation capabilities</h2>
+      <EntitlementStatusPanel />
       <p className="governance-muted">
         Every capability is off until it is turned on here. Turning on a capability does not
         make it run: each one must also pass the checks shown in the status column.

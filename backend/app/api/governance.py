@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import permission_granted, require_permission
+from app.config import get_settings
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
 from app.db.session import get_db_session
 from app.governance.alert_threshold_service import update_alert_thresholds
@@ -22,6 +23,7 @@ from app.governance.alert_thresholds import (
 )
 from app.governance.capabilities import CapabilityCategory
 from app.governance.data_classification import CATEGORIES
+from app.governance.org_entitlement import snapshot_diagnostics
 from app.governance.privacy import (
     InvalidRequestStateError,
     UnknownCategoryError,
@@ -561,6 +563,37 @@ class GovernanceAccessResponse(BaseModel):
     budgets_manage: bool
     privacy_read: bool
     privacy_manage: bool
+
+
+class EntitlementStatusResponse(BaseModel):
+    """Operational state of SIBVO's organization entitlement snapshot (WS6 WP6, WP7).
+
+    Never contains the snapshot body, a signature, or the signing key. ``signing_key_configured`` is a flag.
+    """
+
+    state: str
+    product_key: str
+    revalidation_interval_seconds: int
+    fetched_at: str | None
+    expires_at: str | None
+    failure_count: int
+    next_refresh_attempt_at: str | None
+    backoff_active: bool
+    signing_key_configured: bool
+
+
+@governance_routes.get("/entitlement-status", response_model=EntitlementStatusResponse)
+def get_entitlement_status(
+    tenant: TenantContext = Depends(require_permission("governance.capabilities.read")),
+    db: Session = Depends(get_db_session),
+) -> EntitlementStatusResponse:
+    """Report whether SIBVO's organization entitlement is currently usable, for the selected organization."""
+    settings = get_settings()
+    diagnostics = snapshot_diagnostics(db, organization_id=tenant.organization_id)
+    return EntitlementStatusResponse(
+        **diagnostics,
+        signing_key_configured=settings.sibvo_org_snapshot_signing_key is not None,
+    )
 
 
 @governance_routes.get("/access", response_model=GovernanceAccessResponse)
