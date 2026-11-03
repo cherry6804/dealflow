@@ -26,6 +26,7 @@ Reason codes returned here are stable:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -62,6 +63,8 @@ REASON_SNAPSHOT_UNAVAILABLE = "snapshot_unavailable"
 REASON_SNAPSHOT_REJECTED = "snapshot_rejected"
 REASON_SNAPSHOT_STALE = "snapshot_stale"
 REASON_ORGANIZATION_ACCESS_DENIED = "organization_access_denied"
+
+logger = logging.getLogger(__name__)
 
 BACKOFF_BASE_SECONDS = 5
 BACKOFF_MAX_SECONDS = 300
@@ -138,8 +141,36 @@ def _revalidation_due(row: OrganizationEntitlementSnapshot, *, now: datetime, in
     return now >= row.fetched_at + timedelta(seconds=interval_seconds)
 
 
+def _has_expired_snapshot(row: OrganizationEntitlementSnapshot | None, *, now: datetime) -> bool:
+    """A stored snapshot exists and its validity has ended. Only then is the reason "expired".
+
+    A snapshot that never verified, or that SIBVO's denial removed, is reported as missing or unavailable.
+    """
+    return (
+        row is not None
+        and row.snapshot_body is not None
+        and row.expires_at is not None
+        and now >= row.expires_at
+    )
+
+
+def _no_snapshot_reason(row: OrganizationEntitlementSnapshot | None, *, now: datetime) -> str:
+    return REASON_SNAPSHOT_EXPIRED if _has_expired_snapshot(row, now=now) else REASON_SNAPSHOT_MISSING
+
+
 def _in_backoff(row: OrganizationEntitlementSnapshot | None, *, now: datetime) -> bool:
     return row is not None and row.next_refresh_attempt_at is not None and now < row.next_refresh_attempt_at
+
+
+def _log_refresh_failure(organization_id: UUID, reason: str, *, detail: str | None = None) -> None:
+    """Record why SIBVO's answer was not used. Authorization still reports its own reason code.
+
+    The log carries the organization and stable codes only, never a body, signature, key or message text.
+    """
+    logger.warning(
+        "org_entitlement_refresh_failed",
+        extra={"organization_id": str(organization_id), "refresh_reason": reason, "refresh_detail": detail},
+    )
 
 
 def _signing_key(settings: Settings) -> str | None:
@@ -172,6 +203,7 @@ def _refresh(
     except (SibvoUnavailable, SibvoRejected, SibvoRequestDenied, SibvoInvalidResponse):
         _record_failure(db, organization_id, product_key, now)
         db.flush()
+        _log_refresh_failure(organization_id, REASON_SNAPSHOT_UNAVAILABLE)
         return _deny(REASON_SNAPSHOT_UNAVAILABLE), False
 
     try:
@@ -199,12 +231,14 @@ def _refresh(
         _record_failure(db, organization_id, product_key, now)
         db.flush()
         reason = REASON_SNAPSHOT_UNAVAILABLE if exc.reason == "signing_key_unavailable" else REASON_SNAPSHOT_REJECTED
+        _log_refresh_failure(organization_id, reason, detail=exc.reason)
         return _deny(reason), False
 
     row = _ensure_row(db, organization_id, product_key)
     if row.issued_at is not None and verified.issued_at < row.issued_at:
         # An older answer never replaces a newer snapshot, even when it verifies (WS6 WP6). The stored
         # snapshot remains the authority, and the caller decides from it.
+        _log_refresh_failure(organization_id, REASON_SNAPSHOT_STALE)
         return _deny(REASON_SNAPSHOT_STALE), False
 
     row.snapshot_body = body
@@ -257,7 +291,7 @@ def organization_entitlement_verdict(
     if _in_backoff(row, now=current):
         if stored is not None:
             return decide(stored, feature_key=feature_key)
-        return _deny(REASON_SNAPSHOT_EXPIRED if row.expires_at is not None else REASON_SNAPSHOT_MISSING)
+        return _deny(_no_snapshot_reason(row, now=current))
 
     # 3. Refresh from SIBVO over the authenticated service contract.
     verdict, refreshed = _refresh(
@@ -269,7 +303,13 @@ def organization_entitlement_verdict(
         settings=settings,
         signing_key=signing_key,
     )
-    if refreshed or stored is None:
+    if refreshed:
+        return verdict
+    if stored is None:
+        # SIBVO could not provide a snapshot. An expired stored snapshot is reported as expired even though
+        # SIBVO is unreachable (WS6 WP6). The SIBVO failure itself is logged above.
+        if _has_expired_snapshot(row, now=current):
+            return _deny(REASON_SNAPSHOT_EXPIRED)
         return verdict
     # The refresh failed, but the stored snapshot has not expired, so it still authorizes.
     return decide(stored, feature_key=feature_key)
