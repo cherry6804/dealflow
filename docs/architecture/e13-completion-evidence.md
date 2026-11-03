@@ -345,3 +345,56 @@ Story status: unchanged. DFR1-006, DFR1-017, DFR1-050 remain Partial; DFR1-053 r
 - **Not approved.** The approval needed is six answers from the release owner and the security owner, listed in section 10
   of the proposal. No permission key has been added and no role grant has changed.
 - Story status: unchanged. DFR1-006 remains Partial; DFR1-017, DFR1-050 and DFR1-053 keep their status; E13 is not Done.
+
+## 17. DFR1-015 AI gateway core (E06) and DFR1-016 status
+
+Branch: `feature/DFR1-E06-ai-gateway-core`, cut from `origin/develop` at `6eab89a`. This is an E06 unit, recorded here
+because the E13 governance gates it depends on are documented in this file.
+
+What exists (code and tests):
+
+- Organization task routes: `ai_task_routes` (migration `f7c3a9d1e5b2`, one row per organization and task, no credential
+  stored). Owner-only write through `governance.capabilities.manage`; read through `governance.capabilities.read`.
+  Provider keys must be LLM providers in the registry, and model names are validated.
+- Adapter boundary: an OpenAI text and embedding adapter. It makes no network call while live access is disabled. Tests use
+  an httpx mock transport. The adapter classifies responses as success, transient, timed out or permanent, and never reads
+  or logs a response body beyond the output it returns.
+- Execution path (`app/ai_gateway/service.py`): task support, route, the shared execution gate (entitlement, switches,
+  provider readiness, actor, resource, consent, rate, budget), credential resolution for the organization only, bounded
+  attempts (retries only transient failures), settlement of actual usage against the gate's reservation, and
+  schema-checked structured output.
+- Failure handling: a failed call with no usage releases the reservation. A provider answer whose usage cannot be settled
+  is withheld (`usage_settlement_failed`), so no unmetered output is returned.
+
+Verification (final code):
+
+- `tests/test_ai_gateway.py`: 52 tests, all passing on the isolated database (port 5438). They cover adapter HTTP
+  mapping, structured-output acceptance and refusal, the execution path, retries and timeouts, credential and live-access
+  failures, budget and gate denials, tenant isolation of routes and credentials, secret absence from results and audit
+  metadata, route validation and audit, and owner-only route writes over HTTP.
+- Migration on an empty database `dealflow`: upgrade head, downgrade one step, re-upgrade. Single head
+  `f7c3a9d1e5b2`.
+- Ruff `check` on the new and changed backend files: passed.
+- Full backend suite on the final code: exit code 0; 2,193 passed, 14 skipped, 0 failed (900 s), on the isolated database (port 5438), recreated before the run. Port 5433 was not touched.
+
+Test-only seams (documented in the test module): readiness (no verified connection can be created without a live
+provider), the AI actor key (pending approval), the AI resource gate (no AI resource store exists), and the AI rate decision
+(no rate rule is approved). Each is patched for tests only. The production denial order is asserted by
+`test_production_layers_deny_in_order_and_never_reach_the_provider`: actor, then resource, then rate.
+
+What is not met, and why DFR1-015 is not Done:
+
+- No live sandbox verification. No provider credential or sandbox account exists in this environment, and no fabricated
+  provider result is recorded.
+- Production AI execution remains denied. No approved AI actor key, no AI resource store (agents and workflows arrive
+  with DFR1-018 and DFR1-019), and no approved AI rate rule exist. Each is a decision or a dependency, not something this
+  unit may invent.
+- Fallback provider: the acceptance criterion names it; none is implemented.
+- Speech, multimodal, audio, image and page usage: declared in the task model, with no adapter.
+- Outcome audit: execution outcomes are visible through the usage ledger (settled and released entries) and the gate's
+  decision audit. A requested and completed outcome audit (the WP3 pattern) is not yet added to the gateway.
+- Frontend: no UI for routes. Not required for the backend criterion; the route API is ready for one.
+- Lint debt: `app/db/models/__init__.py` already had four Ruff findings on `develop`. They are unchanged here. This change
+  adds two lines to that file and no new finding.
+
+DFR1-016 (knowledge ingestion and retrieval): not started. It depends on DFR1-015 and on the same production gates.

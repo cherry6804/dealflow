@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.activities import router as activities_router
+from app.api.ai_gateway import router as ai_gateway_router
 from app.api.auth import router as auth_router
 from app.api.automation_rules import router as automation_rules_router
 from app.api.billing_audit import router as billing_audit_router
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     application.include_router(automation_rules_router)
     application.include_router(notifications_router)
     application.include_router(billing_audit_router)
+    application.include_router(ai_gateway_router)
     application.include_router(team_router)
     application.include_router(ai_governance_router)
     application.include_router(governance_router)
