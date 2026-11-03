@@ -139,7 +139,7 @@ def test_permission_revocation_stops_the_next_step(monkeypatch) -> None:
 
     summary = run(world)
 
-    status, results = summary[0]
+    _, results = summary[0]
     assert [item["status"] for item in results] == ["SUCCEEDED", "STOPPED"]
     assert results[1]["reason_code"] == "permission_denied"
     assert follow_up_count(world.organization_id) == 1
@@ -154,7 +154,7 @@ def test_target_owner_revocation_is_refused_at_the_step_not_the_gate(monkeypatch
 
     summary = run(world)
 
-    status, results = summary[0]
+    _, results = summary[0]
     assert results[1]["reason_code"] == "target_owner_not_authorized"
     assert all(item["status"] != "STOPPED" for item in results)
     assert _stop_rows(world.organization_id) == []
