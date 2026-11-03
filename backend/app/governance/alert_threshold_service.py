@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -76,8 +77,9 @@ def update_alert_thresholds(
     # Requested record first, committed independently. If it cannot be written, nothing changes (WP3).
     requested = persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type=THRESHOLD_SETTINGS_EVENT_TYPE,
         action=THRESHOLD_SETTINGS_ACTION,
         decision="allowed",

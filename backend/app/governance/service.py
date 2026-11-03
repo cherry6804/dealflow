@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -104,8 +105,9 @@ def set_capability_enabled(
     # Recorded and committed before the change. If this write fails, the switch is not changed (WP3).
     requested = persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type=GOVERNANCE_EVENT_TYPE,
         action=GOVERNANCE_CAPABILITY_ACTION,
         decision="allowed",

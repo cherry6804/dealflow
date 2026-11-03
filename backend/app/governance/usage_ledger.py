@@ -54,6 +54,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -807,8 +808,9 @@ def change_budget(
     )
     requested = persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type="governance",
         action="governance.budget.updated",
         decision="allowed",

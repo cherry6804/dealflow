@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.api.governance import router as governance_router
+from app.audit.attribution import AuditAttributionError, user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_DENIED,
@@ -167,18 +168,20 @@ def test_a_failed_requested_record_stops_the_change(owned, monkeypatch) -> None:
     assert _rows(organization_id) == []
 
 
-def test_a_database_refusal_of_the_audit_write_is_reported_as_unavailable(owned) -> None:
-    # An organization that does not exist violates the foreign key, so the independent write fails.
-    with pytest.raises(AuditPersistenceError):
+def test_an_unknown_organization_is_refused_before_any_write(owned) -> None:
+    # Attribution is verified first. An organization that does not exist is refused, and nothing is written.
+    _, user_id = owned
+    unknown = uuid4()
+    with pytest.raises(AuditAttributionError):
         persist_independent_audit_event(
             SessionLocal(),
-            organization_id=uuid4(),
-            actor_user_id=None,
+            attribution=user_attribution(organization_id=unknown, actor_user_id=user_id),
             event_type=EVENT_TYPE,
             action="test.unknown_organization",
             decision="allowed",
             outcome=OUTCOME_REQUESTED,
         )
+    assert _rows(unknown) == []
 
 
 def test_an_audit_outage_returns_503_and_leaves_the_setting_unchanged(monkeypatch) -> None:
@@ -228,8 +231,7 @@ def test_an_audit_outage_returns_503_and_leaves_the_setting_unchanged(monkeypatc
 def test_a_repeated_key_returns_the_stored_row(owned) -> None:
     organization_id, user_id = owned
     kwargs = {
-        "organization_id": organization_id,
-        "actor_user_id": user_id,
+        "attribution": user_attribution(organization_id=organization_id, actor_user_id=user_id),
         "event_type": EVENT_TYPE,
         "action": "test.repeat",
         "decision": "allowed",
@@ -248,7 +250,8 @@ def test_concurrent_writes_with_one_key_produce_one_row(owned) -> None:
 
     def write() -> AuditEvent:
         return persist_independent_audit_event(
-            SessionLocal(), organization_id=organization_id, actor_user_id=user_id, event_type=EVENT_TYPE,
+            SessionLocal(), attribution=user_attribution(organization_id=organization_id, actor_user_id=user_id),
+            event_type=EVENT_TYPE,
             action="test.concurrent", decision="allowed", outcome=OUTCOME_REQUESTED, idempotency_key="race-key",
         )
 
@@ -264,7 +267,8 @@ def test_concurrent_distinct_events_are_all_persisted(owned) -> None:
 
     def write(index: int) -> AuditEvent:
         return persist_independent_audit_event(
-            SessionLocal(), organization_id=organization_id, actor_user_id=user_id, event_type=EVENT_TYPE,
+            SessionLocal(), attribution=user_attribution(organization_id=organization_id, actor_user_id=user_id),
+            event_type=EVENT_TYPE,
             action=f"test.distinct.{index}", decision="allowed", outcome=OUTCOME_REQUESTED,
         )
 
@@ -281,7 +285,8 @@ def test_concurrent_distinct_events_are_all_persisted(owned) -> None:
 def test_attribution_is_recorded_for_the_organization_and_actor(owned) -> None:
     organization_id, user_id = owned
     row = persist_independent_audit_event(
-        SessionLocal(), organization_id=organization_id, actor_user_id=user_id, event_type=EVENT_TYPE,
+        SessionLocal(), attribution=user_attribution(organization_id=organization_id, actor_user_id=user_id),
+            event_type=EVENT_TYPE,
         action="test.attribution", decision="allowed", outcome=OUTCOME_REQUESTED, correlation_id="corr-42",
     )
 
@@ -321,7 +326,8 @@ def test_sensitive_metadata_is_refused_before_any_write(owned, metadata) -> None
     organization_id, user_id = owned
     with pytest.raises(AuditPayloadError):
         persist_independent_audit_event(
-            SessionLocal(), organization_id=organization_id, actor_user_id=user_id, event_type=EVENT_TYPE,
+            SessionLocal(), attribution=user_attribution(organization_id=organization_id, actor_user_id=user_id),
+            event_type=EVENT_TYPE,
             action="test.sensitive", decision="allowed", outcome=OUTCOME_REQUESTED, metadata=metadata,
         )
     assert _rows(organization_id) == []
@@ -346,7 +352,8 @@ def test_an_unsupported_outcome_is_rejected_without_writing(owned) -> None:
     organization_id, user_id = owned
     with pytest.raises(ValueError):
         persist_independent_audit_event(
-            SessionLocal(), organization_id=organization_id, actor_user_id=user_id, event_type=EVENT_TYPE,
+            SessionLocal(), attribution=user_attribution(organization_id=organization_id, actor_user_id=user_id),
+            event_type=EVENT_TYPE,
             action="test.bad_outcome", decision="allowed", outcome="maybe",
         )
     assert _rows(organization_id) == []

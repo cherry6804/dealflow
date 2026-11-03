@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -82,8 +83,9 @@ def _attempt(
     """Commit the requested record before the change (WP3). Fails closed if it cannot be written."""
     return persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type=PRIVACY_EVENT_TYPE,
         action=action,
         decision="allowed",

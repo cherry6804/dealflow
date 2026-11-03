@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -142,8 +143,9 @@ def _requested(
     """Commit the attempt before the credential changes (WP3). Holds no secret material."""
     return persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type=PROVIDER_CREDENTIAL_EVENT_TYPE,
         action=action,
         decision="allowed",

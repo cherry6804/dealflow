@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -148,8 +149,9 @@ def _requested(
     """Commit the attempt before the connection changes (WP3). Holds no credential material."""
     return persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=actor_user_id,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
         event_type=PROVIDER_CONNECTION_AUDIT_EVENT,
         action=action,
         decision="allowed",

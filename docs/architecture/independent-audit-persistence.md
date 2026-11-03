@@ -77,6 +77,29 @@ covers content updates only, not deletion.
   is returned.
 - A failed completed write rolls back with the business change, leaving the requested row.
 
+### 3.5 Attribution trust boundary
+
+The writer does not accept an organization and actor as plain identifiers. Every caller passes an
+`AuditAttribution` (`backend/app/audit/attribution.py`), and the writer verifies it on its own connection before
+it writes anything.
+
+- **How identity is established for requests.** `get_tenant_context` binds each request to the organization in
+  its session and requires an active membership in an active organization. The routes take the organization and
+  the user from that tenant context. Services receive those values and wrap them with `user_attribution`.
+- **What the writer verifies.** For a user attribution, the organization must be active, and the user must hold
+  an active membership in that organization. For a system attribution, the organization must be active, and the
+  system actor must be on the allowlist (`ai_execution_gate`, `automation_rate_limit`). The writer repeats these
+  checks because a caller must not be able to write under an organization or user it does not belong to.
+- **Refusal.** A failed verification raises `AuditAttributionError` before any row is written. The application
+  maps it to HTTP 403 with code `AUDIT_ATTRIBUTION_DENIED`. The message names no identifiers, so the response
+  reveals nothing about other tenants. It is reported separately from a persistence outage, which is 503.
+- **Fail closed.** A denial whose user cannot be attributed to the requested organization is refused, not recorded
+  under a guessed identity. A denial with no user is recorded as a system action.
+- **Adding a system actor** is a reviewed change to the allowlist, not a runtime decision.
+- **Limit.** The verification confirms that the claimed organization and user exist and are linked. It does not
+  confirm that the caller is the request's own authenticated user. That guarantee comes from the request path
+  (section 3.5, first bullet), and the writer relies on it.
+
 ## 4. Operations covered
 
 | Operation | Requested row | Completed row | Denial row |

@@ -15,6 +15,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import system_attribution, user_attribution
 from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
 from app.governance.policy import PolicyDecision, evaluate_capability
@@ -56,8 +57,11 @@ def require_ai_execution(
 
     persist_independent_audit_event(
         db,
-        organization_id=organization_id,
-        actor_user_id=user_context.user.id if user_context is not None else None,
+        attribution=(
+            user_attribution(organization_id=organization_id, actor_user_id=user_context.user.id)
+            if user_context is not None
+            else system_attribution(organization_id=organization_id, system_actor="ai_execution_gate")
+        ),
         event_type=AI_EXECUTION_EVENT_TYPE,
         action="denied",
         decision="denied",

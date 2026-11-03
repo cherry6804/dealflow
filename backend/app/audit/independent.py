@@ -33,7 +33,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import AuditAttribution, AuditAttributionError
 from app.db.models.audit_event import AuditEvent
+from app.db.models.membership import Membership
+from app.db.models.organization import Organization
 
 OUTCOME_REQUESTED = "requested"
 OUTCOME_COMPLETED = "completed"
@@ -92,11 +95,34 @@ def _is_idempotency_violation(exc: IntegrityError) -> bool:
     return constraint == IDEMPOTENCY_CONSTRAINT
 
 
+def _verify_attribution(session: Session, attribution: AuditAttribution) -> None:
+    """Confirm the organization and user from the database, on the writer's own connection.
+
+    A caller cannot write under an organization that does not exist or is inactive, or under a user who is
+    not an active member of that organization. The check runs before any row is written. The error names no
+    identifiers, so it reveals nothing about other tenants.
+    """
+    organization_active = session.scalar(
+        select(Organization.is_active).where(Organization.id == attribution.organization_id)
+    )
+    if organization_active is not True:
+        raise AuditAttributionError("The audit attribution could not be verified.")
+    if attribution.actor_user_id is not None:
+        membership = session.scalar(
+            select(Membership.id).where(
+                Membership.organization_id == attribution.organization_id,
+                Membership.user_id == attribution.actor_user_id,
+                Membership.is_active.is_(True),
+            )
+        )
+        if membership is None:
+            raise AuditAttributionError("The audit attribution could not be verified.")
+
+
 def persist_independent_audit_event(
     source: Session | Engine,
     *,
-    organization_id: UUID | None,
-    actor_user_id: UUID | None,
+    attribution: AuditAttribution,
     event_type: str,
     action: str,
     decision: str,
@@ -112,13 +138,17 @@ def persist_independent_audit_event(
     """Commit one audit row in its own transaction and return it.
 
     ``source`` supplies the database only. The caller's transaction is neither used nor committed, so
-    the row survives a rollback of that transaction. Raises ``AuditPayloadError`` before any write when
-    the metadata is not allowed, and ``AuditPersistenceError`` when the write fails.
+    the row survives a rollback of that transaction. The attribution is verified against the database
+    before the write. Raises ``AuditAttributionError`` when it cannot be verified, ``AuditPayloadError``
+    when the metadata is not allowed, and ``AuditPersistenceError`` when the write fails. Nothing is
+    written in any of those cases.
     """
     if outcome not in {OUTCOME_REQUESTED, OUTCOME_COMPLETED, OUTCOME_DENIED}:
         raise ValueError(f"Unsupported audit outcome: {outcome!r}.")
     encoded = encode_metadata(metadata)
 
+    organization_id = attribution.organization_id
+    actor_user_id = attribution.actor_user_id
     bind = source.get_bind() if isinstance(source, Session) else source
     row = AuditEvent(
         id=uuid4(),
@@ -138,6 +168,7 @@ def persist_independent_audit_event(
     )
 
     with Session(bind=bind, expire_on_commit=False) as session:
+        _verify_attribution(session, attribution)
         try:
             session.add(row)
             session.commit()
