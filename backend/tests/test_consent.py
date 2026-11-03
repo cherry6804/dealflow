@@ -72,6 +72,9 @@ def _cleanup(organization_id: UUID) -> None:
                 OrganizationCapabilitySetting.organization_id == organization_id
             )
         )
+        from app.db.models.channel_policy import ChannelPolicy
+
+        db.execute(delete(ChannelPolicy).where(ChannelPolicy.organization_id == organization_id))
         db.execute(delete(Contact).where(Contact.organization_id == organization_id))
         db.commit()
 
@@ -312,6 +315,11 @@ def channel_capability(monkeypatch) -> None:
 
 
 def _enable_channel(organization_id, actor_id) -> None:
+    """Enable the capability and an always-open email policy, so these tests isolate the consent check."""
+    from datetime import time as clock
+
+    from app.governance.channel_policy import ChannelPolicyInput, set_channel_policy
+
     with SessionLocal() as db:
         set_capability_enabled(
             db,
@@ -319,6 +327,21 @@ def _enable_channel(organization_id, actor_id) -> None:
             actor_user_id=actor_id,
             capability_key=CHANNEL_CAPABILITY,
             is_enabled=True,
+        )
+        set_channel_policy(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_id,
+            policy=ChannelPolicyInput(
+                channel="email",
+                is_enabled=True,
+                timezone="UTC",
+                messaging_days=127,
+                messaging_start=clock(0, 0),
+                messaging_end=clock(23, 59),
+                quiet_start=None,
+                quiet_end=None,
+            ),
         )
         db.commit()
 

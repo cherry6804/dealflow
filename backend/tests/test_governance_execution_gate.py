@@ -393,7 +393,7 @@ def test_billable_work_without_a_budget_reservation_is_denied() -> None:
     assert decision.reason_code == "budget_reservation_required"
 
 
-def test_a_capability_that_needs_approval_denies_because_no_approval_exists(monkeypatch) -> None:
+def test_a_capability_that_needs_approval_denies_without_an_approval(monkeypatch) -> None:
     ids = _scenario()
     original = CAPABILITY_BY_KEY[AUTOMATION_DEAL_CREATED_RULES]
     monkeypatch.setitem(
@@ -403,7 +403,7 @@ def test_a_capability_that_needs_approval_denies_because_no_approval_exists(monk
     )
 
     assert _run(ids) == []
-    assert _denied_reasons(ids["organization_id"]) == ["approval_not_available"]
+    assert _denied_reasons(ids["organization_id"]) == ["approval_required"]
 
 
 def test_a_provider_requirement_denies_while_no_provider_connection_exists(monkeypatch) -> None:

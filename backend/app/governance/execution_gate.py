@@ -21,6 +21,7 @@ must not evaluate the policy directly for execution.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -33,7 +34,13 @@ from app.authz.dependencies import permission_granted
 from app.db.models.audit_event import AuditDecision, AuditEvent
 from app.db.models.membership import Membership
 from app.db.models.organization import Organization
+from app.governance.approvals import (
+    ApprovalError,
+    check_approval_for_execution,
+    consume_approval,
+)
 from app.governance.capabilities import CAPABILITY_BY_KEY
+from app.governance.channel_policy import evaluate_channel_policy
 from app.governance.consent import (
     EFFECTIVE_EXPIRED,
     EFFECTIVE_GRANTED,
@@ -68,6 +75,17 @@ REASON_CONSENT_MISSING = "consent_missing"
 REASON_CONSENT_REVOKED = "consent_revoked"
 REASON_CONSENT_EXPIRED = "consent_expired"
 REASON_CONSENT_CHANNEL_MISMATCH = "consent_channel_mismatch"
+REASON_CHANNEL_NOT_CONFIGURED = "channel_policy_not_configured"
+REASON_CHANNEL_DISABLED = "channel_disabled"
+REASON_CONTACT_DO_NOT_DISTURB = "contact_do_not_disturb"
+REASON_OUTSIDE_MESSAGING_WINDOW = "outside_messaging_window"
+REASON_QUIET_HOURS = "quiet_hours"
+REASON_APPROVAL_REQUIRED = "approval_required"
+REASON_APPROVAL_NOT_FOUND = "approval_not_found"
+REASON_APPROVAL_NOT_APPROVED = "approval_not_approved"
+REASON_APPROVAL_EXPIRED = "approval_expired"
+REASON_APPROVAL_ALREADY_USED = "approval_already_used"
+REASON_APPROVAL_MISMATCH = "approval_mismatch"
 REASON_ALLOWED = "allowed"
 
 _EXPLANATIONS: dict[str, str] = {
@@ -91,6 +109,17 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_CONSENT_REVOKED: "The contact has withdrawn consent for this channel and purpose.",
     REASON_CONSENT_EXPIRED: "The contact's consent for this channel and purpose has expired.",
     REASON_CONSENT_CHANNEL_MISMATCH: "The consent channel does not match this capability.",
+    REASON_CHANNEL_NOT_CONFIGURED: "No channel policy is configured for this channel, so it cannot be used.",
+    REASON_CHANNEL_DISABLED: "This channel is turned off for the organization.",
+    REASON_CONTACT_DO_NOT_DISTURB: "This contact has asked not to be contacted.",
+    REASON_OUTSIDE_MESSAGING_WINDOW: "The current time is outside the messaging window for this channel.",
+    REASON_QUIET_HOURS: "The current time is within the quiet hours for this channel.",
+    REASON_APPROVAL_REQUIRED: "This action needs a human approval of its exact payload before it can run.",
+    REASON_APPROVAL_NOT_FOUND: "The approval does not exist in this organization.",
+    REASON_APPROVAL_NOT_APPROVED: "The approval has not been granted.",
+    REASON_APPROVAL_EXPIRED: "The approval has expired. Request a new one.",
+    REASON_APPROVAL_ALREADY_USED: "The approval was already used. Each approval covers one execution.",
+    REASON_APPROVAL_MISMATCH: "The approval does not cover this exact action and payload.",
     REASON_ALLOWED: "The execution is allowed.",
 }
 
@@ -120,6 +149,9 @@ class ExecutionRequest:
     budget: BudgetReservation | None = None
     # Required for capabilities that need consent. The gate checks this contact's current consent.
     consent: ConsentSubject | None = None
+    # Required for capabilities that need approval: the approval ID and the exact payload it covers.
+    approval_id: UUID | None = None
+    payload: Mapping[str, object] | None = None
     # ``initial`` before the first step, ``revalidation`` before each later step.
     stage: str = "initial"
     correlation_id: str | None = None
@@ -150,6 +182,42 @@ def _actor_membership(db: Session, request: ExecutionRequest) -> Membership | No
     )
 
 
+def _check_channel(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
+    """Apply the organization's channel policy and the contact's do-not-disturb flag to a channel send."""
+    subject = request.consent
+    assert subject is not None  # channel capabilities require consent, so the policy denied without a subject
+    channel = request.capability_key.split(".")[-1]
+    reason = evaluate_channel_policy(
+        db,
+        organization_id=request.organization_id,
+        channel=channel,
+        contact_id=subject.contact_id,
+    )
+    if reason is None:
+        return None
+    return _denied(request, reason, policy_version)
+
+
+def _check_approval(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
+    """Confirm that the approval covers this exact execution. The row stays locked until the transaction ends."""
+    assert request.approval_id is not None
+    if request.payload is None:
+        return _denied(request, REASON_APPROVAL_MISMATCH, policy_version)
+    try:
+        check_approval_for_execution(
+            db,
+            organization_id=request.organization_id,
+            approval_id=request.approval_id,
+            capability_key=request.capability_key,
+            resource_type=request.resource_type,
+            resource_id=request.resource_id,
+            payload=request.payload,
+        )
+    except ApprovalError as error:
+        return _denied(request, error.reason_code, policy_version)
+    return None
+
+
 def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
     if request.actor is None:
         return _denied(request, REASON_ACTOR_REQUIRED)
@@ -172,6 +240,7 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         user_context=request.actor,
         correlation_id=request.correlation_id,
         consent_checked=request.consent is not None,
+        approval_checked=request.approval_id is not None,
     )
     if not policy.allowed:
         return policy
@@ -180,6 +249,11 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         consent_refusal = _check_consent(db, request, policy.policy_version)
         if consent_refusal is not None:
             return consent_refusal
+
+    if request.capability_key.startswith("channels."):
+        channel_refusal = _check_channel(db, request, policy.policy_version)
+        if channel_refusal is not None:
+            return channel_refusal
 
     if request.required_permission is not None:
         organization = db.get(Organization, request.organization_id)
@@ -191,6 +265,11 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         ):
             return _denied(request, REASON_ACTOR_NOT_AUTHORIZED, policy.policy_version)
 
+    if CAPABILITY_BY_KEY[request.capability_key].requires_approval:
+        approval_refusal = _check_approval(db, request, policy.policy_version)
+        if approval_refusal is not None:
+            return approval_refusal
+
     if request.billable:
         # Budget is reserved last, after every other check, so a refused execution never holds usage.
         if request.budget is None:
@@ -198,6 +277,16 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         reservation_refusal = _reserve_budget(db, request, policy.policy_version)
         if reservation_refusal is not None:
             return reservation_refusal
+
+    if CAPABILITY_BY_KEY[request.capability_key].requires_approval:
+        # Consumed last, so a refusal anywhere above leaves the approval unused. Nothing else runs in between.
+        assert request.approval_id is not None  # the policy denies approval-requiring work without one
+        consume_approval(
+            db,
+            organization_id=request.organization_id,
+            approval_id=request.approval_id,
+            actor_user_id=request.actor.user_id if request.actor is not None else None,
+        )
 
     return PolicyDecision(
         capability_key=request.capability_key,

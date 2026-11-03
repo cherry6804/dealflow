@@ -63,7 +63,7 @@ REASON_CAPABILITY_DISABLED = "capability_disabled"
 REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
 REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
 REASON_ENTITLEMENT_NOT_DEFINED = "entitlement_not_defined"
-REASON_APPROVAL_NOT_AVAILABLE = "approval_not_available"
+REASON_APPROVAL_REQUIRED = "approval_required"
 
 _EXPLANATIONS: dict[str, str] = {
     REASON_ALLOWED: "The capability is enabled for this organization.",
@@ -81,8 +81,8 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_ENTITLEMENT_NOT_DEFINED: (
         "This capability has no confirmed plan feature, so it cannot run."
     ),
-    REASON_APPROVAL_NOT_AVAILABLE: (
-        "This capability needs human approval, which is not available yet."
+    REASON_APPROVAL_REQUIRED: (
+        "This action needs a human approval of its exact payload before it can run."
     ),
     REASON_ENTITLEMENT_UNVERIFIED: (
         "Your subscription could not be verified. Sign in again or try later."
@@ -144,8 +144,13 @@ def evaluate_capability(
     user_context: CurrentUserContext | None = None,
     correlation_id: str | None = None,
     consent_checked: bool = False,
+    approval_checked: bool = False,
 ) -> PolicyDecision:
     """Return whether ``capability_key`` may execute for ``organization_id`` now.
+
+    ``approval_checked`` means the caller holds an approval for this exact payload and the gate
+    checks it (see ``app.governance.approvals``) before the execution. Without it, a capability
+    that requires approval is denied.
 
     Gates run in this order: entitlement (SIBVO snapshot, for capabilities that declare a feature),
     organization master and child switches, undefined entitlement, approval, provider, consent. The
@@ -203,9 +208,9 @@ def evaluate_capability(
             correlation_id,
         )
 
-    if definition.requires_approval:
+    if definition.requires_approval and not approval_checked:
         return _decision(
-            definition.key, organization_id, REASON_APPROVAL_NOT_AVAILABLE, policy_version,
+            definition.key, organization_id, REASON_APPROVAL_REQUIRED, policy_version,
             correlation_id,
         )
 

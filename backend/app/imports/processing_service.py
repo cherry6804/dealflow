@@ -366,14 +366,14 @@ def process_import_batch(
         raise
     except SQLAlchemyError:
         db.rollback()
-        logger.exception(
+        logger.error(
             "Database error while processing import batch %s.",
             import_batch_id,
         )
         raise
     except Exception:
         db.rollback()
-        logger.exception(
+        logger.error(
             "Unexpected error while processing import batch %s.",
             import_batch_id,
         )
