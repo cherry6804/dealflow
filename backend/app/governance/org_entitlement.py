@@ -33,7 +33,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db.models.organization_entitlement_snapshot import (
     OrganizationEntitlementSnapshot,
 )
@@ -142,7 +142,7 @@ def _in_backoff(row: OrganizationEntitlementSnapshot | None, *, now: datetime) -
     return row is not None and row.next_refresh_attempt_at is not None and now < row.next_refresh_attempt_at
 
 
-def _signing_key(settings: Any) -> str | None:
+def _signing_key(settings: Settings) -> str | None:
     return (
         settings.sibvo_org_snapshot_signing_key.get_secret_value()
         if settings.sibvo_org_snapshot_signing_key is not None
@@ -157,7 +157,7 @@ def _refresh(
     product_key: str,
     feature_key: str,
     now: datetime,
-    settings: Any,
+    settings: Settings,
     signing_key: str | None,
 ) -> tuple[EntitlementVerdict, bool]:
     """Ask SIBVO and store a verified answer. Returns ``(verdict, refreshed)``.
