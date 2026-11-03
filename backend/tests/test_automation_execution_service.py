@@ -23,7 +23,7 @@ from app.db.models.user import User
 from app.db.session import SessionLocal
 from tests.governance_helpers import attested_user_context, enable_deal_created_automation
 from tests.test_deals_api import (
-    create_authorized_user,
+    create_authorized_user as _create_authorized_user,
     create_customer_profile,
     create_lead,
     create_property,
@@ -33,6 +33,21 @@ from app.db.models.notification_preference import NotificationPreference
 from app.notifications.service import get_or_create_notification_preferences
 
 TestingSessionLocal = SessionLocal
+
+
+# WS6 WP5: automation actions run with the authority of the rule's activator and the deal owner, so the
+# users in these tests hold the permissions of the action they exercise.
+AUTOMATION_AUTHORITY_PERMISSIONS = (
+    "deals.create",
+    "deals.read",
+    "automation.update",
+    "leads.update",
+)
+
+
+def create_authorized_user(db, *, permission_keys=AUTOMATION_AUTHORITY_PERMISSIONS):
+    return _create_authorized_user(db, permission_keys=permission_keys)
+
 
 
 def create_test_deal(
@@ -88,6 +103,7 @@ def create_active_rule(
         actions=actions,
         status=AutomationRule.STATUS_ACTIVE,
         created_by_user_id=user.id,
+        updated_by_user_id=user.id,
     )
     db.add(rule)
     db.flush()
@@ -284,9 +300,8 @@ def test_unsupported_action_records_failed_execution() -> None:
         assert execution.status == AutomationExecution.STATUS_FAILED
         assert execution.error_message is not None
         assert execution.action_results[0]["status"] == "FAILED"
-        assert "Unsupported automation action" in (
-            execution.action_results[0]["reason"]
-        )
+        # WS6 WP5: an unsupported action is refused by the authority check before it can run.
+        assert execution.action_results[0]["reason_code"] == "unsupported_action"
 
         db.commit()
 
