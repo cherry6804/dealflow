@@ -177,3 +177,63 @@ Stories Done: 0 of 4. Criterion-level: the nine backlog acceptance criteria for 
 in code for the capabilities that exist, with DFR1-050 retention partial (documents and invitations only). Because no
 story is Done, the honest epic completion figure is **0%**. The criterion-level figure is reported only as supporting
 evidence, not as completion.
+
+## 10. Provider health and readiness (ADR-0032 follow-on)
+
+Audit before implementation. ADR-0032 already provides: lifecycle states (`unverified`, `verifying`, `connected`,
+`degraded`, `failed`, `disconnected`); derived readiness that checks status, credential activity, verified credential
+version and freshness; exponential backoff with a failure threshold; configurable timeout, verification interval,
+freshness window and backoff ceiling; a row-locked outbox handler; scheduled re-verification with time-based
+idempotency keys; rotation and revocation handling; per-attempt history; tenant-scoped reads; and secret redaction.
+
+Gaps closed in this unit:
+
+1. **Stale-connection detection is recorded.** Readiness was already derived as `stale`, but nothing recorded the
+   transition. The worker now writes one `provider_connection.stale` audit row per staleness episode
+   (`app/providers/health.py`). The idempotency key contains the connection and its last successful verification, so
+   repeated and concurrent sweeps record each episode once, and a new verification starts a new episode. The row is
+   written through the independent audit path with the registered `provider_health` system actor. It contains no
+   secret and no provider message. A failed write for one connection is logged and does not stop the sweep.
+2. **Denials say why.** The provider gate still returns `provider_not_connected` for every case without a ready
+   provider, so existing reason codes are unchanged. `PolicyDecision.provider_readiness` now carries the specific
+   state (for example `stale`, `credential_changed`, `credential_revoked`, `failed`, `degraded`). The field appears in
+   `as_dict` only for provider-dependent capabilities. `best_provider_readiness` prefers a ready provider and otherwise
+   reports the most useful state; it uses the same rules as `any_provider_ready`.
+3. **A provider sweep cannot stop unrelated worker duties.** The sweep (due checks and staleness) runs in the same
+   worker cycle as usage-reservation expiry and outbox delivery. A database failure in the sweep is logged with its
+   error type only and the cycle continues.
+
+Verification of this unit (fresh database on port 5438, final code):
+
+- Full backend suite: exit code 0; 2,129 passed, 14 skipped, 0 failed (473 s) on the final code, including the
+  pagination fix for stale sweeps (a first version re-read recorded episodes and could starve a backlog). A first full run had three failures in
+  the approval tests, which patched the old `any_provider_ready` name. The shared seam in `tests/governance_helpers.py`
+  now patches `best_provider_readiness`, and the rerun passed.
+- Focused: provider health, provider lifecycle, policy and approval tests: 84 passed.
+- Ruff `check` on all changed backend files: passed.
+- Migration graph: single head `n5e8a1c4d7b9`. This unit adds no migration.
+- Frontend: not affected. No frontend file changed. The decision payload gains an optional field only for
+  provider-dependent capabilities.
+
+Tests: `tests/test_provider_health.py` (14 tests) covers stale recording once per episode, a new episode after a new
+verification, repeated and concurrent sweeps writing one row, a failed audit write not stopping other organizations,
+secret absence from stale metadata, healthy connections not recorded, the outbox isolation, policy denial reporting the
+readiness state, best-readiness precedence, and tenant scoping. Existing lifecycle and policy tests still pass
+(44 passed across the three files). Provider calls use the mocked boundary only.
+
+Still open for this story (not met, not claimed):
+
+- **Live provider verification** needs a real sandbox credential and approved data-use terms (external). Until then the
+  status is Not verified.
+- **The sweep runs only in `python -m app.outbox.worker --serve`.** `--once` dispatches queued events and does not run the
+  sweep, so a deployment that only runs `--once` never schedules provider checks or records staleness. The serve cycle is
+  covered by `test_the_serve_cycle_schedules_and_runs_a_due_provider_check`, which runs `_outbox_cycle` end to end
+  through the real handler. It does not start a separate OS process.
+- **Scheduled health probes run only where the worker runs** (D7). If the worker is down, readiness still fails closed
+  through freshness expiry, but no stale audit is written until it returns.
+- **A failed connection is not re-verified automatically.** It needs a new verify request or an operator replay (WS3).
+  This is deliberate, so a permanently rejected credential is not retried in a loop.
+- **No alerting or metrics export.** Observability is the audit trail and the worker's structured log lines.
+- **Attempt history has no retention purge** (WS3 D-7).
+- **Readiness has no dedicated read endpoint for staleness history.** Stale rows are visible through the audit trail
+  only.

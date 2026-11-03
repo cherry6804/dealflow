@@ -115,3 +115,42 @@ def any_provider_ready(
         connection_readiness(db, organization_id=organization_id, provider_key=key, now=now).ready
         for key in provider_keys
     )
+
+
+# Most useful state first, for a denial that has to explain itself. A ready provider always wins.
+_REPORT_ORDER: tuple[ReadinessCode, ...] = (
+    ReadinessCode.READY,
+    ReadinessCode.STALE,
+    ReadinessCode.CREDENTIAL_CHANGED,
+    ReadinessCode.CREDENTIAL_REVOKED,
+    ReadinessCode.FAILED,
+    ReadinessCode.DEGRADED,
+    ReadinessCode.VERIFYING,
+    ReadinessCode.NOT_VERIFIED,
+    ReadinessCode.DISCONNECTED,
+    ReadinessCode.NOT_CONNECTED,
+)
+
+
+def best_provider_readiness(
+    db: Session,
+    *,
+    organization_id: UUID,
+    provider_keys: tuple[str, ...],
+    now: datetime | None = None,
+) -> ConnectionReadiness:
+    """Readiness of the best of the providers: a ready one if any, otherwise the most informative state.
+
+    An empty tuple reports ``not_connected``. The result is decided by the same rules as ``any_provider_ready``,
+    so the two never disagree about whether execution may proceed.
+    """
+    results = [
+        connection_readiness(db, organization_id=organization_id, provider_key=key, now=now)
+        for key in provider_keys
+    ]
+    if not results:
+        return ConnectionReadiness(False, ReadinessCode.NOT_CONNECTED, None)
+    for result in results:
+        if result.ready:
+            return result
+    return min(results, key=lambda result: _REPORT_ORDER.index(result.code))
