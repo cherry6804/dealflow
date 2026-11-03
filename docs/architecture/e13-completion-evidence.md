@@ -237,3 +237,64 @@ Still open for this story (not met, not claimed):
 - **Attempt history has no retention purge** (WS3 D-7).
 - **Readiness has no dedicated read endpoint for staleness history.** Stale rows are visible through the audit trail
   only.
+
+## 12. WP-E13-next: DFR1-053 lifecycle and billing-webhook coverage
+
+Branch: `feature/DFR1-E13-DFR1-053-lifecycle-tests`, cut from `origin/develop` (`81793d9`).
+
+Scope and what the tests characterise. They describe existing behaviour; they do not add a downgrade feature.
+
+- **Subscription downgrade (Dealsflo side).** SIBVO owns plan activation and its seat-capacity check (contract section 4.1).
+  Dealsflo's part is how a downgraded signed snapshot replaces the earlier grant. `tests/test_dfr1_053_downgrade_lifecycle.py`
+  covers: a downgrade denied once the next snapshot is due; a downgrade not visible before the held snapshot expires; a
+  downgrade that removes the entitlement item (denied as missing); idempotent decisions after the downgrade (one SIBVO
+  call); a downgrade snapshot for another organization (rejected, stored snapshot unchanged); SIBVO unreachable when the
+  downgrade is due (no extension of the old grant). Six tests, all passing.
+- **Billing audit API endpoints.** `tests/test_billing_audit_endpoints.py` sends real HTTP requests through `TestClient`
+  against the real database. Only tenant resolution is overridden; the real `enforce_permission` check runs. Covered:
+  unauthenticated requests refused; a member without `billing.audit.read` refused on list and detail; the list shows only
+  the caller's organization; another organization's record returns 404 on detail; a repeated reconciliation appears once;
+  an unknown webhook event writes no record. Six tests, all passing.
+- **Billing reconciliation service idempotency.** Existing tests (`test_billing_reconciliation_service.py`) are mock-based.
+  The endpoint tests above add a database-backed repeat, which exercises the service's `ON CONFLICT` path.
+
+Defect found and fixed (model and migration drift):
+
+- Migration `7a2c9e4d61b8` creates the unique constraint `uq_billing_reconciliation_records_webhook_event` on
+  `billing_reconciliation_records (webhook_event_id)`. The ORM model did not declare it. Schemas built from the models
+  (`create_all`, used by the test suite) therefore lacked the constraint. The service's
+  `ON CONFLICT ON CONSTRAINT uq_billing_reconciliation_records_webhook_event` then raised `ProgrammingError` on a
+  repeated event, instead of returning the existing record.
+- Fix: `app/db/models/billing_reconciliation_record.py` declares `UniqueConstraint("webhook_event_id",
+  name="uq_billing_reconciliation_records_webhook_event")`. The name and column match the migration exactly. No new
+  migration is needed.
+- The same file also had two Ruff findings before this change (an unused `select` import and an unsorted `JSON`
+  import). Ruff's fix touched those two import lines. No other line changed for that reason.
+- Note: a database created by `create_all` before this change keeps the old schema. Only a fresh model-built schema or
+  the migration path gets the constraint.
+
+Scope boundaries (not claimed by this work):
+
+- **No Dealsflo webhook ingestion or replay endpoint exists, and none was created.** No Dealsflo code inserts
+  `BillingWebhookEvent` rows, and `reconcile_webhook_event` is called only from tests. The SIBVO contract defines no webhook
+  endpoint. The "replay through the actual endpoint" objective therefore cannot be met on the Dealsflo side without
+  inventing an endpoint. The endpoint tests above cover the existing read endpoints only.
+- **SIBVO-owned billing webhook replay** is outside this Dealsflo implementation scope. It belongs to SIBVO's billing module.
+- **Downgrade seat-capacity enforcement** is SIBVO-side (contract section 4.1). Dealsflo does not re-check seat capacity on
+  downgrade in these tests.
+
+Verification (final code, fresh database `dealflow_test` on port 5438, recreated after the model correction; port 5433 not touched):
+
+- Full Dealsflo backend suite: exit code **0**. **2,141 passed, 14 skipped, 0 failed** (758 s).
+- Focused: the six downgrade tests, six endpoint tests, reconciliation service and model tests, billing entitlement,
+  entitlement lifecycle and snapshot tests, billing audit API tests: 83 passed.
+- Ruff `check` on the three changed backend files: passed.
+- Migrations on an empty database `dealflow` (port 5438): `upgrade head` exit 0; `downgrade b4d8f2a6c1e9` exit 0;
+  `upgrade head` exit 0. Single head `n5e8a1c4d7b9`. `downgrade -1` is refused with "Ambiguous walk" because the head is a
+  merge point. That behaviour is in the existing graph and this change does not affect it.
+- Frontend: not affected. No frontend file changed.
+- SIBVO repository: not changed, so no SIBVO test run was required.
+
+Status after this work: DFR1-053 remains **Blocked** (usage summaries and reconciled usage need the approved SIBVO usage
+contract). The downgrade criterion and the webhook replay criterion now have lifecycle coverage in Dealsflo; endpoint-level
+replay has no Dealsflo endpoint to test. E13 is not Done, and no story is Done.

@@ -8,15 +8,15 @@ from datetime import datetime
 from typing import ClassVar
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
-    JSON,
     String,
+    UniqueConstraint,
     Uuid,
     func,
-    select,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,6 +42,11 @@ class BillingReconciliationRecord(Base):
         CheckConstraint(
             "status IN ('MATCHED', 'MISMATCHED', 'FAILED')",
             name="ck_billing_reconciliation_records_status",
+        ),
+        # Matches migration 7a2c9e4d61b8. The reconciliation service's ON CONFLICT clause names this constraint.
+        UniqueConstraint(
+            "webhook_event_id",
+            name="uq_billing_reconciliation_records_webhook_event",
         ),
         Index(
             "ix_billing_reconciliation_records_event_created",
