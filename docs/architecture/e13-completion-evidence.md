@@ -298,3 +298,50 @@ Verification (final code, fresh database `dealflow_test` on port 5438, recreated
 Status after this work: DFR1-053 remains **Blocked** (usage summaries and reconciled usage need the approved SIBVO usage
 contract). The downgrade criterion and the webhook replay criterion now have lifecycle coverage in Dealsflo; endpoint-level
 replay has no Dealsflo endpoint to test. E13 is not Done, and no story is Done.
+
+## 13. Post-merge verification of WP-E13-next and reassessment
+
+Merged state:
+
+- PR #150 merged into `develop` as merge commit `027d891`. Commit `c664994` (the WP-E13-next implementation) is an ancestor.
+- The merged tree equals `c664994` exactly. The five intended files are present, including the reconciliation
+  unique-constraint correction in `app/db/models/billing_reconciliation_record.py` (`uq_billing_reconciliation_records_webhook_event`
+  on `webhook_event_id`, matching migration `7a2c9e4d61b8`).
+- Migration graph on `develop`: single head `n5e8a1c4d7b9`. No migration was added.
+- Verification evidence is recorded in section 12 (suite exit 0, 2,141 passed, 14 skipped, 0 failed, on the branch before merge).
+
+Reassessment against the backlog (sheet "Jira Backlog", rows DFR1-006, DFR1-017, DFR1-050, DFR1-053):
+
+| Story | Status | Change since section 11 |
+|---|---|---|
+| DFR1-006 | Partial | No change. Open: no AI executor (DFR1-015), actor permission key undefined (decision), queue or human task (DFR1-025, other epic). |
+| DFR1-017 | Partial | No change. Open: no usage producer (DFR1-015), maintenance scheduled only under `--serve` (D7). |
+| DFR1-050 | Partial | No change. Open: retention periods (D4), deletion and export for messages, calls and transcripts (no tables exist yet; communication epics), decisions D1 and D9. |
+| DFR1-053 | Blocked | Downgrade criterion moves from "not covered" to covered for the Dealsflo side (6 characterization tests). Webhook replay has no Dealsflo endpoint to test. Usage summaries and reconciled usage still need the approved SIBVO usage contract. |
+
+Criterion counts after this merge (same method as section 11):
+
+- Met: 16 (the previous 15, plus the Dealsflo-side downgrade criterion).
+- Partial: 8.
+- Blocked: 2 (DFR1-053 usage summaries and reconciled usage).
+- Dependent on other epics: 1 (DFR1-006 queue or human task, DFR1-025).
+- Not covered by tests: 0.
+
+Seat changes (DFR1-053): Dealsflo tests cover member removal releasing the seat and retrying safely (`test_team_member_removal.py`),
+seat capacity reads from SIBVO (`test_sibvo_seats_api.py`), and owner seat conflicts (`test_team_member_removal.py`). The
+live SIBVO seat tests in `backend/tests/integration/test_sibvo_live.py` skip unless SIBVO is configured, so they are
+not evidence of a live run. Seat reservation when an invitation is accepted was not verified in this review, and the
+criterion stays Partial.
+
+Stories Done: 0 of 4. E13 is not Done.
+
+Recommended next work package (no contract invented, stays inside E13):
+
+- **WP-E13-decision-readiness.** Documentation only, no code. For each open decision (D1, D4, D7, D8, D9, D11, D13), the
+  AI actor permission key, the AI and channel entitlement keys (DFR1-005), and the SIBVO usage-ingestion contract (DFR1-053),
+  write the exact options, the code paths that change under each option, and the tests that would then be required. It
+  gives the owners a decision packet and lets the next implementation package start the moment a decision lands. It
+  changes no story status.
+- Implementation packages stay blocked until those decisions land. Candidate code work, if approved later: seat
+  reservation on invitation acceptance (if the backlog wording requires it), and audit-immutability delete handling once
+  D8 is decided.
