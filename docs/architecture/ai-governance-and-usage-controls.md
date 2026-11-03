@@ -346,12 +346,14 @@ Each row is what the code does today. Anything not listed as done is **not** cla
 | `crm.contacts` | Yes | Identity fields anonymized (`anonymized_partial`) | Not enforced | Linked leads, profiles, requirements, deals and follow-ups are not changed. Whether an old contact may be anonymized while deals reference it is a product and legal decision. |
 | `crm.leads` | Yes | Not processed (`deletion_executor_not_built`) | Not enforced | Free-text notes. Decision: anonymize or delete, and what happens to dependent follow-ups. |
 | `crm.follow_ups` | Yes | Not processed | Not enforced | Free-text titles and descriptions. Same decision as leads. |
-| `crm.customer_profiles`, `crm.requirements`, `crm.deals` | Not built (`no_export_producer_yet`) | Not processed | Not enforced | No exporter or executor yet. Deals hold financial and commission records that may have a retention obligation. |
+| `crm.customer_profiles` | Yes | Not processed (`deletion_executor_not_built`) | Not enforced | Customer notes are free text. Deletion approach is decision 1 in 5.6. |
+| `crm.requirements` | Yes (lead, profile, status, budget range) | Not processed | Not enforced | Requirement sub-records (locations, preferences, history) are not exported; see 5.2a. |
+| `crm.deals` | Yes, with payment milestones and commissions | Not processed | Not enforced | Financial and commission records. Retention is decision 1 in 5.6; they are never deleted by a request while the decision is open. |
 | `documents.files` | Yes, with the stored files. All or nothing: a missing object, a checksum mismatch, or a total over `PRIVACY_EXPORT_MAX_BYTES` excludes the whole category | Stored object, then metadata row (`deleted`) | Enforced by age (`created_at`) | None. |
 | `team.invitations` | Yes. The token hash is never exported | Email replaced by a non-deliverable placeholder; pending invitations revoked (`anonymized`) | Enforced by age | None. |
 | `messaging.email_outbox` | Excluded (`not_organization_owned`) | Excluded | Not applicable | Platform authentication and invitation mail carries no organization ID. It cannot be exported or deleted for one organization. Platform retention is a separate decision. |
 | `messaging.conversations`, `voice.call_records`, `voice.transcripts`, `ai.prompts_and_responses`, `ai.embeddings`, `ai.execution_traces` | No producer (`no_producer_yet`) | No producer | Not applicable | Channel, voice and AI execution are not built (DFR1-015, 019, 027, 028). Blocked, not covered. |
-| `ai.usage` | Not built | Not deleted | Not applicable | Financial record. Retained by design. |
+| `ai.usage` | Yes (metering fields only; no prompt or response text) | Not deleted | Not applicable | Financial record. Retained by design. |
 | `billing.records`, `audit.events` | Not built | Not deleted | Not applicable | Financial and security records. Never deleted by a customer request. Whether they must be exported on request is a decision. |
 | `security.credentials` | Never exported | Never deleted by a customer request | Not applicable | Secret references. No provider connection exists yet. |
 
@@ -383,17 +385,56 @@ export's object is removed only when it is downloaded or its request is cancelle
 
 No legal retention period is set in code. Periods come only from each organization's retention policy.
 
-### 5.6 Decisions still needed (product or legal)
+### 5.2a Classification gap
 
-1. Anonymize or delete leads, follow-ups, customer profiles, requirements and deals on deletion, and how to treat records that other records depend on.
-2. Whether contacts may be retention-enforced while deals or leads reference them.
-3. Whether billing and audit records must be included in an export on request.
-4. Whether a platform-level retention period applies to the email outbox, which sits outside any organization.
-5. Whether a separate record of deleted categories must be kept. Currently only the audit event and the request's execution record remain.
+The register in `data_classification.py` covers 19 categories. The database holds more organization-owned tables
+that the register does not classify, so they are neither exported nor deleted by any request today. Each needs a
+sensitivity and a retention treatment decided by product and legal before it is added. Until then it is not claimed
+as covered.
+
+Unclassified, organization-owned tables: `activities`, `customer_requirement_history`,
+`customer_requirement_locations`, `customer_requirement_possession_parking_preferences`,
+`customer_requirement_property_preferences`, `deal_negotiations`, `deal_negotiation_history`, `deal_stage_history`,
+`import_batches` (uploaded source files are referenced by storage key), `notifications`, `notification_preferences`,
+`organization_memberships`, `properties`, `referrals`, `requirement_match_runs`, `requirement_match_run_results`,
+`requirement_property_shortlists`, `requirement_shortlist_events`, `site_visits`, `team_member_removals`,
+`automation_rules`, `automation_executions`, `auth_sessions`, `subscriptions` (SIBVO is authoritative for subscriptions),
+`roles`, `organization_capability_settings`, `organization_usage_budgets`, `privacy_*` (governance records),
+`outbox_events` (system). Membership and subscription data belong to SIBVO and should be handled by SIBVO's own
+processes; this is decision 6 in 5.6.
+
+### 5.6 Decisions required before further work (product or legal)
+
+Each decision lists what it changes and what is left until it is answered. None has been assumed.
+
+1. **Deletion approach for CRM free text and deals.** Options: (a) clear free-text fields only (customer notes,
+   lead interest, outcome and next action, follow-up title and description, deal notes), keeping every row, so references
+   stay intact; or (b) delete rows, which breaks references from deals, requirements and follow-ups and is blocked
+   for deals with financial records. Consequence of (a): personal content is removed and the structure stays. Consequence
+   of (b): referential breaks need a rule for each dependent table. Until decided, these categories are reported as
+   `deletion_executor_not_built`.
+2. **Contact anonymization while records depend on it.** Today a deletion anonymizes contact identity fields for every
+   contact of the organization, even when leads or deals still reference it. Option: anonymize only contacts with no
+   open deals or leads, and defer the rest with a reported dependency. The brief's default is deferral. This changes what
+   a deletion does, so it needs approval.
+3. **Billing and audit records in an export.** Option: include them for a customer-authorized export, with named sensitive
+   fields filtered out. The fields to filter (for example webhook payload fragments, provider references, actor identifiers)
+   and the authorization rule (who may request them) are not defined. Until they are, billing and audit records are reported
+   as `not_exported` with reason `export_not_built`, and never silently excluded.
+4. **Retention periods.** No period is set in code. Each category needs a number of days and a legal basis, decided by
+   product and legal. Retention is enforced only for documents and invitations, and only after a period is set.
+5. **Platform email outbox.** It holds authentication and invitation mail with no organization ID. A platform-level period
+   and an export route for individuals, if any, need a decision. It stays excluded from per-organization export and deletion.
+6. **Membership, subscription and identity data.** Who answers an export request for membership and subscription data
+   that SIBVO holds: SIBVO, Dealsflo, or both. This affects the classification in 5.2a.
+7. **Scheduling and deployment.** Scheduling is not configured. An operator must run `privacy_maintenance` on a schedule
+   before any automatic retention or expiry runs. Decision: which scheduler and environment, and who owns it.
+8. **Tombstones.** Deletion audit events already record categories, counts and outcomes, with no personal values. A separate
+   tombstone table is not built. Decision: whether the audit event is sufficient, or a separate record is required.
 
 ### 5.7 Verification
 
-- `tests/test_privacy_execution.py`: 32 tests. They cover export coverage and ZIP contents; all-or-nothing document export (missing object, checksum mismatch, size limit); exclusions; invitation token omission; leads and follow-ups export; deletion; holds at request and execution time; storage-failure rollback and retry; idempotency; download access and expiry; cross-tenant refusal; retention per organization and per category; legal-hold skip; the expiry job; cancellation; failure isolation between organizations; and absence of personal data from logs.
+- `tests/test_privacy_execution.py`: 33 tests. They cover export coverage and ZIP contents; all-or-nothing document export (missing object, checksum mismatch, size limit); exclusions; invitation token omission; leads, follow-ups, customer profiles, requirements, deals with payment milestones and commissions, and AI usage export (organization-scoped, with a cross-organization check); deletion; holds at request and execution time; storage-failure rollback and retry; idempotency; download access and expiry; cross-tenant refusal; retention per organization and per category; legal-hold skip; the expiry job; cancellation; failure isolation between organizations; and absence of personal data from logs.
 - Migrations: `j1a6e3c9b4d2` verified upgrade, downgrade and upgrade on a fresh PostgreSQL database that ran the full chain from empty.
 
 ## 6. Frontend
@@ -497,7 +538,7 @@ ADR-0029 Amendment C.
 |---|---|---|
 | DFR1-006 | **Partial** | Centralized execution gate (actor, membership, target, policy, billing, permission) with an audit record for every decision. One governed execution path (deal-created automation), revalidated before each rule. AI and channel capabilities fail closed (no confirmed plan feature, no provider or consent model, no approval model). DFR1-002 and DFR1-005 are open. |
 | DFR1-017 | **Partial** | Ledger lifecycle, idempotency and conflict refusal, concurrency, reservation expiry and cleanup, configurable thresholds, breakdowns, and gate integration are implemented and tested. No AI producer (DFR1-015) and no approved SIBVO reconciliation contract (DFR1-053) exist. Cleanup is not scheduled. Per-capability budgets are undecided. |
-| DFR1-050 | **Partial** | Background export (contacts, leads, follow-ups, invitations, documents with files), deletion (documents, invitations fully; contacts anonymized), retention for documents and invitations, expiry and cancellation with object removal, audited download, and failure-isolated maintenance. Not built: exporters and executors for most CRM categories, conversations, calls, transcripts and AI data; scheduling; provider deletion (none exists). Section 5 lists each category. |
+| DFR1-050 | **Partial** | Export for contacts, leads, follow-ups, customer profiles, requirements, deals (with milestones and commissions), AI usage metering, invitations and documents with files. Deletion for documents (full), invitations (full) and contacts (identity fields, partial). Retention for documents and invitations. Expiry, cancellation, audited download, failure-isolated maintenance. Not built: deletion for CRM free text (decision 1), billing and audit export (decision 3), most unclassified tables (section 5.2a), scheduling (decision 7). Section 5.6 lists the decisions. |
 | DFR1-053 | **Blocked** | Dependencies not delivered. |
 
 No E13 story is complete. E13 is not Done.

@@ -215,6 +215,9 @@ def _audit(db: Session, request: ExecutionRequest, decision: PolicyDecision) -> 
         budget_unit = UsageUnit(request.budget.unit).value
     db.add(
         AuditEvent(
+            # Each decision carries its own time. Rows written in one transaction would otherwise
+            # share the transaction's timestamp, so their order in the trail would be ambiguous.
+            occurred_at=datetime.now(UTC),
             user_id=request.actor.user_id if request.actor is not None else None,
             organization_id=request.organization_id,
             event_type=GOVERNANCE_AUDIT_EVENT_TYPE,

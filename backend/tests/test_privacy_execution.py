@@ -24,13 +24,20 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 
 from app.api import governance as governance_api
+from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
 from app.db.models.contact import Contact
+from app.db.models.customer_profile import CustomerProfile
+from app.db.models.customer_requirement import CustomerRequirement
+from app.db.models.deal import Deal
+from app.db.models.deal_commission import DealCommission
 from app.db.models.document import Document
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
+from app.db.models.property import Property
 from app.db.models.role import Role
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
@@ -82,8 +89,17 @@ def tenant() -> Iterator[tuple[UUID, UUID]]:
 
 
 def _cleanup(organization_id: UUID) -> None:
+    # CRM rows reference contacts, so they are removed first, in dependency order.
     with SessionLocal() as db:
         for model in (
+            PaymentMilestone,
+            DealCommission,
+            Deal,
+            CustomerRequirement,
+            Lead,
+            CustomerProfile,
+            Property,
+            AiUsageEvent,
             Document,
             Contact,
             PrivacyDataRequest,
@@ -697,6 +713,115 @@ def test_leads_and_follow_ups_are_exported_for_their_organization_only(
     assert [item["title"] for item in document["categories"]["crm.follow_ups"]] == [
         "Call back on Friday"
     ]
+
+
+# --- Customer profiles, requirements, deals and AI usage --------------------------------------
+
+
+def test_crm_deals_profiles_requirements_and_usage_are_exported_for_their_organization_only(
+    tenant, storage
+) -> None:
+    from datetime import UTC as _UTC
+    from decimal import Decimal
+
+    from app.db.models.ai_usage_event import AiUsageEvent
+    from app.db.models.customer_requirement import CustomerRequirement
+    from app.db.models.deal_commission import DealCommission
+    from app.db.models.organization import Organization
+    from app.db.models.payment_milestone import PaymentMilestone
+    from tests.test_automation_execution_service import create_test_deal
+    from tests.test_deals_api import create_lead
+
+    organization_id, user_id = tenant
+    other_user, other_organization = create_manager(permissions=())
+    try:
+        with SessionLocal() as db:
+            user = db.get(User, user_id)
+            organization = db.get(Organization, organization_id)
+            assert user is not None and organization is not None
+            lead = create_lead(db, organization=organization)
+            deal = create_test_deal(db, user=user, organization=organization, lead_id=lead.id)
+            db.add(
+                PaymentMilestone(
+                    organization_id=organization_id,
+                    deal_id=deal.id,
+                    name="Booking",
+                    amount=Decimal("100000.00"),
+                    currency="INR",
+                    due_at=datetime.now(_UTC),
+                    status="PENDING",
+                )
+            )
+            db.add(
+                DealCommission(
+                    organization_id=organization_id,
+                    deal_id=deal.id,
+                    commission_type="FIXED",
+                    fixed_amount=Decimal("5000.00"),
+                    currency="INR",
+                    status="AGREED",
+                    terms="Agreed on site",
+                )
+            )
+            db.add(
+                CustomerRequirement(
+                    organization_id=organization_id,
+                    status="ACTIVE",
+                    is_active=True,
+                    lead_id=lead.id,
+                    customer_profile_id=deal.customer_profile_id,
+                )
+            )
+            db.add(
+                AiUsageEvent(
+                    organization_id=organization_id,
+                    idempotency_key="export-usage-1",
+                    unit="tokens_output",
+                    reserved_quantity=5,
+                    quantity=5,
+                    status="recorded",
+                    occurred_at=datetime.now(_UTC),
+                    capability_key="ai.assistant",
+                )
+            )
+            db.commit()
+            deal_id = str(deal.id)
+            profile_id = str(deal.customer_profile_id)
+
+        # Another organization's deal must never appear in this organization's export.
+        with SessionLocal() as db:
+            other_org = db.get(Organization, other_organization.id)
+            other_owner = db.get(User, other_user.id)
+            other_lead = create_lead(db, organization=other_org)
+            other_deal = create_test_deal(
+                db, user=other_owner, organization=other_org, lead_id=other_lead.id
+            )
+            db.commit()
+            other_deal_id = str(other_deal.id)
+
+        request_id = _request(
+            organization_id,
+            user_id,
+            "export",
+            ["crm.deals", "crm.customer_profiles", "crm.requirements", "ai.usage"],
+        )
+        _run(request_id, organization_id)
+
+        row = _row(request_id)
+        assert row.status == STATUS_READY
+        document = _archive_document(storage, row.artifact_reference)
+        assert document["coverage"]["not_exported"] == []
+        deals = document["categories"]["crm.deals"]
+        assert [item["id"] for item in deals] == [deal_id]
+        assert deals[0]["payment_milestones"][0]["name"] == "Booking"
+        assert deals[0]["commissions"][0]["terms"] == "Agreed on site"
+        assert profile_id in [item["id"] for item in document["categories"]["crm.customer_profiles"]]
+        assert len(document["categories"]["crm.requirements"]) == 1
+        usage = document["categories"]["ai.usage"]
+        assert [item["capability_key"] for item in usage] == ["ai.assistant"]
+        assert other_deal_id not in json.dumps(document)
+    finally:
+        _cleanup(other_organization.id)
 
 
 # --- Team invitations ----------------------------------------------------------------------

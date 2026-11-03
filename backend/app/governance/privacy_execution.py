@@ -44,11 +44,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.contact import Contact
+from app.db.models.customer_profile import CustomerProfile
+from app.db.models.customer_requirement import CustomerRequirement
+from app.db.models.deal import Deal
+from app.db.models.deal_commission import DealCommission
 from app.db.models.document import Document
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.privacy_records import PrivacyDataRequest, RetentionPolicy
 from app.db.models.team_invitation import TeamInvitation
 from app.governance.data_classification import CATEGORY_BY_KEY
@@ -288,10 +294,136 @@ def _export_documents(
     return rows, members
 
 
+def _export_customer_profiles(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(CustomerProfile)
+        .where(CustomerProfile.organization_id == organization_id)
+        .order_by(CustomerProfile.created_at, CustomerProfile.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "contact_id": str(row.contact_id),
+            "is_active": row.is_active,
+            "customer_notes": row.customer_notes,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_requirements(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(CustomerRequirement)
+        .where(CustomerRequirement.organization_id == organization_id)
+        .order_by(CustomerRequirement.created_at, CustomerRequirement.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "lead_id": str(row.lead_id),
+            "customer_profile_id": str(row.customer_profile_id),
+            "status": row.status,
+            "is_active": row.is_active,
+            "budget_min": row.budget_min,
+            "budget_max": row.budget_max,
+            "budget_currency": row.budget_currency,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_deals(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    """Deals with their payment milestones and commissions. Financial records are exported, not changed."""
+    deals = db.scalars(
+        select(Deal).where(Deal.organization_id == organization_id).order_by(Deal.created_at, Deal.id)
+    ).all()
+    milestones = db.scalars(
+        select(PaymentMilestone).where(PaymentMilestone.organization_id == organization_id)
+    ).all()
+    commissions = db.scalars(
+        select(DealCommission).where(DealCommission.organization_id == organization_id)
+    ).all()
+    milestones_by_deal: dict[UUID, list[dict[str, Any]]] = {}
+    for row in milestones:
+        milestones_by_deal.setdefault(row.deal_id, []).append(
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "amount": row.amount,
+                "currency": row.currency,
+                "due_at": _iso(row.due_at),
+                "status": row.status,
+                "paid_at": _iso(row.paid_at),
+                "notes": row.notes,
+            }
+        )
+    commissions_by_deal: dict[UUID, list[dict[str, Any]]] = {}
+    for row in commissions:
+        commissions_by_deal.setdefault(row.deal_id, []).append(
+            {
+                "id": str(row.id),
+                "commission_type": row.commission_type,
+                "fixed_amount": row.fixed_amount,
+                "rate_percent": str(row.rate_percent) if row.rate_percent is not None else None,
+                "currency": row.currency,
+                "status": row.status,
+                "terms": row.terms,
+                "agreed_at": _iso(row.agreed_at),
+                "paid_at": _iso(row.paid_at),
+            }
+        )
+    return [
+        {
+            "id": str(deal.id),
+            "lead_id": str(deal.lead_id),
+            "customer_profile_id": str(deal.customer_profile_id),
+            "property_id": str(deal.property_id),
+            "stage": deal.stage,
+            "expected_value": deal.expected_value,
+            "currency": deal.currency,
+            "notes": deal.notes,
+            "created_at": _iso(deal.created_at),
+            "payment_milestones": milestones_by_deal.get(deal.id, []),
+            "commissions": commissions_by_deal.get(deal.id, []),
+        }
+        for deal in deals
+    ]
+
+
+def _export_ai_usage(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    """Usage metering only. Stored by the ledger; it holds no prompt or response text."""
+    rows = db.scalars(
+        select(AiUsageEvent)
+        .where(AiUsageEvent.organization_id == organization_id)
+        .order_by(AiUsageEvent.occurred_at, AiUsageEvent.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "unit": row.unit,
+            "reserved_quantity": row.reserved_quantity,
+            "quantity": row.quantity,
+            "status": row.status,
+            "provider": row.provider,
+            "model": row.model,
+            "task_type": row.task_type,
+            "capability_key": row.capability_key,
+            "occurred_at": _iso(row.occurred_at),
+        }
+        for row in rows
+    ]
+
+
 EXPORTERS: dict[str, Callable[[Session, UUID], list[dict[str, Any]]]] = {
     CONTACTS_CATEGORY: _export_contacts,
     "crm.leads": _export_leads,
     "crm.follow_ups": _export_follow_ups,
+    "crm.customer_profiles": _export_customer_profiles,
+    "crm.requirements": _export_requirements,
+    "crm.deals": _export_deals,
+    "ai.usage": _export_ai_usage,
     INVITATIONS_CATEGORY: _export_invitations,
 }
 

@@ -134,10 +134,12 @@ def _set(ids: dict[str, UUID], key: str, enabled: bool) -> None:
 def _gate_audits(organization_id: UUID) -> list[dict]:
     with SessionLocal() as db:
         rows = db.scalars(
-            select(AuditEvent).where(
+            select(AuditEvent)
+            .where(
                 AuditEvent.organization_id == organization_id,
                 AuditEvent.action == EXECUTION_AUDIT_ACTION,
             )
+            .order_by(AuditEvent.occurred_at, AuditEvent.id)
         ).all()
         return [
             {
