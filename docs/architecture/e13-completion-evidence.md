@@ -298,3 +298,21 @@ Verification (final code, fresh database `dealflow_test` on port 5438, recreated
 Status after this work: DFR1-053 remains **Blocked** (usage summaries and reconciled usage need the approved SIBVO usage
 contract). The downgrade criterion and the webhook replay criterion now have lifecycle coverage in Dealsflo; endpoint-level
 replay has no Dealsflo endpoint to test. E13 is not Done, and no story is Done.
+
+## 14. WP-E13-decision-readiness: decision register and matrices
+
+Deliverable: `docs/architecture/e13-decision-readiness.md`. Documentation only. It contains:
+
+- a decision register covering the seven privacy and governance decisions (D1, D4, D7, D8, D9, D11, D13), the AI actor
+  key, the AI and channel entitlement keys, role granting, fail-closed behaviour, and the SIBVO integration items (usage
+  contract, event schema, idempotency, reversal, retry and replay, identity mapping, webhook ownership, failure audit);
+- the dependency matrix, the implementation impact matrix, the decision-to-test traceability matrix, the prioritized
+  sequence, and the list of decisions that block E13 completion versus those that can wait.
+
+Each decision lists its current implementation, the unresolved question, its options, the trade-offs, the security and
+tenant-isolation implications, the impacted files, the required tests, its dependencies and owner, a recommendation
+labelled as such, and the cost of delay. No decision is approved.
+
+Naming note: the user's labels for D1 and D9 differ from the existing register. The mapping is in the deliverable.
+
+Story status: unchanged. DFR1-006, DFR1-017 and DFR1-050 remain Partial; DFR1-053 remains Blocked; E13 is not Done.
