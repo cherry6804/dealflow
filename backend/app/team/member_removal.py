@@ -42,6 +42,10 @@ SEAT_NOT_HELD = "not_held"
 SEAT_NOT_LINKED = "not_linked"
 
 NOT_CONFIRMED_DETAIL = "SIBVO did not confirm the removal. The member has not been removed. Try again."
+KEY_CONFLICT_DETAIL = (
+    "This removal conflicts with an earlier SIBVO release request for this member. "
+    "The member has not been removed. Contact an administrator."
+)
 IDEMPOTENCY_PREFIX = "team-removal-"
 
 
@@ -107,6 +111,12 @@ def _release_seat_in_sibvo(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="SIBVO did not authorize this removal.",
+            ) from None
+        if denied.status_code == 409 and denied.error_code == "idempotency_key_conflict":
+            # SIBVO already holds a different release for this key. Nothing was changed.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=KEY_CONFLICT_DETAIL,
             ) from None
         if denied.status_code == 409:
             raise HTTPException(

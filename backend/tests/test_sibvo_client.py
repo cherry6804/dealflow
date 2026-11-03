@@ -48,9 +48,11 @@ class Script:
     def __init__(self, *steps):
         self.steps = list(steps)
         self.calls = 0
+        self.requests: list[dict] = []
 
     def post(self, url, **kwargs):
         self.calls += 1
+        self.requests.append(kwargs)
         step = self.steps.pop(0)
         if isinstance(step, Exception):
             raise step
@@ -309,6 +311,51 @@ def test_release_refusal_is_reported_not_treated_as_success(monkeypatch: pytest.
             idempotency_key="team-removal-0002",
         )
     assert denied.value.error_code == "last_owner_or_owner_seat"
+
+
+def test_release_retries_a_server_error_with_the_same_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = Script(
+        http_response(500, {"error_code": "internal"}),
+        http_response(200, {"released": True, "already_released": False, "reason": "released"}),
+    )
+    install(monkeypatch, script)
+
+    result = release_product_seat(
+        make_settings(),
+        actor_subject=uuid.uuid4(),
+        actor_session_id=uuid.uuid4(),
+        organization_id=ORG,
+        target_subject=uuid.uuid4(),
+        reason="",
+        idempotency_key="team-removal-0004",
+    )
+
+    assert result.released is True
+    assert script.calls == 2
+    keys = {request["data"]["idempotency_key"] for request in script.requests}
+    assert keys == {"team-removal-0004"}
+
+
+def test_release_key_conflict_is_surfaced_with_its_error_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Script(http_response(409, {"error_code": "idempotency_key_conflict"}))
+    install(monkeypatch, script)
+
+    with pytest.raises(SibvoRequestDenied) as denied:
+        release_product_seat(
+            make_settings(),
+            actor_subject=uuid.uuid4(),
+            actor_session_id=uuid.uuid4(),
+            organization_id=ORG,
+            target_subject=uuid.uuid4(),
+            reason="",
+            idempotency_key="team-removal-0005",
+        )
+
+    assert denied.value.status_code == 409
+    assert denied.value.error_code == "idempotency_key_conflict"
+    assert script.calls == 1
 
 
 def test_release_outcome_unknown_after_retries_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

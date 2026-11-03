@@ -76,7 +76,14 @@ A repeat returns `already_released: true`. A member with no Dealsflo seat return
 
 Refusals: `403 actor_not_authorized` (the actor is not an active owner, the session is
 invalid or expired, or the actor targets themself); `409 last_owner_or_owner_seat` (the
-target holds an owner seat, which removal never releases).
+target holds an owner seat, which removal never releases); `409 idempotency_key_conflict`
+(SIBVO already holds a release for this key with a different target, so nothing changed).
+
+**Retry.** The client retries transient failures (connection errors, timeouts and 5xx) with
+the same key, because SIBVO enforces the key (WP-A1). A retry cannot release a second seat.
+A repeat after a release returns `already_released`. The reason is audit text and does not
+take part in the key check, so a retry with reworded text is not a conflict. The contract is
+in SIBVO's `docs/integrations/seat-release-contract.md`.
 
 **Boundary.** This endpoint changes only the Dealsflo product membership, by setting its
 status to `suspended`. It never changes the organization membership or the global SIBVO
