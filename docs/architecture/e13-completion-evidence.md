@@ -29,6 +29,7 @@ epic stays open until every acceptance criterion is met or is an explicitly appr
 | Provider cost separated from customer credits | Units are never summed; breakdowns group by unit (`usage_breakdown`) | Met |
 | Budgets enforced server-side | Reservation inside the gate before billable work; `budget_not_configured`, `budget_exhausted`, `usage_key_conflict` deny | Met. No producer calls it yet. |
 | Idempotent usage records | Same key and quantity returns the same entry; a different request under the same key is refused | Met |
+| Auditability of every usage adjustment | Reversal writes a requested record before the budget changes and a linked completed record in the same transaction (`reverse` in `usage_ledger.py`; `tests/test_usage_reversal_audit.py`, 6 tests). Release, expiry and budget changes already audit. | Met for reversal, release, expiry and budget changes |
 | Configurable 70/85/100 alerts | Organization thresholds (`alert_threshold_service`), 100 fixed; in-app notifications to holders of `governance.budgets.manage` | Met for in-app delivery. No external delivery. |
 
 ### DFR1-050 (backlog wording)
@@ -142,6 +143,37 @@ the requested row remains as the evidence that the attempt was made. This is WP3
 Recorded in the merge report. The counts below were produced by the final run on the disposable PostgreSQL 17 database
 on port 5438. Port 5433 was not used.
 
-- Backend: 2,107 passed, 14 skipped, 0 failed (full suite, final code, fresh database on port 5438; the run finished with no failures).
+- Backend: 2,114 passed, 14 skipped, 0 failed (full suite, final code including the usage reversal audit, fresh database on port 5438; 399.70 s; the run finished with no failures). The seven reversal-audit tests were rerun after the final import-order fix and passed.
+- Frontend: tsc exit 0; vitest 18 files, 123 tests passed; lint 0 errors; build succeeded.
 - Migrations: the chain applies from an empty database to head `n5e8a1c4d7b9` (one head, a merge point). Downgrade to `l3c8e2f5a1b7` and re-upgrade succeeded.
 - Frontend: 123 of 123 tests passed (18 files). `tsc -b` exit 0. `oxlint` 0 errors (warnings only, in pages this branch does not change). `vite build` succeeded.
+
+## 8. DFR1-053 (SIBVO usage reconciliation) inspection
+
+Inspected SIBVO `develop` at `20df0ef`. Found: an entitlements module with seat routes (`GET`, `POST`, `DELETE` under
+`/entitlements`), seat reservation on invitations (migration `f4a8c1e7d290`), and `docs/integrations/seats-and-trials.md`.
+Found no usage-ingestion, usage-reporting or reconciliation endpoint, and no approved usage contract. The contract in
+Dealsflo `docs/architecture/sibvo-dealsflo-entitlement-contract.md` section 7 is still "Proposed, for approval".
+
+Status: **Blocked** on an approved contract. The minimum contract needed: an ingestion endpoint (or event feed) on SIBVO
+that accepts Dealsflo's `reserved`, `recorded`, `released` and `reversed` usage events keyed by
+`(organization_id, product_key, event_id)`, returns a reconciliation status per event, and defines who owns meters and
+invoices (proposed in section 7 of the contract: SIBVO owns meters and invoices, Dealsflo owns source events). The
+independent Dealsflo side (idempotent events, reversals, audit) is implemented; no SIBVO endpoint was created or assumed.
+
+## 9. Completion method
+
+Completion is measured by stories, not by code written. A story counts as Done only when every acceptance criterion is
+satisfied and verified, and no approved external blocker remains.
+
+| Story | Status | Basis |
+|---|---|---|
+| DFR1-006 | Partial (not Done) | Gate and controls implemented and tested. Open: DFR1-002 and DFR1-005 (external), channel send permission (decision), live provider verification (external). |
+| DFR1-017 | Partial (not Done) | Ledger, budgets, idempotency, thresholds, breakdowns and audit implemented and tested. Open: no AI producer (DFR1-015), SIBVO reconciliation (DFR1-053, section 8), scheduled maintenance (D7). |
+| DFR1-050 | Partial (not Done) | Inventory, export, deletion, holds, retention, governed audit and redaction implemented and tested. Open: decisions D1, D4, D7, D8, D9, D11, D13; encryption at rest (D11). |
+| DFR1-053 | Blocked | External: approved SIBVO usage contract (section 8). |
+
+Stories Done: 0 of 4. Criterion-level: the nine backlog acceptance criteria for DFR1-006, DFR1-017 and DFR1-050 are met
+in code for the capabilities that exist, with DFR1-050 retention partial (documents and invitations only). Because no
+story is Done, the honest epic completion figure is **0%**. The criterion-level figure is reported only as supporting
+evidence, not as completion.

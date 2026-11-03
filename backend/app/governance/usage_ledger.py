@@ -54,7 +54,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.audit.attribution import user_attribution
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -729,8 +733,22 @@ def record(
     return entry
 
 
-def reverse(db: Session, *, organization_id: UUID, idempotency_key: str) -> AiUsageEvent:
-    """RECORDED -> REVERSED. Returns the quantity to the budget. Repeating is a no-op."""
+USAGE_SYSTEM_ACTOR = register_system_actor("usage_ledger")
+USAGE_ADJUSTMENT_ACTION = "usage.entry.reversed"
+
+
+def reverse(
+    db: Session,
+    *,
+    organization_id: UUID,
+    idempotency_key: str,
+    actor_user_id: UUID | None = None,
+) -> AiUsageEvent:
+    """RECORDED -> REVERSED. Returns the quantity to the budget. Repeating is a no-op.
+
+    The adjustment is audited. The requested record is committed before the budget changes, and the completed
+    record is written in the same transaction. Without a user, the usage ledger's system actor is recorded.
+    """
     candidate = _existing(db, organization_id=organization_id, idempotency_key=idempotency_key)
     if candidate is None:
         raise InvalidUsageStateError("No usage entry exists for this key.")
@@ -750,8 +768,43 @@ def reverse(db: Session, *, organization_id: UUID, idempotency_key: str) -> AiUs
 
     if event.quantity is None or budget.consumed_quantity < event.quantity:
         raise UsageInvariantError("Budget consumed quantity is lower than the entry being reversed.")
+
+    attribution = (
+        user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+        if actor_user_id is not None
+        else system_attribution(organization_id=organization_id, capability=USAGE_SYSTEM_ACTOR)
+    )
+    metadata = {"unit": event.unit, "quantity": event.quantity, "capability_key": event.capability_key}
+    requested = persist_independent_audit_event(
+        db,
+        attribution=attribution,
+        event_type="usage",
+        action=USAGE_ADJUSTMENT_ACTION,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=None,
+        resource_type="ai_usage_event",
+        resource_id=str(event.id),
+        metadata=metadata,
+    )
     budget.consumed_quantity -= event.quantity
     event.status = AiUsageEvent.STATUS_REVERSED
+    db.add(
+        AuditEvent(
+            user_id=actor_user_id,
+            organization_id=organization_id,
+            event_type="usage",
+            action=USAGE_ADJUSTMENT_ACTION,
+            decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            correlation_id=requested.correlation_id,
+            permission_key=None,
+            resource_type="ai_usage_event",
+            resource_id=str(event.id),
+            event_metadata=json.dumps(metadata, sort_keys=True, default=str),
+        )
+    )
     db.flush()
     return event
 
