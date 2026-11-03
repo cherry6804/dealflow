@@ -237,3 +237,71 @@ Still open for this story (not met, not claimed):
 - **Attempt history has no retention purge** (WS3 D-7).
 - **Readiness has no dedicated read endpoint for staleness history.** Stale rows are visible through the audit trail
   only.
+
+## 11. Post-merge audit against the authoritative backlog (after PR #149)
+
+Source of the acceptance criteria: `docs/product/release-1/Dealsflo_Release1_Jira_Backlog_v2.xlsx`, sheet "Jira Backlog",
+rows DFR1-006, DFR1-017, DFR1-050 and DFR1-053. The Jira sheet records every story as "To Do", so it does not reflect
+progress. Status below comes from code and tests, not from the sheet.
+
+Merge state: PR #149 merged into `develop` as `81793d9`. Its tree equals feature head `002e1d0`. PR #149 targeted
+`main` and was retargeted by the merge; `main` (`1b370fb`) still carries the baseline revert `f25ffc9`. Migration head:
+`n5e8a1c4d7b9` (single).
+
+Legend: **Met** (code and tests exist), **Partial** (some of the criterion is met), **Blocked** (needs an external
+approval), **Dependent** (needs a story outside E13 that is not built).
+
+### DFR1-006 (disabled-by-default capability policy)
+| Criterion (backlog wording) | Evidence | Status |
+|---|---|---|
+| No optional AI/automation executes unless all applicable gates pass | `evaluate_execution` is the only path. Gates: actor, resource, consent, channel, approval, rate, budget, audit. Switches and entitlement run in `policy.evaluate_capability`. | Partial: gate is in place, but no executor exists (DFR1-015 Dependent). The AI actor permission key is undefined, so the actor gate denies all AI execution (decision). |
+| Manual CRM operations continue when AI is disabled | `test_manual_deal_creation_still_works_when_automation_is_off` | Met |
+| In-flight disable policy documented | `ws6-governance-execution-controls.md` section 2 and revalidation tests | Met |
+| Gate list: entitlement, org enablement, provider connection, resource, actor permission, consent, budget | Each gate present in `execution_gate.py` and `policy.py`. Provider readiness now reports the specific state (PR #149). | Met as gates |
+| Provider not ready: "queue safely or create human task; never claim sent/called" | Denial only. No queue and no human task exist. | Dependent (DFR1-025 human task) |
+
+### DFR1-017 (AI usage ledger and organization budgets)
+| Criterion | Evidence | Status |
+|---|---|---|
+| Meter provider, model, task, tokens/audio/images/pages, org, user, agent, workflow | Columns `provider`, `model`, `task_type`, `user_id`, `agent_id`, `workflow_id`, `execution_id`, `capability_key`. Units `tokens_input`, `tokens_output`, `audio_ms`, `images`, `document_pages`. | Partial: fields and units exist, but no producer records usage (DFR1-015 Dependent). |
+| Provider cost separated from customer credits | Separate units `provider_cost_minor` and `customer_credits`; never summed | Met |
+| Budgets enforced server-side | Reservation inside the gate before billable work | Met for the gate; no producer yet |
+| Idempotent usage records | Same key returns the same entry; a different payload under the same key is refused | Met |
+| Configurable 70/85/100 alerts | Organization thresholds; 100 fixed; in-app notifications. No external delivery in the criterion. | Met (in-app) |
+| Maintenance (usage reservation expiry) | Reaper runs in the `--serve` cycle. `--once` does not run it. | Partial: scheduled only under `--serve` (D7) |
+
+### DFR1-050 (retention, export, deletion and privacy)
+| Criterion | Evidence | Status |
+|---|---|---|
+| Configurable retention for messages, calls, transcripts, documents and AI data | `RetentionPolicy` mechanism exists. Only documents and invitations are enforced. No period is set for any category (D4). Dealsflo has no `messages`, `calls` or `transcripts` tables; only `email_outbox_messages`. Those categories come from the communication epics (not built). | Partial: documents and invitations; the rest is Dependent (E03/E04) and Blocked (D4) |
+| Deletion and export workflows for those categories | Documents and CRM sub-records covered; `deletion_executor_not_built` for categories without an approved executor | Partial (D1, D9) |
+| Retention jobs auditable | Requested and completed records for retention and expiry | Met for documents and invitations |
+| Legal holds and required records handled | Holds block deletion; billing and audit are mandatory records | Met |
+| Secrets and sensitive content redacted from logs | `tests/test_log_redaction.py`; provider credentials never returned | Met for backend application code |
+
+Not a backlog criterion: encryption at rest (D11) and audit deletion path (D8). They appear in the decision register and
+the evidence sections above. They are open decisions, not acceptance criteria, and this audit does not add them.
+
+### DFR1-053 (SIBVO usage reconciliation and entitlement lifecycle tests)
+| Criterion | Evidence | Status |
+|---|---|---|
+| Verify usage summaries | No SIBVO usage endpoint. SIBVO's reconciliation job covers access and seats only. | Blocked (SIBVO usage contract, Proposed) |
+| Subscription updates | `billing_reconciliation_service` records verified webhook events; `test_billing_reconciliation_service` | Partial |
+| Seat changes | Seat capacity reads (`test_sibvo_seats_api`); seat release on team removal with retry (WP-A1) | Partial: Dealsflo side only |
+| Revocation | `test_entitlement_lifecycle` revocation not visible before revalidation | Met |
+| Trial expiry | `test_entitlement_lifecycle` expired trial denied | Met |
+| Downgrade | No test (keyword search returns none) | Not covered: test gap |
+| Webhook replay | Idempotent reconciliation test only; no endpoint-level replay test | Partial: test gap |
+| Idempotent events | `test_existing_reconciliation_is_idempotent` | Met |
+| Bounded cache and revocation | 30-second snapshot bound tests | Met |
+| Reconciled usage | Depends on the usage-ingestion contract | Blocked (external) |
+| Feature execution stops when entitlement removed | Revalidation at the gate | Met |
+
+### Status summary
+- Stories Done: 0 of 4.
+- Completed (Met): 13 criteria across the four stories.
+- Partial: 11 criteria. Each has a named open item above.
+- Blocked (external): SIBVO usage reconciliation; the usage-ingestion contract.
+- Dependent (other epics): AI producers (DFR1-015), human task (DFR1-025), communication content (E03/E04).
+- Test gaps inside E13: DFR1-053 downgrade and endpoint-level webhook replay.
+- Decisions still open: D1, D4, D7, D8, D9, D11, D13; channel send permission; AI and channel entitlement keys (DFR1-005).
