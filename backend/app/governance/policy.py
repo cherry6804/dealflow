@@ -135,6 +135,7 @@ def evaluate_capability(
     capability_key: str,
     user_context: CurrentUserContext | None = None,
     correlation_id: str | None = None,
+    consent_checked: bool = False,
 ) -> PolicyDecision:
     """Return whether ``capability_key`` may execute for ``organization_id`` now.
 
@@ -206,7 +207,9 @@ def evaluate_capability(
             correlation_id,
         )
 
-    if definition.requires_consent:
+    # A capability that needs consent is allowed here only when the caller supplies the contact and
+    # the gate checks that contact's consent. Without it, the capability fails closed.
+    if definition.requires_consent and not consent_checked:
         return _decision(
             definition.key, organization_id, REASON_CONSENT_NOT_CONFIGURED, policy_version,
             correlation_id,

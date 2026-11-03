@@ -59,6 +59,7 @@ from app.db.models.sibvo_organization_link import SibvoOrganizationLink
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
+from app.db.models.contact_consent import ContactConsentRecord
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.db.models.team_member_removal import TeamMemberRemoval
 from app.db.models.site_visit import SiteVisit
@@ -119,6 +120,7 @@ __all__ = [
     "AiUsageEvent",
     "LegalHold",
     "PrivacyDataRequest",
+    "ContactConsentRecord",
     "RetentionPolicy",
     "OrganizationCapabilitySetting",
     "OrganizationUsageBudget",

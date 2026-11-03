@@ -33,6 +33,14 @@ from app.authz.dependencies import permission_granted
 from app.db.models.audit_event import AuditDecision, AuditEvent
 from app.db.models.membership import Membership
 from app.db.models.organization import Organization
+from app.governance.capabilities import CAPABILITY_BY_KEY
+from app.governance.consent import (
+    EFFECTIVE_EXPIRED,
+    EFFECTIVE_GRANTED,
+    EFFECTIVE_REVOKED,
+    ConsentSubject,
+    current_consent,
+)
 from app.governance.policy import PolicyDecision, evaluate_capability
 from app.governance.usage_ledger import (
     BudgetExceededError,
@@ -56,6 +64,10 @@ REASON_BUDGET_RESERVATION_REQUIRED = "budget_reservation_required"
 REASON_BUDGET_NOT_CONFIGURED = "budget_not_configured"
 REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 REASON_USAGE_KEY_CONFLICT = "usage_key_conflict"
+REASON_CONSENT_MISSING = "consent_missing"
+REASON_CONSENT_REVOKED = "consent_revoked"
+REASON_CONSENT_EXPIRED = "consent_expired"
+REASON_CONSENT_CHANNEL_MISMATCH = "consent_channel_mismatch"
 REASON_ALLOWED = "allowed"
 
 _EXPLANATIONS: dict[str, str] = {
@@ -75,6 +87,10 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_USAGE_KEY_CONFLICT: (
         "This usage reservation key was already used for a different request."
     ),
+    REASON_CONSENT_MISSING: "The contact has not given consent for this channel and purpose.",
+    REASON_CONSENT_REVOKED: "The contact has withdrawn consent for this channel and purpose.",
+    REASON_CONSENT_EXPIRED: "The contact's consent for this channel and purpose has expired.",
+    REASON_CONSENT_CHANNEL_MISMATCH: "The consent channel does not match this capability.",
     REASON_ALLOWED: "The execution is allowed.",
 }
 
@@ -102,6 +118,8 @@ class ExecutionRequest:
     required_permission: str | None
     billable: bool = False
     budget: BudgetReservation | None = None
+    # Required for capabilities that need consent. The gate checks this contact's current consent.
+    consent: ConsentSubject | None = None
     # ``initial`` before the first step, ``revalidation`` before each later step.
     stage: str = "initial"
     correlation_id: str | None = None
@@ -153,9 +171,15 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         capability_key=request.capability_key,
         user_context=request.actor,
         correlation_id=request.correlation_id,
+        consent_checked=request.consent is not None,
     )
     if not policy.allowed:
         return policy
+
+    if CAPABILITY_BY_KEY[request.capability_key].requires_consent:
+        consent_refusal = _check_consent(db, request, policy.policy_version)
+        if consent_refusal is not None:
+            return consent_refusal
 
     if request.required_permission is not None:
         organization = db.get(Organization, request.organization_id)
@@ -184,6 +208,29 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
         policy_version=policy.policy_version,
         correlation_id=request.correlation_id,
     )
+
+
+def _check_consent(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
+    """Read the contact's consent now. Revocation takes effect on the very next execution."""
+    subject = request.consent
+    assert subject is not None  # the policy denies consent-requiring capabilities without a subject
+    expected_channel = request.capability_key.split(".")[-1] if request.capability_key.startswith("channels.") else None
+    if expected_channel is not None and subject.channel != expected_channel:
+        return _denied(request, REASON_CONSENT_CHANNEL_MISMATCH, policy_version)
+    state = current_consent(
+        db,
+        organization_id=request.organization_id,
+        contact_id=subject.contact_id,
+        channel=subject.channel,
+        purpose=subject.purpose,
+    )
+    if state.effective == EFFECTIVE_GRANTED:
+        return None
+    if state.effective == EFFECTIVE_REVOKED:
+        return _denied(request, REASON_CONSENT_REVOKED, policy_version)
+    if state.effective == EFFECTIVE_EXPIRED:
+        return _denied(request, REASON_CONSENT_EXPIRED, policy_version)
+    return _denied(request, REASON_CONSENT_MISSING, policy_version)
 
 
 def _reserve_budget(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:

@@ -14,9 +14,23 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import permission_granted, require_permission
+from app.db.models.contact import Contact
+from app.db.models.contact_consent import (
+    CONSENT_CHANNELS,
+    CONSENT_PURPOSES,
+    ContactConsentRecord,
+)
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
 from app.db.session import get_db_session
 from app.governance.capabilities import CapabilityCategory
+from app.governance.consent import (
+    CONSENT_POLICY_VERSION,
+    ContactNotFoundError,
+    InvalidConsentError,
+    consent_history,
+    current_consent,
+    record_consent,
+)
 from app.governance.data_classification import CATEGORIES
 from app.governance.privacy import (
     STATUS_AWAITING_ARTIFACT,
@@ -640,3 +654,129 @@ def get_governance_access(
         privacy_read=granted("governance.privacy.read"),
         privacy_manage=granted("governance.privacy.manage"),
     )
+
+# ---------------------------------------------------------------------------
+# Contact consent (DFR1-006, ADR-0029 gate 7)
+# ---------------------------------------------------------------------------
+
+
+class ConsentRecordCreate(BaseModel):
+    contact_id: UUID
+    channel: Literal["whatsapp", "email", "sms", "voice"]
+    purpose: Literal["customer_service", "marketing", "automated_follow_up", "voice_outreach"]
+    status: Literal["granted", "revoked"]
+    source: str = Field(..., min_length=2, max_length=40, pattern=r"^[a-z][a-z_]{1,39}$")
+    evidence_note: str | None = Field(default=None, max_length=500)
+    expires_at: datetime | None = None
+    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+class ConsentRecordResponse(BaseModel):
+    id: UUID
+    contact_id: UUID
+    channel: str
+    purpose: str
+    status: str
+    policy_version: int
+    source: str
+    evidence_note: str | None
+    expires_at: datetime | None
+    recorded_by_user_id: UUID
+    recorded_at: datetime
+
+
+class ConsentCurrentResponse(BaseModel):
+    channel: str
+    purpose: str
+    effective: str
+
+
+class ConsentStateResponse(BaseModel):
+    contact_id: UUID
+    policy_version: int
+    current: list[ConsentCurrentResponse]
+    history: list[ConsentRecordResponse]
+
+
+def _consent_response(row: ContactConsentRecord) -> ConsentRecordResponse:
+    return ConsentRecordResponse(
+        id=row.id,
+        contact_id=row.contact_id,
+        channel=row.channel,
+        purpose=row.purpose,
+        status=row.status,
+        policy_version=row.policy_version,
+        source=row.source,
+        evidence_note=row.evidence_note,
+        expires_at=row.expires_at,
+        recorded_by_user_id=row.recorded_by_user_id,
+        recorded_at=row.recorded_at,
+    )
+
+
+@router.get("/consents", response_model=ConsentStateResponse)
+def get_contact_consent(
+    contact_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.consent.read")),
+    db: Session = Depends(get_db_session),
+) -> ConsentStateResponse:
+    """Current effective consent and full history for one contact in this organization."""
+    contact = db.scalar(
+        select(Contact.id).where(Contact.id == contact_id, Contact.organization_id == tenant.organization_id)
+    )
+    if contact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found.")
+    now = datetime.now(UTC)
+    history = consent_history(db, organization_id=tenant.organization_id, contact_id=contact_id)
+    current = [
+        ConsentCurrentResponse(
+            channel=channel,
+            purpose=purpose,
+            effective=current_consent(
+                db,
+                organization_id=tenant.organization_id,
+                contact_id=contact_id,
+                channel=channel,
+                purpose=purpose,
+                now=now,
+            ).effective,
+        )
+        for channel in CONSENT_CHANNELS
+        for purpose in CONSENT_PURPOSES
+    ]
+    return ConsentStateResponse(
+        contact_id=contact_id,
+        policy_version=CONSENT_POLICY_VERSION,
+        current=current,
+        history=[_consent_response(row) for row in history],
+    )
+
+
+@router.post("/consents", response_model=ConsentRecordResponse, status_code=status.HTTP_201_CREATED)
+def record_contact_consent(
+    payload: ConsentRecordCreate,
+    tenant: TenantContext = Depends(require_permission("governance.consent.manage")),
+    db: Session = Depends(get_db_session),
+) -> ConsentRecordResponse:
+    """Record a grant or revocation. Append-only, versioned and audited."""
+    try:
+        row = record_consent(
+            db,
+            organization_id=tenant.organization_id,
+            contact_id=payload.contact_id,
+            channel=payload.channel,
+            purpose=payload.purpose,
+            status=payload.status,
+            source=payload.source,
+            actor_user_id=tenant.membership.user_id,
+            evidence_note=payload.evidence_note,
+            expires_at=payload.expires_at,
+        )
+    except ContactNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found.") from None
+    except InvalidConsentError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    db.commit()
+    return _consent_response(row)
