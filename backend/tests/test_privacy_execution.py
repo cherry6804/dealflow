@@ -34,6 +34,7 @@ from app.db.models.deal_commission import DealCommission
 from app.db.models.document import Document
 from app.db.models.follow_up import FollowUp
 from app.db.models.lead import Lead
+from app.db.models.organization import Organization
 from app.db.models.outbox_event import OutboxEvent
 from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
@@ -92,6 +93,8 @@ def _cleanup(organization_id: UUID) -> None:
     # CRM rows reference contacts, so they are removed first, in dependency order.
     with SessionLocal() as db:
         for model in (
+            # Documents reference leads and properties with RESTRICT, so they go first.
+            Document,
             PaymentMilestone,
             DealCommission,
             Deal,
@@ -100,7 +103,6 @@ def _cleanup(organization_id: UUID) -> None:
             CustomerProfile,
             Property,
             AiUsageEvent,
-            Document,
             Contact,
             PrivacyDataRequest,
             LegalHold,
@@ -713,6 +715,36 @@ def test_leads_and_follow_ups_are_exported_for_their_organization_only(
     assert [item["title"] for item in document["categories"]["crm.follow_ups"]] == [
         "Call back on Friday"
     ]
+
+
+def test_contacts_that_live_records_depend_on_are_deferred_not_anonymized(tenant, storage) -> None:
+    from tests.test_deals_api import create_lead
+
+    organization_id, user_id = tenant
+    free_contact_id = _contact(organization_id, email="free@example.test")
+    with SessionLocal() as db:
+        organization = db.get(Organization, organization_id)
+        assert organization is not None
+        lead = create_lead(db, organization=organization)
+        dependent_contact_id = lead.contact_id
+        db.commit()
+    request_id = _request(organization_id, user_id, "deletion", ["crm.contacts"])
+
+    _run(request_id, organization_id)
+
+    row = _row(request_id)
+    assert row.status == STATUS_PARTIALLY_COMPLETED
+    execution = json.loads(row.execution)["crm.contacts"]
+    assert execution["outcome"] == "anonymized_partial"
+    assert execution["deferred_dependent"] == 1
+    assert "reasons" not in execution
+    with SessionLocal() as db:
+        free = db.get(Contact, free_contact_id)
+        dependent = db.get(Contact, dependent_contact_id)
+        assert free is not None and dependent is not None
+        assert free.first_name == REDACTED_NAME
+        assert dependent.first_name != REDACTED_NAME
+        assert dependent.is_active is True
 
 
 # --- Customer profiles, requirements, deals and AI usage --------------------------------------

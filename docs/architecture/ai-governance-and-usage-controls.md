@@ -387,12 +387,14 @@ No legal retention period is set in code. Periods come only from each organizati
 
 ### 5.2a Classification gap
 
-The register in `data_classification.py` covers 19 categories. The database holds more organization-owned tables
-that the register does not classify, so they are neither exported nor deleted by any request today. Each needs a
+The register in `data_classification.py` covers 19 categories. The database has 44 tables with an `organization_id`
+column. 17 are mapped to a category (payment milestones and deal commissions are exported as part of `crm.deals`).
+The 27 unmapped tables below are neither exported nor deleted by any request today. `email_outbox_messages` has no
+organization column and is covered by decision 5. Each needs a
 sensitivity and a retention treatment decided by product and legal before it is added. Until then it is not claimed
 as covered.
 
-Unclassified, organization-owned tables: `activities`, `customer_requirement_history`,
+Unclassified, organization-owned tables (27): `activities`, `customer_requirement_history`,
 `customer_requirement_locations`, `customer_requirement_possession_parking_preferences`,
 `customer_requirement_property_preferences`, `deal_negotiations`, `deal_negotiation_history`, `deal_stage_history`,
 `import_batches` (uploaded source files are referenced by storage key), `notifications`, `notification_preferences`,
@@ -400,8 +402,8 @@ Unclassified, organization-owned tables: `activities`, `customer_requirement_his
 `requirement_property_shortlists`, `requirement_shortlist_events`, `site_visits`, `team_member_removals`,
 `automation_rules`, `automation_executions`, `auth_sessions`, `subscriptions` (SIBVO is authoritative for subscriptions),
 `roles`, `organization_capability_settings`, `organization_usage_budgets`, `privacy_*` (governance records),
-`outbox_events` (system). Membership and subscription data belong to SIBVO and should be handled by SIBVO's own
-processes; this is decision 6 in 5.6.
+`outbox_events` and `privacy_*` are system and governance records, not customer data. Membership and subscription data
+belong to SIBVO and should be handled by SIBVO's own processes; this is decision 6 in 5.6.
 
 ### 5.6 Decisions required before further work (product or legal)
 
@@ -413,10 +415,11 @@ Each decision lists what it changes and what is left until it is answered. None 
    for deals with financial records. Consequence of (a): personal content is removed and the structure stays. Consequence
    of (b): referential breaks need a rule for each dependent table. Until decided, these categories are reported as
    `deletion_executor_not_built`.
-2. **Contact anonymization while records depend on it.** Today a deletion anonymizes contact identity fields for every
-   contact of the organization, even when leads or deals still reference it. Option: anonymize only contacts with no
-   open deals or leads, and defer the rest with a reported dependency. The brief's default is deferral. This changes what
-   a deletion does, so it needs approval.
+2. **Contact anonymization while records depend on it.** Implemented as the proposed default: a contact that a lead or
+   customer profile still references is left unchanged and reported as `deferred_dependent`. Other contacts are
+   anonymized. The outcome stays `anonymized_partial`, so the request cannot read as complete. Consequence: a contact
+   linked to a lead is never anonymized by a deletion until the dependency is removed or the rule is changed. Approval is
+   needed to confirm this rule, because it determines what a deletion changes.
 3. **Billing and audit records in an export.** Option: include them for a customer-authorized export, with named sensitive
    fields filtered out. The fields to filter (for example webhook payload fragments, provider references, actor identifiers)
    and the authorization rule (who may request them) are not defined. Until they are, billing and audit records are reported

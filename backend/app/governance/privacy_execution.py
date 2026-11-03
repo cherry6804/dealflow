@@ -553,6 +553,7 @@ def generate_export(
 class _Execution:
     outcome: str
     count: int = 0
+    deferred: int = 0
     not_changed: tuple[str, ...] = ()
 
 
@@ -579,18 +580,39 @@ def _delete_documents(
     return len(documents)
 
 
-def _anonymize_contacts(db: Session, organization_id: UUID) -> int:
+def _anonymize_contacts(db: Session, organization_id: UUID) -> tuple[int, int]:
+    """Anonymize contacts that no lead or customer profile depends on. Return (anonymized, deferred).
+
+    A contact still referenced by a lead or a customer profile is left unchanged and counted as deferred.
+    Changing it would alter a live business record, and whether that is acceptable is decision 2 in the E13
+    document. Deferred contacts are reported, never silently skipped.
+    """
+    lead_contacts = set(
+        db.scalars(select(Lead.contact_id).where(Lead.organization_id == organization_id)).all()
+    )
+    profile_contacts = set(
+        db.scalars(
+            select(CustomerProfile.contact_id).where(CustomerProfile.organization_id == organization_id)
+        ).all()
+    )
+    dependent = lead_contacts | profile_contacts
     contacts = db.scalars(
         select(Contact).where(Contact.organization_id == organization_id)
     ).all()
+    anonymized = 0
+    deferred = 0
     for contact in contacts:
+        if contact.id in dependent:
+            deferred += 1
+            continue
         contact.first_name = REDACTED_NAME
         contact.last_name = None
         contact.email = None
         contact.phone = None
         contact.is_active = False
+        anonymized += 1
     db.flush()
-    return len(contacts)
+    return anonymized, deferred
 
 
 def _anonymize_invitations(
@@ -634,10 +656,11 @@ def _execute_category(
         count = _anonymize_invitations(db, organization_id, now=now, cutoff=cutoff)
         return _Execution(OUTCOME_ANONYMIZED, count)
     if category_key == CONTACTS_CATEGORY:
-        count = _anonymize_contacts(db, organization_id)
+        count, deferred = _anonymize_contacts(db, organization_id)
         return _Execution(
             OUTCOME_ANONYMIZED_PARTIAL,
             count,
+            deferred,
             (
                 "crm.leads",
                 "crm.customer_profiles",
@@ -655,6 +678,9 @@ def _execution_record(
     record: dict[str, Any] = {"outcome": execution.outcome}
     if execution.outcome != OUTCOME_NOT_EXECUTED:
         record["count"] = execution.count
+    if execution.deferred:
+        # Contacts still referenced by live records are left unchanged. Reported, never silent.
+        record["deferred_dependent"] = execution.deferred
     if execution.not_changed:
         record["not_changed"] = list(execution.not_changed)
     if reasons:
