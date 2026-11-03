@@ -11,7 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.audit.attribution import system_attribution, user_attribution
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
 from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
 from app.db.models.automation_execution import AutomationExecution
@@ -275,6 +279,8 @@ def _notify_automation_execution(
 
 
 RATE_LIMIT_EVENT_TYPE = "rate_limit"
+# The rate-limit gate's own system actor. Only this module holds its capability (WP3 hardening).
+_RATE_LIMIT_ACTOR = register_system_actor("automation_rate_limit")
 RATE_LIMIT_DENIED_ACTION = "rate_limit.denied"
 
 
@@ -296,7 +302,7 @@ def _record_rate_limit_denial(
         attribution=(
             user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
             if actor_user_id is not None
-            else system_attribution(organization_id=organization_id, system_actor="automation_rate_limit")
+            else system_attribution(organization_id=organization_id, capability=_RATE_LIMIT_ACTOR)
         ),
         event_type=RATE_LIMIT_EVENT_TYPE,
         action=RATE_LIMIT_DENIED_ACTION,

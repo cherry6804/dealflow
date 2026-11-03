@@ -15,12 +15,18 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.audit.attribution import system_attribution, user_attribution
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
 from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
 from app.governance.policy import PolicyDecision, evaluate_capability
 
 AI_EXECUTION_EVENT_TYPE = "ai_execution"
+# The AI execution gate's own system actor. Only this module holds its capability (WP3 hardening).
+_AI_GATE_ACTOR = register_system_actor("ai_execution_gate")
 
 
 class AiExecutionDenied(Exception):
@@ -60,7 +66,7 @@ def require_ai_execution(
         attribution=(
             user_attribution(organization_id=organization_id, actor_user_id=user_context.user.id)
             if user_context is not None
-            else system_attribution(organization_id=organization_id, system_actor="ai_execution_gate")
+            else system_attribution(organization_id=organization_id, capability=_AI_GATE_ACTOR)
         ),
         event_type=AI_EXECUTION_EVENT_TYPE,
         action="denied",

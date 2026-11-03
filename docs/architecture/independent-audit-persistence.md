@@ -79,26 +79,48 @@ covers content updates only, not deletion.
 
 ### 3.5 Attribution trust boundary
 
-The writer does not accept an organization and actor as plain identifiers. Every caller passes an
-`AuditAttribution` (`backend/app/audit/attribution.py`), and the writer verifies it on its own connection before
-it writes anything.
+The writer never accepts an organization and actor as plain identifiers. It accepts an `AuditAttribution`
+(`backend/app/audit/attribution.py`), which can be created in only two ways, and the writer verifies it on its
+own connection before it writes anything.
 
-- **How identity is established for requests.** `get_tenant_context` binds each request to the organization in
-  its session and requires an active membership in an active organization. The routes take the organization and
-  the user from that tenant context. Services receive those values and wrap them with `user_attribution`.
-- **What the writer verifies.** For a user attribution, the organization must be active, and the user must hold
-  an active membership in that organization. For a system attribution, the organization must be active, and the
-  system actor must be on the allowlist (`ai_execution_gate`, `automation_rate_limit`). The writer repeats these
-  checks because a caller must not be able to write under an organization or user it does not belong to.
-- **Refusal.** A failed verification raises `AuditAttributionError` before any row is written. The application
-  maps it to HTTP 403 with code `AUDIT_ATTRIBUTION_DENIED`. The message names no identifiers, so the response
-  reveals nothing about other tenants. It is reported separately from a persistence outage, which is 503.
-- **Fail closed.** A denial whose user cannot be attributed to the requested organization is refused, not recorded
-  under a guessed identity. A denial with no user is recorded as a system action.
-- **Adding a system actor** is a reviewed change to the allowlist, not a runtime decision.
-- **Limit.** The verification confirms that the claimed organization and user exist and are linked. It does not
-  confirm that the caller is the request's own authenticated user. That guarantee comes from the request path
-  (section 3.5, first bullet), and the writer relies on it.
+**Principal propagation (requests).**
+- The authentication layer is the only issuer of identity. `get_current_user_context` authenticates the session.
+  `get_tenant_context` then confirms the request's organization is the session's organization and that the user
+  holds an active membership in an active organization. It calls `issue_principal` and binds the result with
+  `bound_principal` (`backend/app/audit/principal.py`).
+- The binding is a context variable set by an async generator dependency, which is the form FastAPI keeps visible
+  to both synchronous and asynchronous endpoints. A synchronous dependency loses the binding, so one was not used.
+  The database check runs in a worker thread so the event loop is not blocked.
+- `user_attribution` derives the user and organization from the bound principal. A claimed user or organization
+  that differs from the principal is refused. This covers another active member of the same organization, and any
+  user in another organization.
+- `TrustedPrincipal` and `AuditAttribution` cannot be constructed by hand. Each requires a private token. A source
+  test fails if anything other than the authentication layer calls `issue_principal`.
+
+**Membership verification (no request).** Outside an authenticated request there is no principal to bind. The
+attribution is then labelled `membership`, and the writer verifies that the user holds an active membership in an
+active organization. This is the residual gap in this design, described under Limits.
+
+**System attribution.**
+- Each system actor has a `SystemActorCapability`, created once at import by the module that owns the actor
+  (`register_system_actor`). Today these are `ai_execution_gate` and `automation_rate_limit`.
+- A capability is accepted only if it is the registered object for its name. A name string is refused, and a
+  look-alike object is refused. Registering a name twice fails.
+- Inside a request, a system record must name the bound organization.
+
+**Verification and refusal.**
+- The writer verifies the organization is active, and for a user that the membership is active.
+- A failed verification raises `AuditAttributionError` before any row is written. It maps to HTTP 403 with code
+  `AUDIT_ATTRIBUTION_DENIED`, and the message names no identifiers. It is separate from a persistence outage (503).
+
+**Limits.**
+- **Non-request user attribution is membership-verified, not principal-bound.** Code that runs outside a request
+  (none of the current governed paths do) can name any active member of an organization. Closing this completely
+  needs a principal carried through every non-request caller. That touches about 75 direct-call tests and needs an
+  explicit decision (open decision D-3 in the WP3 report).
+- The authentication layer's own correctness (session handling, membership rows, organization binding) is the
+  ultimate trust root. This design relies on it, and does not replace it.
+- No audit read API exists, so there is no read-side tenant check to test.
 
 ## 4. Operations covered
 
