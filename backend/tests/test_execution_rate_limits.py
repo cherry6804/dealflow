@@ -302,7 +302,8 @@ def test_rate_limited_automation_creates_no_executions_and_keeps_the_deal(monkey
     _set_rule(monkeypatch, organization_limit=1000, actor_limit=1)
 
     with SessionLocal() as db:
-        user, organization = create_authorized_user(db, permission_keys=())
+        # The route requires deals.create before a deal exists, so the user who creates the deal holds it.
+        user, organization = create_authorized_user(db, permission_keys=("deals.create",))
         rule = create_active_rule(
             db,
             user=user,
