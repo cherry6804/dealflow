@@ -747,6 +747,91 @@ def test_contacts_that_live_records_depend_on_are_deferred_not_anonymized(tenant
         assert dependent.is_active is True
 
 
+def _profile_for(organization_id: UUID, contact_id: UUID) -> UUID:
+    with SessionLocal() as db:
+        profile = CustomerProfile(
+            organization_id=organization_id,
+            contact_id=contact_id,
+            is_active=True,
+            customer_notes="Prefers weekend visits",
+        )
+        db.add(profile)
+        db.commit()
+        return profile.id
+
+
+def test_contacts_referenced_by_a_customer_profile_are_deferred(tenant, storage) -> None:
+    organization_id, user_id = tenant
+    dependent_id = _contact(organization_id, email="profile@example.test")
+    independent_id = _contact(organization_id, email="free2@example.test")
+    _profile_for(organization_id, dependent_id)
+    request_id = _request(organization_id, user_id, "deletion", ["crm.contacts"])
+
+    _run(request_id, organization_id)
+
+    row = _row(request_id)
+    assert row.status == STATUS_PARTIALLY_COMPLETED
+    assert json.loads(row.execution)["crm.contacts"]["deferred_dependent"] == 1
+    with SessionLocal() as db:
+        dependent = db.get(Contact, dependent_id)
+        independent = db.get(Contact, independent_id)
+        assert dependent is not None and independent is not None
+        assert dependent.email == "profile@example.test"
+        assert dependent.is_active is True
+        assert independent.first_name == REDACTED_NAME
+
+
+def test_dependencies_are_checked_when_the_deletion_runs_not_when_requested(tenant, storage) -> None:
+    organization_id, user_id = tenant
+    contact_id = _contact(organization_id, email="late-link@example.test")
+    request_id = _request(organization_id, user_id, "deletion", ["crm.contacts"])
+    # A dependency created after the request was recorded must still be respected.
+    _profile_for(organization_id, contact_id)
+
+    _run(request_id, organization_id)
+
+    assert json.loads(_row(request_id).execution)["crm.contacts"]["deferred_dependent"] == 1
+    with SessionLocal() as db:
+        contact = db.get(Contact, contact_id)
+        assert contact is not None and contact.email == "late-link@example.test"
+
+
+def test_a_retry_after_a_failure_re_evaluates_dependencies(tenant, storage, monkeypatch) -> None:
+    organization_id, user_id = tenant
+    contact_id = _contact(organization_id, email="retry@example.test")
+    profile_id = _profile_for(organization_id, contact_id)
+    request_id = _request(organization_id, user_id, "deletion", ["crm.contacts"])
+
+    original = privacy_execution._anonymize_contacts
+    calls = {"count": 0}
+
+    def fail_once(db, organization_id):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("simulated failure during deletion")
+        return original(db, organization_id)
+
+    monkeypatch.setattr(privacy_execution, "_anonymize_contacts", fail_once)
+    with pytest.raises(RuntimeError):
+        _run(request_id, organization_id)
+    assert _row(request_id).status == STATUS_ELIGIBILITY_RECORDED
+
+    # The dependency is removed between attempts. The retry must see the change, not a cached result.
+    with SessionLocal() as db:
+        db.execute(delete(CustomerProfile).where(CustomerProfile.id == profile_id))
+        db.commit()
+    _run(request_id, organization_id)
+
+    row = _row(request_id)
+    assert row.status == STATUS_PARTIALLY_COMPLETED
+    execution = json.loads(row.execution)["crm.contacts"]
+    assert execution["outcome"] == "anonymized_partial"
+    assert "deferred_dependent" not in execution
+    with SessionLocal() as db:
+        contact = db.get(Contact, contact_id)
+        assert contact is not None and contact.first_name == REDACTED_NAME
+
+
 # --- Customer profiles, requirements, deals and AI usage --------------------------------------
 
 
