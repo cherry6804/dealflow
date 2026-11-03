@@ -54,6 +54,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.db.models.ai_usage_event import (
     RELEASE_REASON_EXPIRED,
     RELEASE_REASON_RELEASED,
@@ -784,7 +790,11 @@ def change_budget(
     limit_quantity: int,
     moment: datetime,
 ) -> OrganizationUsageBudget:
-    """Set a budget limit and write an audit event with the before and after values."""
+    """Set a budget limit. Records a requested audit event first, then a completed one (WP3).
+
+    The requested record is committed independently, before the limit changes. If it cannot be written,
+    the change is not applied and ``AuditPersistenceError`` is raised.
+    """
     from app.db.models.audit_event import AuditEvent
 
     unit_value = _unit_value(unit)
@@ -795,6 +805,25 @@ def change_budget(
             OrganizationUsageBudget.unit == unit_value,
             OrganizationUsageBudget.period_start == period.start,
         )
+    )
+    requested = persist_independent_audit_event(
+        db,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
+        event_type="governance",
+        action="governance.budget.updated",
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key="governance.budgets.manage",
+        resource_type="organization_usage_budget",
+        resource_id=unit_value,
+        metadata={
+            "unit": unit_value,
+            "period_start": period.start.isoformat(),
+            "before": previous,
+            "requested_after": limit_quantity,
+        },
     )
     budget = configure_budget(
         db,
@@ -812,6 +841,9 @@ def change_budget(
             event_type="governance",
             action="governance.budget.updated",
             decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            correlation_id=requested.correlation_id,
             permission_key="governance.budgets.manage",
             resource_type="organization_usage_budget",
             resource_id=unit_value,

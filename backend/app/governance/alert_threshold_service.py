@@ -20,6 +20,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
 from app.governance.alert_thresholds import (
@@ -68,6 +74,27 @@ def update_alert_thresholds(
     if previous.values == new_values:
         return previous
 
+    # Requested record first, committed independently. If it cannot be written, nothing changes (WP3).
+    requested = persist_independent_audit_event(
+        db,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
+        event_type=THRESHOLD_SETTINGS_EVENT_TYPE,
+        action=THRESHOLD_SETTINGS_ACTION,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=THRESHOLD_SETTINGS_PERMISSION,
+        resource_type="organization_usage_alert_settings",
+        resource_id=str(organization_id),
+        metadata={
+            "before": list(previous.values),
+            "requested_after": list(new_values),
+            "previous_version": previous.version,
+            "period_start": period.start.isoformat(),
+        },
+    )
+
     store_alert_thresholds(
         db,
         organization_id=organization_id,
@@ -83,6 +110,9 @@ def update_alert_thresholds(
             event_type=THRESHOLD_SETTINGS_EVENT_TYPE,
             action=THRESHOLD_SETTINGS_ACTION,
             decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            correlation_id=requested.correlation_id,
             permission_key=THRESHOLD_SETTINGS_PERMISSION,
             resource_type="organization_usage_alert_settings",
             resource_id=str(organization_id),

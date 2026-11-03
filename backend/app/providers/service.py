@@ -19,6 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import user_attribution
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.config import get_settings
 from app.db.models.audit_event import AuditEvent
 from app.db.models.provider_connection import ProviderConnection
@@ -101,6 +107,7 @@ def _audit(
     connection: ProviderConnection,
     correlation_id: str | None,
     extra: dict[str, object] | None = None,
+    requested: AuditEvent | None = None,
 ) -> None:
     metadata: dict[str, object] = {
         "provider_key": connection.provider_key,
@@ -110,6 +117,7 @@ def _audit(
     }
     if extra:
         metadata.update(extra)
+    # Admin operations pass the requested row (WP3). Worker outcomes pass none and keep no lifecycle.
     db.add(
         AuditEvent(
             user_id=actor_user_id,
@@ -117,12 +125,42 @@ def _audit(
             event_type=PROVIDER_CONNECTION_AUDIT_EVENT,
             action=action,
             decision="allowed",
+            outcome=OUTCOME_COMPLETED if requested is not None else None,
+            causation_id=str(requested.id) if requested is not None else None,
             permission_key=PERMISSION_MANAGE,
             resource_type="provider_connection",
             resource_id=str(connection.id),
-            correlation_id=correlation_id or str(uuid4()),
+            correlation_id=requested.correlation_id if requested is not None else (correlation_id or str(uuid4())),
             event_metadata=json.dumps(metadata, separators=(",", ":"), default=str),
         )
+    )
+
+
+def _requested(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID,
+    action: str,
+    connection_id: UUID,
+    provider_key: str,
+    correlation_id: str | None,
+) -> AuditEvent:
+    """Commit the attempt before the connection changes (WP3). Holds no credential material."""
+    return persist_independent_audit_event(
+        db,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
+        event_type=PROVIDER_CONNECTION_AUDIT_EVENT,
+        action=action,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=PERMISSION_MANAGE,
+        resource_type="provider_connection",
+        resource_id=str(connection_id),
+        correlation_id=correlation_id,
+        metadata={"provider_key": provider_key},
     )
 
 
@@ -212,6 +250,16 @@ def create_connection(
             "A connection already exists for this provider. Rotate its secret or disconnect it first."
         )
 
+    connection_id = uuid4()
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="created",
+        connection_id=connection_id,
+        provider_key=provider_key,
+        correlation_id=correlation_id,
+    )
     credential = create_provider_credential(
         db,
         organization_id=organization_id,
@@ -222,7 +270,7 @@ def create_connection(
         correlation_id=correlation_id,
     )
     connection = ProviderConnection(
-        id=uuid4(),
+        id=connection_id,
         organization_id=organization_id,
         provider_key=provider_key,
         credential_id=credential.id,
@@ -257,6 +305,7 @@ def create_connection(
         action="created",
         connection=connection,
         correlation_id=correlation_id,
+        requested=requested,
     )
     db.flush()
     return connection
@@ -277,6 +326,15 @@ def request_verification(
     if credential is None or credential.status != STATUS_ACTIVE:
         raise ConnectionStateError("The credential for this connection is revoked. Create a new connection.")
 
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="verification_requested",
+        connection_id=connection.id,
+        provider_key=connection.provider_key,
+        correlation_id=correlation_id,
+    )
     _set_verifying(connection, reason=REASON_VERIFICATION_REQUESTED)
     _enqueue_verification(
         db,
@@ -293,6 +351,7 @@ def request_verification(
         action="verification_requested",
         connection=connection,
         correlation_id=correlation_id,
+        requested=requested,
     )
     db.flush()
     return connection
@@ -311,6 +370,15 @@ def rotate_connection_secret(
     connection = _get_locked(db, organization_id=organization_id, connection_id=connection_id)
     if connection.status == ProviderConnection.STATUS_DISCONNECTED:
         raise ConnectionStateError("This connection is disconnected. Create a new connection.")
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="rotated",
+        connection_id=connection.id,
+        provider_key=connection.provider_key,
+        correlation_id=correlation_id,
+    )
     credential = rotate_provider_credential(
         db,
         organization_id=organization_id,
@@ -336,6 +404,7 @@ def rotate_connection_secret(
         connection=connection,
         correlation_id=correlation_id,
         extra={"credential_version": credential.version},
+        requested=requested,
     )
     db.flush()
     return connection
@@ -353,6 +422,15 @@ def disconnect_connection(
     connection = _get_locked(db, organization_id=organization_id, connection_id=connection_id)
     if connection.status == ProviderConnection.STATUS_DISCONNECTED:
         return connection
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="disconnected",
+        connection_id=connection.id,
+        provider_key=connection.provider_key,
+        correlation_id=correlation_id,
+    )
     credential = _credential_for(db, connection)
     if credential is not None and credential.status == STATUS_ACTIVE:
         revoke_provider_credential(
@@ -373,6 +451,7 @@ def disconnect_connection(
         action="disconnected",
         connection=connection,
         correlation_id=correlation_id,
+        requested=requested,
     )
     db.flush()
     return connection

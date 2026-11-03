@@ -151,10 +151,14 @@ def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
                 AuditEvent.event_type == "governance",
             )
         ).all()
-    assert len(events) == 1
-    assert events[0].resource_id == AUTOMATION_MASTER
-    assert events[0].user_id == user.id
-    metadata = json.loads(events[0].event_metadata)
+    # One change writes a requested row (committed first) and a completed row that follows it (WP3).
+    requested = [event for event in events if event.outcome == "requested"]
+    completed = [event for event in events if event.outcome == "completed"]
+    assert len(requested) == 1 and len(completed) == 1
+    assert completed[0].causation_id == str(requested[0].id)
+    assert completed[0].resource_id == AUTOMATION_MASTER
+    assert completed[0].user_id == user.id
+    metadata = json.loads(completed[0].event_metadata)
     assert metadata["capability"] == AUTOMATION_MASTER
     assert metadata["previous_state"] is False
     assert metadata["new_state"] is True

@@ -3,17 +3,21 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
+from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
-from app.db.models.audit_event import AuditEvent
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
@@ -22,9 +26,12 @@ from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
 from app.governance.policy import evaluate_capability
 from app.notifications.service import create_notification
-from app.rate_limits.limiter import REASON_RATE_LIMITED, RateLimitDecision, consume_or_deny
+from app.rate_limits.limiter import (
+    REASON_RATE_LIMITED,
+    RateLimitDecision,
+    consume_or_deny,
+)
 from app.rate_limits.policy import AUTOMATION_DEAL_CREATED_EXECUTION
-
 
 SUPPORTED_CONDITION_FIELDS = {
     "stage",
@@ -272,6 +279,8 @@ def _notify_automation_execution(
 
 
 RATE_LIMIT_EVENT_TYPE = "rate_limit"
+# The rate-limit gate's own system actor. Only this module holds its capability (WP3 hardening).
+_RATE_LIMIT_ACTOR = register_system_actor("automation_rate_limit")
 RATE_LIMIT_DENIED_ACTION = "rate_limit.denied"
 
 
@@ -283,28 +292,31 @@ def _record_rate_limit_denial(
     deal: Deal,
     rate: RateLimitDecision,
 ) -> None:
-    """Audit a rate-limit denial. Records the scope and retry time, never a budget or usage figure."""
-    db.add(
-        AuditEvent(
-            user_id=actor_user_id,
-            organization_id=organization_id,
-            event_type=RATE_LIMIT_EVENT_TYPE,
-            action=RATE_LIMIT_DENIED_ACTION,
-            decision="denied",
-            permission_key=None,
-            resource_type="deal",
-            resource_id=str(deal.id),
-            correlation_id=str(uuid4()),
-            event_metadata=json.dumps(
-                {
-                    "execution_type": rate.execution_type,
-                    "scope": rate.scope,
-                    "limit": rate.limit,
-                    "retry_after_seconds": rate.retry_after_seconds,
-                },
-                separators=(",", ":"),
-            ),
-        )
+    """Audit a rate-limit denial in its own transaction (WP3).
+
+    Records the scope and retry time, never a budget or usage figure. The row survives the deal creation
+    transaction being rolled back.
+    """
+    persist_independent_audit_event(
+        db,
+        attribution=(
+            user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+            if actor_user_id is not None
+            else system_attribution(organization_id=organization_id, capability=_RATE_LIMIT_ACTOR)
+        ),
+        event_type=RATE_LIMIT_EVENT_TYPE,
+        action=RATE_LIMIT_DENIED_ACTION,
+        decision="denied",
+        outcome=OUTCOME_DENIED,
+        permission_key=None,
+        resource_type="deal",
+        resource_id=str(deal.id),
+        metadata={
+            "execution_type": rate.execution_type,
+            "scope": rate.scope,
+            "limit": rate.limit,
+            "retry_after_seconds": rate.retry_after_seconds,
+        },
     )
 
 

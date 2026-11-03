@@ -70,13 +70,15 @@ def test_retention_is_versioned_and_audited(tenant) -> None:
 
     assert (first.version, second.version) == (1, 2)
     with SessionLocal() as db:
-        actions = db.scalars(
-            select(AuditEvent.action).where(
+        rows = db.execute(
+            select(AuditEvent.action, AuditEvent.outcome).where(
                 AuditEvent.organization_id == organization_id,
                 AuditEvent.event_type == "privacy",
             )
         ).all()
-    assert actions.count("privacy.retention.changed") == 2
+    # Each change writes a requested row and a completed row (WP3). Two changes give two of each.
+    assert rows.count(("privacy.retention.changed", "requested")) == 2
+    assert rows.count(("privacy.retention.changed", "completed")) == 2
 
 
 def test_retention_rejects_nonsense_values(tenant) -> None:

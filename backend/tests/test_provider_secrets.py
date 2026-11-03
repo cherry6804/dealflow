@@ -453,7 +453,13 @@ def test_audit_records_create_rotate_and_revoke_without_the_secret(keyring, clea
             )
         ).all()
 
-    assert sorted(event.action for event in events) == sorted(
+    # Each operation writes a requested row and a completed row (WP3). Both carry no secret material.
+    completed = [event for event in events if event.outcome == "completed"]
+    requested = [event for event in events if event.outcome == "requested"]
+    assert sorted(event.action for event in completed) == sorted(
+        [service.ACTION_CREATED, service.ACTION_ROTATED, service.ACTION_REVOKED]
+    )
+    assert sorted(event.action for event in requested) == sorted(
         [service.ACTION_CREATED, service.ACTION_ROTATED, service.ACTION_REVOKED]
     )
     for event in events:
