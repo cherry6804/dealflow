@@ -21,7 +21,9 @@ E02 and every later epic wait for E13. E13 is open because DFR1-006, DFR1-017 an
 awaiting approval of the SIBVO usage contract (E12). The product owner set this order.
 
 Open decisions for E13 are recorded, with options and recommendations that are not approved, in
-`docs/architecture/e13-decision-readiness.md`. Evidence is in `docs/architecture/e13-completion-evidence.md`, section 14.
+`docs/architecture/e13-decision-readiness.md` (merged to `develop` as `137a3d1`, PR #151). The identifier conflicts (D1 and D9
+defined two ways, and D-numbers reused across ADRs) and the decision-resolution plan are in
+`docs/architecture/e13-decision-resolution-plan.md`. Evidence is in `docs/architecture/e13-completion-evidence.md`, sections 14 and 15.
 
 ## Story tracker
 
