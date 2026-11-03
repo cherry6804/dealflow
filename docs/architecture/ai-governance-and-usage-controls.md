@@ -51,7 +51,7 @@ and the first failing gate gives the reason:
 3. Organization switches, from the top of the chain: `master_disabled`, `capability_disabled`.
 4. Executable capability with no confirmed plan feature: `entitlement_not_defined`.
 5. Approval required by the catalogue: `approval_not_available`. No approval model exists (DFR1-025).
-6. Provider required: `provider_not_connected`. No provider connection model exists.
+6. Provider required: a verified, fresh connection of the matching kind must exist. Denials are `provider_not_connected`, `provider_unhealthy` and `provider_health_stale`. No provider probe is registered yet, so none can pass.
 7. Consent required: `consent_not_configured`. No consent model exists.
 8. Otherwise `allowed`.
 
@@ -140,7 +140,7 @@ source and correlation ID.
 | Explicit organization opt-in and revocation | `test_revoking_opt_in_stops_the_next_run_and_is_audited`; enablement audited by `set_capability_enabled` | Verified |
 | Product entitlement and subscription eligibility | `test_an_expired_trial_denies_even_when_switches_are_on`, `test_a_plan_without_the_feature_denies`, `test_a_disabled_plan_feature_denies`, `test_revoked_product_access_denies`, `test_an_unverified_snapshot_fails_closed`, `test_a_session_for_another_organization_is_refused` | Verified for `workflow_automation`. AI and channel plan keys unconfirmed (DFR1-005) |
 | Consent and channel eligibility | Append-only consent records per contact, channel and purpose (`contact_consent_records`, migration `l3c8e2f5a1b7`). Grant, revoke and expiry. Versioned policy (version 1). Checked in the central gate on every execution: `consent_missing`, `consent_revoked`, `consent_expired`, `consent_channel_mismatch`. Revocation takes effect on the next execution. Tests: `tests/test_consent.py` (21). Quiet hours, messaging windows, templates and do-not-disturb are **not** implemented. | Consent gate verified. Window and DND rules are not built. Production channel capabilities still deny: no confirmed plan feature and no provider connection |
-| Provider health and configuration | `test_a_provider_requirement_denies_while_no_provider_connection_exists`; AI and channel capabilities deny | Fails closed. Provider connection model not built (DFR1-003, DFR1-004, DFR1-015) |
+| Provider connection and health | `tests/test_provider_connections.py` (18 tests): secret boundary (only the environment variable name is stored, the value is never returned or audited), verification outcomes, health age, secret removal, disabled connections, tenant isolation, permissions, and gate order before consent | Registry and gate verified. No provider probe is registered, so no real provider can be verified. Provider adapters and their external accounts are not built (DFR1-007, DFR1-015) |
 | Resource publication and activation | `test_a_draft_or_paused_rule_never_executes`; `test_pausing_a_rule_mid_run_stops_it...`; per-rule revalidation | Verified for deal-created rules. Agent and workflow publication not built (DFR1-019, DFR1-023) |
 | Actor permission and target-resource permission | `test_an_actor_without_the_permission_for_the_action_is_refused`; `test_a_target_from_another_organization_is_refused`; `test_an_inactive_membership_denies...`; `test_another_organizations_deal_cannot_be_executed` | Verified at organization scope. **Record-level permission** (for example, owner-only deals) is not defined by the policy sheet and is not implemented |
 | Usage budgets and limits | `test_billable_work_is_denied_until_the_budget_gate_exists`. No rate, concurrency or step limits | Billable work denied. Budgets, rate and concurrency not built (DFR1-017) |
@@ -155,7 +155,7 @@ source and correlation ID.
 
 1. **DFR1-002**: ADR-0025, ADR-0026 and ADR-0027 are still Proposed. The story stays To Do.
 2. **DFR1-005**: SIBVO plan feature keys for AI and channel capabilities are unconfirmed. Dealsflo will not invent them.
-3. **Provider connection model** (DFR1-003, DFR1-004, DFR1-015): needed for gate 6.
+3. **Provider adapters and probes** (DFR1-007, DFR1-015): the connection model and gate exist (migration `m4d9f3a6c2e8`). Each real provider needs a registered probe and an external account before any AI or channel capability can run.
 4. **Consent and channel policy model** (DFR1-034 and channel stories): needed for gate 7.
 5. **Approval model** (DFR1-025, which depends on DFR1-023): needed for gate 5.
 6. **Usage budgets and limits** (DFR1-017): needed before any billable execution.
@@ -611,7 +611,7 @@ legal-hold bypass by external deletion.
 
 ## 9. Known limitations
 
-- Consent, channel policy, approvals, provider health, and the AI gateway are not built. Channel and voice
+- Consent, channel policy, approvals, and the AI gateway are not built. Provider connections exist, but no provider probe is registered. Channel and voice
   capabilities deny until they exist.
 - No production usage is recorded (section 4.6).
 - Threshold alerts are delivered only by a running outbox worker (section 4.4).
@@ -626,7 +626,7 @@ legal-hold bypass by external deletion.
 | Story | Status | Dependency | Owner | Remaining |
 |---|---|---|---|---|
 | DFR1-002 | **Not complete** | ADR-0025, ADR-0026, ADR-0027 still Proposed; diagrams and ownership map not recorded | Engineering and product | Approve the remaining ADRs and record the diagrams and ownership map |
-| DFR1-006 | Partial | DFR1-002 (To Do: ADR-0025/26/27 Proposed), DFR1-005 (To Do in the backlog; the entitlement check in code exists) | Engineering and product | Provider connection and health (DFR1-003, 004, 015); consent and channel policy; approval model (DFR1-025); budget, rate and concurrency gates (DFR1-017); record-level permission scope; cancel-or-complete for runs that outlast a request (DFR1-019). Section 2.8 lists each blocker |
+| DFR1-006 | Partial | DFR1-002 (To Do: ADR-0025/26/27 Proposed), DFR1-005 (To Do in the backlog; the entitlement check in code exists) | Engineering and product | Provider adapters and probes (DFR1-007, 015); consent and channel policy; approval model (DFR1-025); budget, rate and concurrency gates (DFR1-017); record-level permission scope; cancel-or-complete for runs that outlast a request (DFR1-019). Section 2.8 lists each blocker |
 | DFR1-017 | Partial | DFR1-015 (AI gateway, not built), DFR1-005 (To Do in the backlog) | AI platform (E06) | Gateway producers; running the outbox worker in production; dashboard breakdowns; SIBVO reconciliation (DFR1-053) |
 | DFR1-050 | Partial | DFR1-028, DFR1-035, DFR1-036 | Voice, documents, settings | Export and deletion for the CRM categories (leads, follow-ups, customer profiles, requirements, deals) and anonymization of linked records; export of conversations, calls, transcripts and AI data (no producers); a product decision on retention for contacts; scheduling of `privacy_maintenance`; decisions in section 5.6 |
 | DFR1-053 | Blocked | DFR1-017, DFR1-036, approved SIBVO ingestion contract | SIBVO and Dealsflo | Ingestion, reconciliation, lifecycle tests |

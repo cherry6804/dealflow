@@ -11,14 +11,14 @@ Gates, in evaluation order (the first failing gate decides the reason):
    (fail closed); the entitlement check then reads SIBVO's attested snapshot.
 3. Master and capability switches are enabled, checked from the top of the chain.
 4. A capability that requires approval is denied: no approval model exists (DFR1-025).
-5. A capability that needs a provider is denied: no provider connection model exists.
+5. A capability that needs a provider is denied unless a verified, fresh connection of its kind exists.
 6. A capability that needs consent is denied: no consent model exists.
 
 Execution callers use ``app.governance.execution_gate.authorize_execution``, which adds the
 actor, target and resource checks, the billing check, and an audit record for every decision.
 This module is the policy only. It is also used to display capability state.
 
-Not implemented, and therefore not claimed: provider health, consent and channel policy,
+Not implemented, and therefore not claimed: consent and channel policy,
 approval, budgets and usage limits for billable work (DFR1-017), rate and concurrency limits,
 and in-flight cancellation for runs that outlast a request. They are blocked in the E13 document.
 """
@@ -35,6 +35,7 @@ from app.auth.dependencies import CurrentUserContext
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
     CAPABILITY_BY_KEY,
+    PROVIDER_KIND_BY_CAPABILITY,
     CapabilityCategory,
     CapabilityDefinition,
     ancestry,
@@ -48,6 +49,11 @@ from app.governance.entitlement import (
     REASON_TRIAL_EXPIRED,
     REASON_WRONG_ORGANIZATION,
     verify_entitlement,
+)
+from app.governance.provider_connections import (
+    REASON_PROVIDER_HEALTH_STALE,
+    REASON_PROVIDER_UNHEALTHY,
+    provider_gate,
 )
 
 REASON_ALLOWED = "allowed"
@@ -67,6 +73,8 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_PROVIDER_NOT_CONNECTED: (
         "A verified provider connection is required and none is available."
     ),
+    REASON_PROVIDER_UNHEALTHY: "The provider connection failed its last health check.",
+    REASON_PROVIDER_HEALTH_STALE: "The provider connection needs a fresh health check.",
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
     ),
@@ -202,10 +210,13 @@ def evaluate_capability(
         )
 
     if definition.requires_provider:
-        return _decision(
-            definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
-            correlation_id,
+        reason = provider_gate(
+            db,
+            organization_id=organization_id,
+            provider_kind=PROVIDER_KIND_BY_CAPABILITY.get(definition.key),
         )
+        if reason is not None:
+            return _decision(definition.key, organization_id, reason, policy_version, correlation_id)
 
     # A capability that needs consent is allowed here only when the caller supplies the contact and
     # the gate checks that contact's consent. Without it, the capability fails closed.

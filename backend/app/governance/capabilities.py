@@ -45,6 +45,21 @@ class CapabilityDefinition:
         return False
 
 
+# The provider kind each provider-requiring capability needs. A capability not listed here has no
+# provider kind, so it can never be satisfied and fails closed. SMS has no backlog provider yet.
+PROVIDER_KIND_BY_CAPABILITY: dict[str, str] = {
+    "ai.assistant": "llm",
+    "ai.agents": "llm",
+    "ai.workflow_execution": "llm",
+    "ai.predictions": "llm",
+    "ai.content_generation": "llm",
+    "ai.document_processing": "llm",
+    "ai.voice": "voice",
+    "channels.whatsapp": "whatsapp",
+    "channels.email": "email",
+    "channels.voice": "voice",
+}
+
 AI_MASTER = "ai.master"
 AUTOMATION_MASTER = "automation.master"
 AUTOMATION_DEAL_CREATED_RULES = "automation.deal_created_rules"

@@ -21,6 +21,7 @@ from app.db.models.contact_consent import (
     ContactConsentRecord,
 )
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
+from app.db.models.provider_connection import ProviderConnection
 from app.db.session import get_db_session
 from app.governance.capabilities import CapabilityCategory
 from app.governance.consent import (
@@ -50,6 +51,18 @@ from app.governance.privacy_execution import (
     enqueue_processing,
     expire_request_export,
     open_export,
+)
+from app.governance.provider_connections import (
+    ProviderConnectionError,
+    ProviderConnectionExistsError,
+    ProviderConnectionNotFoundError,
+    create_connection,
+    disable_connection,
+    list_connections,
+    verify_connection,
+)
+from app.governance.provider_connections import (
+    secret_present as provider_secret_present,
 )
 from app.governance.service import (
     CapabilityState,
@@ -780,3 +793,117 @@ def record_contact_consent(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
     db.commit()
     return _consent_response(row)
+
+# ---------------------------------------------------------------------------
+# Provider connections (DFR1-006 / DFR1-011 foundation)
+# ---------------------------------------------------------------------------
+
+
+class ProviderConnectionCreate(BaseModel):
+    provider_kind: Literal["llm", "whatsapp", "email", "voice"]
+    display_name: str = Field(..., min_length=1, max_length=120)
+    secret_ref: str = Field(..., min_length=3, max_length=120, pattern=r"^[A-Z][A-Z0-9_]{2,119}$")
+    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+class ProviderConnectionResponse(BaseModel):
+    id: UUID
+    provider_kind: str
+    display_name: str
+    # The environment variable name only. The secret value is never returned.
+    secret_ref: str
+    secret_present: bool
+    status: str
+    last_verified_at: datetime | None
+    last_error_code: str | None
+    created_at: datetime
+
+
+def _provider_response(row: ProviderConnection) -> ProviderConnectionResponse:
+    return ProviderConnectionResponse(
+        id=row.id,
+        provider_kind=row.provider_kind,
+        display_name=row.display_name,
+        secret_ref=row.secret_ref,
+        secret_present=provider_secret_present(row.secret_ref),
+        status=row.status,
+        last_verified_at=row.last_verified_at,
+        last_error_code=row.last_error_code,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/providers", response_model=list[ProviderConnectionResponse])
+def list_provider_connections(
+    tenant: TenantContext = Depends(require_permission("governance.providers.read")),
+    db: Session = Depends(get_db_session),
+) -> list[ProviderConnectionResponse]:
+    return [_provider_response(row) for row in list_connections(db, organization_id=tenant.organization_id)]
+
+
+@router.post("/providers", response_model=ProviderConnectionResponse, status_code=status.HTTP_201_CREATED)
+def create_provider_connection(
+    payload: ProviderConnectionCreate,
+    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
+    db: Session = Depends(get_db_session),
+) -> ProviderConnectionResponse:
+    try:
+        row = create_connection(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            provider_kind=payload.provider_kind,
+            display_name=payload.display_name,
+            secret_ref=payload.secret_ref,
+        )
+    except ProviderConnectionExistsError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+    except ProviderConnectionError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    db.commit()
+    return _provider_response(row)
+
+
+@router.post("/providers/{connection_id}/verify", response_model=ProviderConnectionResponse)
+def verify_provider_connection(
+    connection_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
+    db: Session = Depends(get_db_session),
+) -> ProviderConnectionResponse:
+    try:
+        row = verify_connection(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            connection_id=connection_id,
+        )
+    except ProviderConnectionNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider connection not found.") from None
+    except ProviderConnectionError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+    db.commit()
+    return _provider_response(row)
+
+
+@router.post("/providers/{connection_id}/disable", response_model=ProviderConnectionResponse)
+def disable_provider_connection(
+    connection_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
+    db: Session = Depends(get_db_session),
+) -> ProviderConnectionResponse:
+    try:
+        row = disable_connection(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            connection_id=connection_id,
+        )
+    except ProviderConnectionNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider connection not found.") from None
+    db.commit()
+    return _provider_response(row)
