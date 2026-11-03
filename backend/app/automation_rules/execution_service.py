@@ -31,7 +31,12 @@ from app.db.models.membership import Membership
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
-from app.governance.execution_gate import ExecutionRequest, evaluate_execution
+from app.governance.execution_gate import (
+    ExecutionRequest,
+    evaluate_execution,
+    record_execution_stop,
+    revalidate_ticket,
+)
 from app.notifications.service import create_notification
 from app.rate_limits.limiter import (
     REASON_RATE_LIMITED,
@@ -380,14 +385,12 @@ def execute_deal_created_automations(
     # untouched, so manual CRM work continues when automation is off.
     if user_context is None:
         return []
-    decision = evaluate_execution(
-        db,
-        ExecutionRequest(
-            organization_id=organization_id,
-            capability_key=AUTOMATION_DEAL_CREATED_RULES,
-            user_context=user_context,
-        ),
+    gate_request = ExecutionRequest(
+        organization_id=organization_id,
+        capability_key=AUTOMATION_DEAL_CREATED_RULES,
+        user_context=user_context,
     )
+    decision = evaluate_execution(db, gate_request)
     if not decision.allowed:
         if decision.rate is not None and decision.rate.reason_code == REASON_RATE_LIMITED:
             _record_rate_limit_denial(
@@ -400,11 +403,12 @@ def execute_deal_created_automations(
         return []
 
     executions: list[AutomationExecution] = []
-    # Authority is read from the database for this call. The deal creator does not authorize actions:
-    # the activator of the rule and the deal owner must both hold the permission of the action (WS6 WP5).
-    checker = PermissionChecker(db, organization_id)
 
+    # Set when an in-flight revalidation stops the event. A stop applies to every later rule and step (WS6 WP8).
+    stopped_reason: str | None = None
     for rule in rules:
+        if stopped_reason is not None:
+            break
         try:
             # A savepoint isolates a duplicate insert or a failure in this
             # rule from the surrounding deal-creation transaction.
@@ -453,8 +457,35 @@ def execute_deal_created_automations(
                                 if isinstance(action, dict)
                                 else None
                             )
+                            # In-flight revalidation (WS6 WP8): re-check the governing gates before each step.
+                            # A denial stops this step and every later one. The stop is recorded independently
+                            # first, so it survives a rollback.
+                            step_gate = revalidate_ticket(db, gate_request)
+                            if not step_gate.allowed:
+                                stopped_reason = step_gate.reason_code
+                                record_execution_stop(
+                                    db,
+                                    gate_request,
+                                    step_gate,
+                                    rule_id=rule.id,
+                                    deal_id=deal.id,
+                                    index=index,
+                                )
+                                results.append(
+                                    {
+                                        "action_type": action_type,
+                                        "status": "STOPPED",
+                                        "reason": "Execution stopped before this step.",
+                                        "reason_code": stopped_reason,
+                                    }
+                                )
+                                break
+
+                            # Authority is read from the database for each step, so a permission removed
+                            # mid-run is seen at the next step (WS6 WP5, WP8). The deal creator does not
+                            # authorize actions: the rule's activator and the deal owner must hold the permission.
                             authorization = authorize_action(
-                                checker,
+                                PermissionChecker(db, organization_id),
                                 rule=rule,
                                 deal=deal,
                                 action_type=action_type,
@@ -542,6 +573,12 @@ def execute_deal_created_automations(
                         if failed:
                             execution.error_message = (
                                 "One or more automation actions failed."
+                            )
+
+                        if stopped_reason is not None:
+                            execution.status = AutomationExecution.STATUS_FAILED
+                            execution.error_message = (
+                                f"Execution stopped before a later step: {stopped_reason}."
                             )
 
                 execution.completed_at = datetime.now(timezone.utc)

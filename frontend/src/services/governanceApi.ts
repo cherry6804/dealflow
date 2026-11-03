@@ -78,6 +78,20 @@ export interface PrivacyRequest {
   created_at: string;
 }
 
+export type EntitlementSnapshotState = "valid" | "due_for_revalidation" | "expired" | "missing";
+
+export interface EntitlementStatus {
+  state: EntitlementSnapshotState;
+  product_key: string;
+  revalidation_interval_seconds: number;
+  fetched_at: string | null;
+  expires_at: string | null;
+  failure_count: number;
+  next_refresh_attempt_at: string | null;
+  backoff_active: boolean;
+  signing_key_configured: boolean;
+}
+
 export interface GovernanceAccess {
   capabilities_read: boolean;
   capabilities_manage: boolean;
@@ -90,6 +104,10 @@ export interface GovernanceAccess {
 export const governanceApi = {
   getAccess(): Promise<GovernanceAccess> {
     return api.get<GovernanceAccess>("/ai/governance/access");
+  },
+
+  getEntitlementStatus(): Promise<EntitlementStatus> {
+    return api.get<EntitlementStatus>("/ai/governance/entitlement-status");
   },
 
   listCapabilities(): Promise<{ items: CapabilityState[] }> {

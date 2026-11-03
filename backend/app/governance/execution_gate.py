@@ -359,6 +359,48 @@ def _release_all(db: Session, organization_id: UUID, reservations: list[tuple[st
         release(db, organization_id=organization_id, idempotency_key=key)
 
 
+def _event_type(request: ExecutionRequest) -> str:
+    """AI decisions keep the AI event type. Every other capability uses the gate event type."""
+    if CAPABILITY_BY_KEY[request.capability_key].category is CapabilityCategory.AI:
+        return AI_EXECUTION_EVENT_TYPE
+    return EXECUTION_EVENT_TYPE
+
+
+def record_execution_stop(
+    db: Session,
+    request: ExecutionRequest,
+    decision: ExecutionDecision,
+    *,
+    rule_id: UUID,
+    deal_id: UUID,
+    index: int,
+) -> None:
+    """Record that an in-flight execution was stopped before a later step (WS6 WP8).
+
+    The row is written in its own transaction, so it survives the rollback of the work that was stopped.
+    Raises ``AuditPersistenceError`` when it cannot be written. The caller must then not start the step.
+    """
+    persist_independent_audit_event(
+        db,
+        attribution=_attribution(request),
+        event_type=_event_type(request),
+        action="execution.stopped",
+        decision="denied",
+        outcome=OUTCOME_DENIED,
+        permission_key=f"capability:{request.capability_key}",
+        resource_type="capability",
+        resource_id=request.capability_key,
+        correlation_id=request.correlation_id,
+        metadata={
+            "reason_code": decision.reason_code,
+            "gate": decision.gate,
+            "rule_id": str(rule_id),
+            "deal_id": str(deal_id),
+            "step_index": index,
+        },
+    )
+
+
 def _record(
     db: Session,
     request: ExecutionRequest,
@@ -369,11 +411,7 @@ def _record(
     persist_independent_audit_event(
         db,
         attribution=attribution,
-        event_type=(
-            AI_EXECUTION_EVENT_TYPE
-            if CAPABILITY_BY_KEY[request.capability_key].category is CapabilityCategory.AI
-            else EXECUTION_EVENT_TYPE
-        ),
+        event_type=_event_type(request),
         action="allowed" if decision.allowed else "denied",
         decision="allowed" if decision.allowed else "denied",
         outcome=OUTCOME_REQUESTED if decision.allowed else OUTCOME_DENIED,

@@ -263,7 +263,7 @@ def test_an_expired_snapshot_is_never_used_and_outage_denies(organization_id, si
     verdict = decide(organization_id, now=later)
 
     assert verdict.allowed is False
-    assert verdict.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+    assert verdict.reason_code == REASON_SNAPSHOT_EXPIRED
 
 
 def test_refresh_after_expiry_restores_access_when_sibvo_answers(organization_id, sibvo) -> None:
@@ -313,8 +313,9 @@ def test_a_rejected_response_never_replaces_the_stored_snapshot(organization_id,
     sibvo.answer = lambda org: signed(org, enabled=True, key="z" * 40)
     verdict = decide(organization_id, now=datetime.now(UTC) + timedelta(seconds=31))
 
+    # The stored snapshot has expired, so the authorization reason is expired. The rejection is logged separately.
     assert verdict.allowed is False
-    assert verdict.reason_code == REASON_SNAPSHOT_REJECTED
+    assert verdict.reason_code == REASON_SNAPSHOT_EXPIRED
     with SessionLocal() as db:
         after = db.scalar(select(OrganizationEntitlementSnapshot.snapshot_body).where(
             OrganizationEntitlementSnapshot.organization_id == organization_id))
@@ -399,3 +400,257 @@ def test_missing_snapshot_with_sibvo_unreachable_is_denied(organization_id, sibv
     verdict = decide(organization_id)
     assert verdict.allowed is False
     assert verdict.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+
+
+# WS6 WP6: revalidation configuration, boundaries, clock skew, stale answers and diagnostics -----------
+
+
+def _with_revalidation(monkeypatch, configured, seconds: int) -> None:
+    settings = configured.model_copy(update={"sibvo_org_entitlement_revalidation_seconds": seconds})
+    monkeypatch.setattr(org_entitlement, "get_settings", lambda: settings)
+
+
+def _stored_row(organization_id: UUID) -> OrganizationEntitlementSnapshot:
+    with SessionLocal() as db:
+        row = db.scalar(select(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == organization_id))
+        db.expunge(row)
+        return row
+
+
+def test_revalidation_interval_defaults_to_thirty_seconds_and_is_validated_at_startup() -> None:
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    assert get_settings().sibvo_org_entitlement_revalidation_seconds == 30
+    for invalid in (0, 31, -5):
+        with pytest.raises(ValidationError):
+            Settings(sibvo_org_entitlement_revalidation_seconds=invalid)
+
+
+def test_a_due_snapshot_is_refreshed_while_it_is_still_valid(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    start = datetime.now(UTC)
+    assert decide(organization_id, now=start).allowed is True
+
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    assert decide(organization_id, now=start + timedelta(seconds=20)).allowed is True
+    assert len(sibvo.calls) == 2
+
+
+def test_a_failed_refresh_uses_the_stored_snapshot_only_until_it_expires(
+    organization_id, sibvo, monkeypatch, configured
+) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    start = datetime.now(UTC)
+    assert decide(organization_id, now=start).allowed is True
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    still_valid = decide(organization_id, now=start + timedelta(seconds=20))
+    assert still_valid.allowed is True
+    assert len(sibvo.calls) == 2
+
+    # Inside the backoff window, SIBVO is not asked again. The still-valid snapshot is the only authority.
+    held = decide(organization_id, now=start + timedelta(seconds=21))
+    assert held.allowed is True
+    assert len(sibvo.calls) == 2
+
+    # Once the backoff has passed and the snapshot has expired, SIBVO is asked again. Still unreachable, so the
+    # stored snapshot is reported as expired.
+    expired = decide(organization_id, now=start + timedelta(seconds=31))
+    assert expired.allowed is False
+    assert expired.reason_code == REASON_SNAPSHOT_EXPIRED
+    assert len(sibvo.calls) == 3
+
+
+def test_clock_skew_tolerates_a_little_future_issue_time_and_no_grace_on_expiry(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=4)
+    assert decide(organization_id).allowed is True
+
+    with SessionLocal() as db:
+        _, organization = create_owner_manager(permissions=("governance.usage.read",))
+        other = organization.id
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=6)
+    verdict = decide(other)
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_REJECTED
+    with SessionLocal() as db:
+        db.execute(delete(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == other))
+        db.commit()
+
+
+def test_an_older_answer_never_replaces_a_newer_stored_snapshot(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    assert decide(organization_id).allowed is True
+    stored_id = _stored_row(organization_id).snapshot_body["snapshot"]["snapshot_id"]
+
+    with SessionLocal() as db:
+        row = db.scalar(select(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == organization_id))
+        row.fetched_at = datetime.now(UTC) - timedelta(seconds=60)
+        db.commit()
+
+    # An answer issued 10 seconds before the stored one verifies, but it is older, so it must not replace it.
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=-10)
+    verdict = decide(organization_id)
+
+    assert verdict.allowed is True
+    assert _stored_row(organization_id).snapshot_body["snapshot"]["snapshot_id"] == stored_id
+
+
+def test_diagnostics_report_state_without_the_body_signature_or_key(organization_id, sibvo) -> None:
+    from app.governance.org_entitlement import snapshot_diagnostics
+
+    with SessionLocal() as db:
+        assert snapshot_diagnostics(db, organization_id=organization_id)["state"] == "missing"
+
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    decide(organization_id)
+
+    with SessionLocal() as db:
+        diagnostics = snapshot_diagnostics(db, organization_id=organization_id)
+
+    assert diagnostics["state"] == "valid"
+    assert diagnostics["revalidation_interval_seconds"] == 30
+    text = repr(diagnostics)
+    assert KEY not in text
+    assert "signature" not in text
+    assert "snapshot_body" not in diagnostics
+
+
+# WS6 WP6: deterministic expiry boundaries. Times are fixed, so the outcome never depends on the wall clock.
+
+T0 = datetime(2026, 11, 3, 10, 0, 0, tzinfo=UTC)
+
+
+def signed_at(organization_id: UUID, base: datetime, *, issued_offset: float = 0.0, lifetime: float = 30.0) -> dict:
+    snapshot = {
+        "version": 1,
+        "snapshot_id": str(uuid4()),
+        "attested": True,
+        "organization_id": str(organization_id),
+        "product_key": "dealsflo",
+        "subscription_status": "active",
+        "issued_at": (base + timedelta(seconds=issued_offset)).isoformat(),
+        "expires_at": (base + timedelta(seconds=issued_offset + lifetime)).isoformat(),
+        "entitlements": [{"feature_key": FEATURE, "enabled": True}],
+    }
+    return {
+        "active": True,
+        "snapshot": snapshot,
+        "signature": {"alg": "HMAC-SHA256", "kid": KEY_ID, "value": compute_signature(snapshot, KEY)},
+    }
+
+
+def at(seconds: float) -> datetime:
+    return T0 + timedelta(seconds=seconds)
+
+
+def test_one_millisecond_before_expiry_the_cached_snapshot_authorizes_without_asking_sibvo(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+
+    verdict = decide(organization_id, now=at(29.999))
+
+    assert verdict.allowed is True
+    assert len(sibvo.calls) == 1
+
+
+def test_one_millisecond_before_expiry_a_failed_refresh_still_authorizes(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 1)
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    verdict = decide(organization_id, now=at(29.999))
+
+    assert verdict.allowed is True
+    assert len(sibvo.calls) == 2
+
+
+def test_exactly_at_expiry_is_denied_as_expired(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    verdict = decide(organization_id, now=at(30))
+
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_EXPIRED
+    assert len(sibvo.calls) == 2
+
+
+def test_after_expiry_during_active_backoff_is_expired_and_sibvo_is_not_asked(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    assert decide(organization_id, now=at(30)).reason_code == REASON_SNAPSHOT_EXPIRED
+    assert len(sibvo.calls) == 2
+
+    verdict = decide(organization_id, now=at(31))
+
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_EXPIRED
+    assert len(sibvo.calls) == 2
+
+
+def test_no_snapshot_with_sibvo_unavailable_is_unavailable(organization_id, sibvo) -> None:
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+
+    verdict = decide(organization_id, now=at(0))
+
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+
+
+def test_valid_snapshot_during_active_backoff_authorizes_without_asking_sibvo(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 5)
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    assert decide(organization_id, now=at(5)).allowed is True
+    assert len(sibvo.calls) == 2
+
+    held = decide(organization_id, now=at(8))
+
+    assert held.allowed is True
+    assert len(sibvo.calls) == 2
+
+
+def test_backoff_never_extends_validity(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 5)
+    sibvo.answer = lambda org: signed_at(org, T0)
+    assert decide(organization_id, now=at(0)).allowed is True
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    assert decide(organization_id, now=at(5)).allowed is True
+
+    # Due again, and the second failure opens a longer backoff. The snapshot still authorizes until 30 s.
+    assert decide(organization_id, now=at(29.999)).allowed is True
+    assert len(sibvo.calls) == 3
+
+    # At the expiry instant the backoff is still active, so the answer is expired and SIBVO is not asked.
+    verdict = decide(organization_id, now=at(30))
+
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_EXPIRED
+    assert len(sibvo.calls) == 3
+
+
+def test_refresh_failure_is_logged_with_its_reason_and_no_secret(organization_id, sibvo, caplog) -> None:
+    import logging
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    with caplog.at_level(logging.WARNING, logger="app.governance.org_entitlement"):
+        verdict = decide(organization_id, now=at(0))
+
+    assert verdict.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+    records = [record for record in caplog.records if record.getMessage() == "org_entitlement_refresh_failed"]
+    assert len(records) == 1
+    assert records[0].refresh_reason == REASON_SNAPSHOT_UNAVAILABLE
+    assert KEY not in caplog.text
