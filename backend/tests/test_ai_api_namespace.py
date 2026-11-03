@@ -61,7 +61,7 @@ TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[
 
 @dataclass(frozen=True)
 class RouteCase:
-    """One of the 18 routes, described by its legacy path."""
+    """One of the 19 routes, described by its legacy path."""
 
     name: str
     method: str
@@ -76,6 +76,8 @@ class RouteCase:
 
 ROUTES: tuple[RouteCase, ...] = (
     RouteCase("capabilities.list", "GET", "/api/v1/governance/capabilities",
+              "governance.capabilities.read", False, 200),
+    RouteCase("entitlement_status.read", "GET", "/api/v1/governance/entitlement-status",
               "governance.capabilities.read", False, 200),
     RouteCase("capabilities.update", "PATCH", "/api/v1/governance/capabilities/automation.master",
               "governance.capabilities.manage", True, 200,
@@ -353,8 +355,8 @@ def test_canonical_and_legacy_mounts_behave_identically(
     assert legacy == canonical
 
 
-def test_shared_handler_routers_define_all_eighteen_routes() -> None:
-    """The handler set itself must define exactly the 18 documented routes, under their prefixes."""
+def test_shared_handler_routers_define_all_nineteen_routes() -> None:
+    """The handler set itself must define exactly the 19 documented routes, under their prefixes."""
     definitions = (
         ("/api/v1/governance", governance_routes),
         ("/api/v1/provider-credentials", provider_credential_routes),
