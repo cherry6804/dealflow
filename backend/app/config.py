@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     outbox_max_backoff_seconds: int = Field(default=3600, ge=1, le=86400)
     outbox_lease_seconds: int = Field(default=300, ge=10, le=3600)
     outbox_batch_size: int = Field(default=50, ge=1, le=500)
+    # Upper bound on the database work a single event handler may do (PostgreSQL statement timeout).
+    # Must be shorter than the claim lease, so an event is never reclaimed while its handler still runs.
+    outbox_handler_timeout_seconds: int = Field(default=30, ge=1, le=600)
 
     # Encrypted transactional email outbox.
     email_outbox_encryption_key: SecretStr | None = Field(

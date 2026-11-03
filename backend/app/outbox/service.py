@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -69,6 +69,7 @@ class DispatchResult:
     delivered: int = 0
     retried: int = 0
     dead_lettered: int = 0
+    timed_out: int = 0
 
 
 def utcnow() -> datetime:
@@ -225,6 +226,28 @@ def claim_due_events(
     return events
 
 
+class HandlerTimeoutError(Exception):
+    """A handler's database work exceeded the handler timeout. The database cancelled it."""
+
+
+def _is_statement_timeout(exc: BaseException) -> bool:
+    """True when PostgreSQL cancelled a statement because of statement_timeout."""
+    original = getattr(exc, "orig", None)
+    if type(original).__name__ == "QueryCanceled":
+        return True
+    return "statement timeout" in str(original or "").lower()
+
+
+def _apply_handler_timeout(db: Session, timeout_ms: int) -> None:
+    """Bound the database work of one handler. The setting is transaction-scoped (SET LOCAL).
+
+    Only PostgreSQL supports statement_timeout. Other dialects are not used for production.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        # timeout_ms is an integer from validated settings, so it is not user input.
+        db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+
+
 def _describe_error(exc: BaseException) -> str:
     """Return a bounded, single-line description. Never includes the traceback.
 
@@ -280,6 +303,13 @@ def dispatch_due_events(
     handlers run, so other workers see the claim.
     """
     settings = get_settings()
+    handler_timeout_seconds = settings.outbox_handler_timeout_seconds
+    if handler_timeout_seconds >= settings.outbox_lease_seconds:
+        # A handler that outlives its lease would let another worker run the same event concurrently.
+        raise ValueError(
+            "outbox_handler_timeout_seconds must be shorter than outbox_lease_seconds."
+        )
+    handler_timeout_ms = handler_timeout_seconds * 1000
     cycle_now = now or utcnow()
     claimed = claim_due_events(
         db,
@@ -290,7 +320,7 @@ def dispatch_due_events(
     )
     db.commit()
 
-    delivered = retried = dead_lettered = 0
+    delivered = retried = dead_lettered = timed_out = 0
     for event in claimed:
         event_id = event.id
         event_type = event.event_type
@@ -302,10 +332,15 @@ def dispatch_due_events(
                 )
             savepoint = db.begin_nested()
             try:
+                _apply_handler_timeout(db, handler_timeout_ms)
                 handler(db, event)
                 savepoint.commit()
-            except Exception:
+            except Exception as handler_exc:
                 savepoint.rollback()
+                if _is_statement_timeout(handler_exc):
+                    raise HandlerTimeoutError(
+                        f"Handler exceeded {handler_timeout_seconds}s; database work was cancelled."
+                    ) from None
                 raise
             mark_delivered(event, now=cycle_now)
             delivered += 1
@@ -319,6 +354,8 @@ def dispatch_due_events(
                 base_backoff_seconds=settings.outbox_base_backoff_seconds,
                 max_backoff_seconds=settings.outbox_max_backoff_seconds,
             )
+            if isinstance(exc, HandlerTimeoutError):
+                timed_out += 1
             if is_dead:
                 dead_lettered += 1
             else:
@@ -339,4 +376,5 @@ def dispatch_due_events(
         delivered=delivered,
         retried=retried,
         dead_lettered=dead_lettered,
+        timed_out=timed_out,
     )
