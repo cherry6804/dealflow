@@ -26,17 +26,17 @@ awaiting approval of the SIBVO usage contract (E12). The product owner set this 
 |---|---|---|---|---|---|---|---|---|
 | DFR1-001 | E01 | Baseline both repositories and preserve current work | P0 | 2 | Repository baseline recorded; work preserved on branch | n/a | Branch history; `docs/governance/s00-engineering-foundation-completion.md` | Verification of the baseline on a clean clone not performed |
 | DFR1-002 | E01 | Approve target architecture and ADR register | P0 | 4 | ADR-0029 accepted; ADR-0025, 0026, 0027 still Proposed | n/a | `docs/adr/` | Approval of the three Proposed ADRs |
-| DFR1-003 | E01 | Define Release 1 environment and provider dependency matrix | P0 | 2 | Matrix document exists | n/a | `docs/product/release-1/E01-environment-and-provider-matrix.md` | Owners and approval dates per dependency |
+| DFR1-003 | E01 | Define Release 1 environment and provider dependency matrix | P0 | 4 | Matrix document exists. Owner, sandbox/prod status, approval and blocker dates are not recorded | n/a | `docs/product/release-1/E01-environment-and-provider-matrix.md` | Owners and blocker dates per dependency (product input) |
 | DFR1-004 | E12 | Verify SIBVO identity and organization contract | P0 | 2 | SSO, organization binding and introspection implemented in E12 work | Login and SSO flows exist | Earlier E12 commits; `docs/architecture/sibvo-dealsflo-entitlement-contract.md` | Live contract verification against SIBVO not performed in this session |
 | DFR1-005 | E12 | Verify subscription, entitlement and seat enforcement contract | P0 | 4 | Entitlement enforcement implemented (`workflow_automation` only) | Entitlement-aware UI partial | `app/governance/entitlement.py`; WP-A1 merged to SIBVO develop (merge 8505ba1) | SIBVO feature keys for AI and channels are unconfirmed; backlog still shows To Do |
 | DFR1-006 | E13 | Define disabled-by-default capability policy | P0 | 2 | Central execution gate; fail-closed policy; audited decisions; per-action revalidation. Latest: `8012a22` | Capability settings UI | `app/governance/execution_gate.py`, `policy.py`; `8012a22` | Provider, consent, approval, budget gates blocked (no models); DFR1-002 and DFR1-005 open |
-| DFR1-007 | E04 | Confirm communication providers and channel capability matrix | P0 | 3 | None | None | None | Provider accounts and credentials (external) |
+| DFR1-007 | E04 | Confirm communication providers and channel capability matrix | P0 | 4 | None | None | None | Product choice of WhatsApp, Meta, email and telephony providers, then verification against official docs or accounts |
 | DFR1-008 | E02 | Audit and close critical CRM vertical-slice gaps | P0 | 2 | Leads, contacts, customer profiles, requirements, deals, follow-ups, site visits, referrals APIs exist | CRM pages exist | Earlier CRM work | Formal gap audit not done |
 | DFR1-009 | E03 | Implement channel identity and contact resolution | P0 | 5 | None | None | None | Depends on DFR1-008 audit and channels |
 | DFR1-010 | E03 | Implement conversation, participant and message timeline | P0 | 5 | None | None | None | Depends on DFR1-009 |
 | DFR1-011 | E04 | Build integration connection registry and secrets boundary | P0 | 5 | No provider connection model in this branch | None | None | Depends on DFR1-007 |
 | DFR1-012 | E04 | Build verified webhook ingress and normalized event envelope | P0 | 5 | Webhook verification exists only for SIBVO billing | None | Billing webhook reliability (SIBVO) | Depends on DFR1-011 |
-| DFR1-013 | E01 | Implement transactional outbox and background execution foundation | P0 | 2 | Outbox service, worker and handler registry exist (usage alerts, privacy, email) | Not applicable | `app/outbox/`; `app/governance/alert_delivery.py` | Worker deployment not defined; no scheduler configured |
+| DFR1-013 | E01 | Implement transactional outbox and background execution foundation | P0 | 2 | Outbox service, worker, handler registry; tests: rollback discards event, idempotent keys, bounded backoff, dead-letter, lease expiry, worker CLI | Not applicable | `app/outbox/`; `app/governance/alert_delivery.py` | Handler timeouts not enforced (lease expiry only). Worker deployment not defined |
 | DFR1-014 | E04 | Implement outbound communication adapter contract | P0 | 5 | SMTP email delivery for authentication mail only | None | `app/auth/email_delivery.py` | Adapter contract not defined for channels |
 | DFR1-015 | E06 | Build provider-independent AI gateway | P0 | 5 | None | None | None | Provider credentials (external) and product decision on first provider |
 | DFR1-016 | E06 | Implement tenant-scoped knowledge ingestion and retrieval | P1 | 5 | None | None | None | Depends on DFR1-015 |
@@ -89,10 +89,10 @@ No epic is Done.
 
 | Epic | Stories | Complete and verified | Verification pending | Blocked | Awaiting approval | Not implemented |
 |---|---|---|---|---|---|---|
-| E01 Foundation | 4 | 0 | 3 (001, 003, 013) | 0 | 1 (002) | 0 |
+| E01 Foundation | 4 | 0 | 2 (001, 013) | 0 | 2 (002, 003) | 0 |
 | E02 CRM Core | 1 | 0 | 1 (008) | 0 | 0 | 0 |
 | E03 Identity and inbox | 2 | 0 | 0 | 0 | 0 | 2 |
-| E04 Communication gateway | 8 | 0 | 0 | 3 (007, 029, 030) | 0 | 5 |
+| E04 Communication gateway | 8 | 0 | 0 | 2 (029, 030) | 1 (007) | 5 |
 | E05 Voice AI | 3 | 0 | 0 | 3 (027, 028, 044) | 0 | 0 |
 | E06 AI platform | 2 | 0 | 0 | 0 | 0 | 2 |
 | E07 AI workforce | 5 | 0 | 0 | 0 | 0 | 5 |
