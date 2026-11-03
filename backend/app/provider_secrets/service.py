@@ -15,6 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.db.models.audit_event import AuditEvent
 from app.db.models.provider_credential import ProviderCredential
 from app.provider_secrets.cipher import (
@@ -123,6 +128,34 @@ def _get_in_organization(db: Session, *, organization_id: UUID, credential_id: U
     return credential
 
 
+def _requested(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID,
+    action: str,
+    credential_id: UUID,
+    provider_key: str,
+    version: int,
+    correlation_id: str | None,
+) -> AuditEvent:
+    """Commit the attempt before the credential changes (WP3). Holds no secret material."""
+    return persist_independent_audit_event(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        event_type=PROVIDER_CREDENTIAL_EVENT_TYPE,
+        action=action,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=PERMISSION_MANAGE,
+        resource_type="provider_credential",
+        resource_id=str(credential_id),
+        correlation_id=correlation_id,
+        metadata={"provider_key": provider_key, "requested_version": version},
+    )
+
+
 def _audit(
     db: Session,
     *,
@@ -131,6 +164,7 @@ def _audit(
     action: str,
     credential: ProviderCredential,
     correlation_id: str | None,
+    requested: AuditEvent,
 ) -> None:
     db.add(
         AuditEvent(
@@ -139,10 +173,12 @@ def _audit(
             event_type=PROVIDER_CREDENTIAL_EVENT_TYPE,
             action=action,
             decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
             permission_key=PERMISSION_MANAGE,
             resource_type="provider_credential",
             resource_id=str(credential.id),
-            correlation_id=correlation_id or str(uuid4()),
+            correlation_id=requested.correlation_id,
             event_metadata=json.dumps(
                 {
                     "provider_key": credential.provider_key,
@@ -192,8 +228,19 @@ def create_provider_credential(
     if existing is not None:
         raise CredentialConflictError("An active credential already exists for this provider. Rotate it instead.")
 
+    credential_id = uuid4()
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=ACTION_CREATED,
+        credential_id=credential_id,
+        provider_key=provider_key,
+        version=1,
+        correlation_id=correlation_id,
+    )
     credential = ProviderCredential(
-        id=uuid4(),
+        id=credential_id,
         organization_id=organization_id,
         provider_key=provider_key,
         label=label_value,
@@ -206,7 +253,7 @@ def create_provider_credential(
     try:
         db.flush()
     except IntegrityError:
-        # A concurrent create won the partial unique index for this provider.
+        # A concurrent create won the partial unique index for this provider. The attempt is kept.
         db.rollback()
         raise CredentialConflictError("An active credential already exists for this provider. Rotate it instead.") from None
     _audit(
@@ -216,6 +263,7 @@ def create_provider_credential(
         action=ACTION_CREATED,
         credential=credential,
         correlation_id=correlation_id,
+        requested=requested,
     )
     return credential
 
@@ -235,6 +283,16 @@ def rotate_provider_credential(
         raise CredentialConflictError("A revoked credential cannot be rotated. Create a new credential.")
     value = _validate_secret(secret)
 
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=ACTION_ROTATED,
+        credential_id=credential.id,
+        provider_key=credential.provider_key,
+        version=credential.version + 1,
+        correlation_id=correlation_id,
+    )
     credential.version += 1
     _seal(credential, value)
     credential.rotated_by_user_id = actor_user_id
@@ -247,6 +305,7 @@ def rotate_provider_credential(
         action=ACTION_ROTATED,
         credential=credential,
         correlation_id=correlation_id,
+        requested=requested,
     )
     return credential
 
@@ -264,6 +323,16 @@ def revoke_provider_credential(
     if credential.status != STATUS_ACTIVE:
         raise CredentialConflictError("Provider credential is already revoked.")
 
+    requested = _requested(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=ACTION_REVOKED,
+        credential_id=credential.id,
+        provider_key=credential.provider_key,
+        version=credential.version,
+        correlation_id=correlation_id,
+    )
     credential.status = STATUS_REVOKED
     credential.ciphertext = None
     credential.encryption_key_id = None
@@ -278,6 +347,7 @@ def revoke_provider_credential(
         action=ACTION_REVOKED,
         credential=credential,
         correlation_id=correlation_id,
+        requested=requested,
     )
     return credential
 

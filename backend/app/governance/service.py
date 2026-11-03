@@ -10,6 +10,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
@@ -96,6 +101,27 @@ def set_capability_enabled(
     before = row.is_enabled if row is not None else CAPABILITY_BY_KEY[capability_key].default_enabled
     previous_version = row.policy_version if row is not None else 0
 
+    # Recorded and committed before the change. If this write fails, the switch is not changed (WP3).
+    requested = persist_independent_audit_event(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        event_type=GOVERNANCE_EVENT_TYPE,
+        action=GOVERNANCE_CAPABILITY_ACTION,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key="governance.capabilities.manage",
+        resource_type="organization_capability",
+        resource_id=capability_key,
+        correlation_id=correlation_id,
+        metadata={
+            "capability": capability_key,
+            "previous_state": before,
+            "requested_state": is_enabled,
+            "source": GOVERNANCE_SOURCE_SETTINGS_API,
+        },
+    )
+
     if row is None:
         row = OrganizationCapabilitySetting(
             organization_id=organization_id,
@@ -118,10 +144,12 @@ def set_capability_enabled(
             event_type=GOVERNANCE_EVENT_TYPE,
             action=GOVERNANCE_CAPABILITY_ACTION,
             decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
             permission_key="governance.capabilities.manage",
             resource_type="organization_capability",
             resource_id=capability_key,
-            correlation_id=correlation_id,
+            correlation_id=requested.correlation_id,
             event_metadata=json.dumps(
                 {
                     "capability": capability_key,

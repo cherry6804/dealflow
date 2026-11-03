@@ -249,7 +249,8 @@ def test_an_unchanged_value_writes_nothing(owned) -> None:
         audits = db.scalars(select(AuditEvent).where(
             AuditEvent.organization_id == organization_id,
             AuditEvent.action == THRESHOLD_SETTINGS_ACTION)).all()
-    assert len(audits) == 1
+    # Only the first, real change writes records: one requested and one completed. The repeat writes none.
+    assert sorted(item.outcome for item in audits) == ["completed", "requested"]
 
 
 def test_a_change_is_audited_with_before_and_after_values(owned) -> None:
@@ -258,21 +259,22 @@ def test_a_change_is_audited_with_before_and_after_values(owned) -> None:
     _set_thresholds(organization_id, owner_id, [60, 90, 100])
 
     with SessionLocal() as db:
-        audits = sorted(
+        completed = sorted(
             db.scalars(select(AuditEvent).where(
                 AuditEvent.organization_id == organization_id,
-                AuditEvent.action == THRESHOLD_SETTINGS_ACTION)).all(),
+                AuditEvent.action == THRESHOLD_SETTINGS_ACTION,
+                AuditEvent.outcome == "completed")).all(),
             key=lambda item: json.loads(item.event_metadata)["new_version"],
         )
-    assert len(audits) == 2
+    assert len(completed) == 2
 
-    latest = json.loads(audits[-1].event_metadata)
+    latest = json.loads(completed[-1].event_metadata)
     assert latest["before"] == [50, 80, 100]
     assert latest["after"] == [60, 90, 100]
     assert latest["previous_version"] == 1
     assert latest["new_version"] == 2
-    assert audits[-1].user_id == owned[1]
-    assert audits[-1].permission_key == "governance.budgets.manage"
+    assert completed[-1].user_id == owned[1]
+    assert completed[-1].permission_key == "governance.budgets.manage"
 
 
 # --- Enforcement on usage ------------------------------------------------------------------------
