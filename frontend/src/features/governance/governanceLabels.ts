@@ -27,6 +27,21 @@ export const REASON_LABELS: Record<string, string> = {
   capability_disabled: "Turned off",
   provider_not_connected: "No verified provider connection",
   consent_not_configured: "Consent policy not configured",
+  entitlement_not_defined: "Not included in your plan yet",
+  approval_not_available: "Needs approval, which is not available yet",
+  budget_gate_not_available: "Billable use needs a budget, which is not available yet",
+  actor_required: "Runs only for a signed-in user",
+  actor_not_authorized: "You do not have permission for this action",
+  membership_inactive: "Your membership in this organization is not active",
+  resource_not_active: "Not published and active",
+  target_organization_mismatch: "This record belongs to another organization",
+  wrong_organization: "Your session is not authorized for this organization",
+  entitlement_unverified: "Your subscription could not be verified",
+  entitlement_missing: "Your plan does not include this feature",
+  entitlement_disabled: "This feature is turned off for your plan",
+  trial_expired: "The trial has ended",
+  subscription_not_active: "The subscription is not active",
+  product_membership_inactive: "Your access to this product is not active",
 };
 
 export const UNIT_LABELS: Record<string, string> = {

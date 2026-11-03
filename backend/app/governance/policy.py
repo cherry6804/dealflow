@@ -5,16 +5,22 @@ It fails closed. An unknown capability, a disabled master or capability switch, 
 gate whose infrastructure is not built yet all produce a denial with a stable reason
 code. The frontend never decides; every execution entry point calls this engine.
 
-Gates implemented here:
-1. Capability is known to the catalogue.
-2. Master and capability switches are enabled, checked from the top of the chain.
-3. Capabilities that need a provider are denied until a provider connection exists
-   (no provider integration is built yet, so these always deny).
-4. Capabilities that need consent are denied until a consent model exists (not built).
+Gates, in evaluation order (the first failing gate decides the reason):
+1. The capability is known to the catalogue.
+2. An executable capability declares a SIBVO plan feature. Without one it is denied
+   (fail closed); the entitlement check then reads SIBVO's attested snapshot.
+3. Master and capability switches are enabled, checked from the top of the chain.
+4. A capability that requires approval is denied: no approval model exists (DFR1-025).
+5. A capability that needs a provider is denied: no provider connection model exists.
+6. A capability that needs consent is denied: no consent model exists.
 
-Gates not implemented in this slice, and therefore not claimed: SIBVO entitlement,
-provider health, resource publication and activation, per-actor permission, budgets,
-rate limits and human approval. They are listed in the E13 documentation as blocked.
+Execution callers use ``app.governance.execution_gate.authorize_execution``, which adds the
+actor, target and resource checks, the billing check, and an audit record for every decision.
+This module is the policy only. It is also used to display capability state.
+
+Not implemented, and therefore not claimed: provider health, consent and channel policy,
+approval, budgets and usage limits for billable work (DFR1-017), rate and concurrency limits,
+and in-flight cancellation for runs that outlast a request. They are blocked in the E13 document.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from app.auth.dependencies import CurrentUserContext
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
     CAPABILITY_BY_KEY,
+    CapabilityCategory,
     CapabilityDefinition,
     ancestry,
 )
@@ -49,6 +56,8 @@ REASON_MASTER_DISABLED = "master_disabled"
 REASON_CAPABILITY_DISABLED = "capability_disabled"
 REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
 REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
+REASON_ENTITLEMENT_NOT_DEFINED = "entitlement_not_defined"
+REASON_APPROVAL_NOT_AVAILABLE = "approval_not_available"
 
 _EXPLANATIONS: dict[str, str] = {
     REASON_ALLOWED: "The capability is enabled for this organization.",
@@ -60,6 +69,12 @@ _EXPLANATIONS: dict[str, str] = {
     ),
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
+    ),
+    REASON_ENTITLEMENT_NOT_DEFINED: (
+        "This capability has no confirmed plan feature, so it cannot run."
+    ),
+    REASON_APPROVAL_NOT_AVAILABLE: (
+        "This capability needs human approval, which is not available yet."
     ),
     REASON_ENTITLEMENT_UNVERIFIED: (
         "Your subscription could not be verified. Sign in again or try later."
@@ -123,9 +138,9 @@ def evaluate_capability(
 ) -> PolicyDecision:
     """Return whether ``capability_key`` may execute for ``organization_id`` now.
 
-    Gates run in this order: entitlement (SIBVO snapshot), organization master and child
-    switches, provider, consent. The first failing gate decides the reason. A capability
-    that needs an entitlement and has no verifiable snapshot is denied.
+    Gates run in this order: entitlement (SIBVO snapshot, for capabilities that declare a feature),
+    organization master and child switches, undefined entitlement, approval, provider, consent. The
+    first failing gate decides the reason. A capability with no verifiable snapshot is denied.
     """
 
     definition: CapabilityDefinition | None = CAPABILITY_BY_KEY.get(capability_key)
@@ -169,6 +184,20 @@ def evaluate_capability(
             return _decision(
                 definition.key, organization_id, reason, policy_version, correlation_id
             )
+
+    # Checked after the switches, so a disabled capability reports "turned off" first. An
+    # executable capability without a confirmed plan feature can never run.
+    if definition.category is not CapabilityCategory.MASTER and definition.entitlement_feature is None:
+        return _decision(
+            definition.key, organization_id, REASON_ENTITLEMENT_NOT_DEFINED, policy_version,
+            correlation_id,
+        )
+
+    if definition.requires_approval:
+        return _decision(
+            definition.key, organization_id, REASON_APPROVAL_NOT_AVAILABLE, policy_version,
+            correlation_id,
+        )
 
     if definition.requires_provider:
         return _decision(

@@ -21,8 +21,8 @@ from app.governance.capabilities import (
 from app.governance.policy import (
     REASON_ALLOWED,
     REASON_CAPABILITY_DISABLED,
+    REASON_ENTITLEMENT_NOT_DEFINED,
     REASON_MASTER_DISABLED,
-    REASON_PROVIDER_NOT_CONNECTED,
     REASON_UNKNOWN_CAPABILITY,
     evaluate_capability,
 )
@@ -121,7 +121,9 @@ def test_disabling_the_master_blocks_its_children_immediately(tenant) -> None:
     assert decision.reason_code == REASON_MASTER_DISABLED
 
 
-def test_ai_capability_fails_closed_without_a_provider(tenant) -> None:
+def test_ai_capability_fails_closed_without_a_confirmed_plan_feature(tenant) -> None:
+    # No SIBVO plan feature is confirmed for AI capabilities, so they cannot run even when the
+    # switches are on. The provider gate is exercised separately with a test-only definition.
     organization_id, _ = tenant
     _set(tenant, AI_MASTER, True)
     _set(tenant, "ai.assistant", True)
@@ -129,17 +131,17 @@ def test_ai_capability_fails_closed_without_a_provider(tenant) -> None:
     decision = _decide(organization_id, "ai.assistant")
 
     assert decision.allowed is False
-    assert decision.reason_code == REASON_PROVIDER_NOT_CONNECTED
+    assert decision.reason_code == REASON_ENTITLEMENT_NOT_DEFINED
 
 
-def test_channel_capability_fails_closed_without_a_provider(tenant) -> None:
+def test_channel_capability_fails_closed_without_a_confirmed_plan_feature(tenant) -> None:
     organization_id, _ = tenant
     _set(tenant, "channels.email", True)
 
     decision = _decide(organization_id, "channels.email")
 
     assert decision.allowed is False
-    assert decision.reason_code == REASON_PROVIDER_NOT_CONNECTED
+    assert decision.reason_code == REASON_ENTITLEMENT_NOT_DEFINED
 
 
 def test_policy_version_increases_on_every_change(tenant) -> None:

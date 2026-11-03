@@ -18,7 +18,7 @@ from app.db.models.deal import Deal
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
-from app.governance.policy import evaluate_capability
+from app.governance.execution_gate import ExecutionRequest, authorize_execution
 from app.notifications.service import create_notification
 
 
@@ -267,6 +267,35 @@ def _notify_automation_execution(
     )
 
 
+def _gate_step(
+    db: Session,
+    *,
+    organization_id: UUID,
+    user_context: CurrentUserContext | None,
+    deal: Deal,
+    stage: str,
+    resource_type: str,
+    resource_id: str,
+    resource_active: bool,
+) -> bool:
+    """Run one centralized execution decision for a deal-created automation step."""
+    decision = authorize_execution(
+        db,
+        ExecutionRequest(
+            organization_id=organization_id,
+            capability_key=AUTOMATION_DEAL_CREATED_RULES,
+            actor=user_context,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_organization_id=deal.organization_id,
+            resource_active=resource_active,
+            required_permission="deals.create",
+            stage=stage,
+        ),
+    )
+    return decision.allowed
+
+
 def execute_deal_created_automations(
     db: Session,
     *,
@@ -289,16 +318,19 @@ def execute_deal_created_automations(
             "The deal does not belong to the requested organization."
         )
 
-    # Governance gate (DFR1-006): deal-created automations are disabled by default.
-    # A denial creates no executions and leaves the deal untouched, so manual CRM
-    # work continues when automation is off.
-    decision = evaluate_capability(
+    # Governance gate (DFR1-006): deal-created automations are disabled by default. A denial
+    # creates no executions and leaves the deal untouched, so manual CRM work continues.
+    # The gate is audited whether it allows or denies.
+    if not _gate_step(
         db,
         organization_id=organization_id,
-        capability_key=AUTOMATION_DEAL_CREATED_RULES,
         user_context=user_context,
-    )
-    if not decision.allowed:
+        deal=deal,
+        stage="initial",
+        resource_type="deal",
+        resource_id=str(deal.id),
+        resource_active=True,
+    ):
         return []
 
     rules = list(
@@ -315,7 +347,22 @@ def execute_deal_created_automations(
 
     executions: list[AutomationExecution] = []
 
-    for rule in rules:
+    for index, rule in enumerate(rules):
+        if index > 0:
+            # In-flight revalidation: a switch turned off, a lost entitlement or a paused rule
+            # during this run stops the remaining rules. Rules already run are kept.
+            db.refresh(rule)
+            if not _gate_step(
+                db,
+                organization_id=organization_id,
+                user_context=user_context,
+                deal=deal,
+                stage="revalidation",
+                resource_type="automation_rule",
+                resource_id=str(rule.id),
+                resource_active=rule.status == AutomationRule.STATUS_ACTIVE,
+            ):
+                break
         try:
             # A savepoint isolates a duplicate insert or a failure in this
             # rule from the surrounding deal-creation transaction.

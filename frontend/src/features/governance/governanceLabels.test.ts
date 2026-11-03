@@ -22,6 +22,12 @@ describe("governance labels", () => {
     expect(reasonLabel("something_new")).toBe("Unavailable");
   });
 
+  it("explains every execution gate reason the server can return", () => {
+    for (const code of ["entitlement_not_defined", "approval_not_available", "budget_gate_not_available", "actor_required", "membership_inactive", "resource_not_active"]) {
+      expect(reasonLabel(code)).not.toBe("Unavailable");
+    }
+  });
+
   it("shows token counts as plain numbers, never as currency", () => {
     expect(formatUnitQuantity("tokens_output", 1234567)).toBe((1234567).toLocaleString());
     expect(formatUnitQuantity("tokens_output", 10)).not.toContain("₹");

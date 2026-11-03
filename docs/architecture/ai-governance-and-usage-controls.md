@@ -14,102 +14,133 @@ A to E). DFR1-002 is **not** complete (section 2.6). DFR1-053 is blocked.
 - Dealsflo owns capability switches, retention policies, legal holds, privacy request records, the
   usage ledger, organization budgets, and the audit records of those changes.
 
-## 2. Capability policy (DFR1-006)
+## 2. Capability policy and execution gate (DFR1-006)
+
+Status: **Partial. Not Done.** The gate is centralized and fails closed. Only one optional capability can
+run today: deal-created automation for organizations that have turned it on and whose plan includes
+`workflow_automation`. Every other gate is either verified or is blocked by a dependency that does not
+exist yet (section 2.7). DFR1-006 depends on DFR1-002 (architecture approval, still To Do) and DFR1-005
+(SIBVO contract, still To Do in the backlog), so it cannot be closed by code alone.
 
 ### 2.1 Catalogue
 
-`app/governance/capabilities.py` is code, so a new capability needs a reviewed gate set. Every
-capability is disabled by default.
+`app/governance/capabilities.py` is code. Every capability is disabled by default. A capability can be
+executable only when it declares a SIBVO plan feature (`entitlement_feature`).
 
-| Key | Parent | SIBVO feature | Provider gate | Consent gate |
-|---|---|---|---|---|
-| `ai.master` | none | | | |
-| `automation.master` | none | | | |
-| `ai.assistant`, `ai.agents`, `ai.workflow_execution`, `ai.predictions`, `ai.content_generation`, `ai.document_processing` | `ai.master` | none defined yet | yes | |
-| `ai.voice` | `ai.master` | none defined yet | yes | yes |
-| `automation.deal_created_rules` | `automation.master` | `workflow_automation` | | |
-| `channels.whatsapp`, `channels.email`, `channels.sms`, `channels.voice` | none | none defined yet | yes | yes |
+| Key | Parent | SIBVO feature | Provider gate | Consent gate | Approval gate |
+|---|---|---|---|---|---|
+| `ai.master`, `automation.master` | none | none (masters are not executed) | | | |
+| `ai.assistant`, `ai.agents`, `ai.workflow_execution`, `ai.predictions`, `ai.content_generation`, `ai.document_processing` | `ai.master` | **none confirmed** (denied as `entitlement_not_defined`) | yes | | |
+| `ai.voice` | `ai.master` | **none confirmed** | yes | yes | |
+| `automation.deal_created_rules` | `automation.master` | `workflow_automation` | | | |
+| `channels.whatsapp`, `channels.email`, `channels.sms`, `channels.voice` | none | **none confirmed** | yes | yes | |
 
-The SIBVO feature key `workflow_automation` is the existing SIBVO plan feature. A capability without a
-defined SIBVO feature key cannot pass the entitlement gate, so it stays denied.
+Plan feature keys for AI and channels are not in the SIBVO access snapshot contract. Until DFR1-005 confirms
+them, those capabilities cannot run. This is deliberate. Dealsflo does not invent feature keys.
 
-### 2.2 Evaluation sequence
+### 2.2 Policy evaluation (`app/governance/policy.py`)
 
-`app/governance/policy.py::evaluate_capability` returns a `PolicyDecision` with `allowed`,
-`reason_code`, `explanation`, `policy_version` and `correlation_id`. Gates run in this order, and the
-first failing gate decides the reason:
+`evaluate_capability` decides whether a capability is allowed for an organization. Gates run in this order,
+and the first failing gate gives the reason:
 
-1. **Unknown capability:** denied (`unknown_capability`).
-2. **Entitlement** (only where the capability declares a SIBVO feature). `app/governance/entitlement.py`
-   reads the attested session snapshot:
-   - no attested session, or no snapshot (SIBVO unavailable, session revoked): `entitlement_unverified`;
-   - snapshot bound to another organization: `wrong_organization`;
-   - no product role (product membership inactive or suspended): `product_membership_inactive`;
-   - expired trial: `trial_expired`; other non-eligible subscription status: `subscription_not_active`;
-     only `active` and `trialing` are eligible;
-   - malformed or non-list entitlements: `entitlement_unverified`;
-   - feature absent from the plan: `entitlement_missing`; present but disabled: `entitlement_disabled`.
-3. **Organization switches:** walk the chain from the top master down. `master_disabled` above the
-   capability, `capability_disabled` on the capability itself.
-4. **Provider required:** denied (`provider_not_connected`). No provider integration exists.
-5. **Consent required:** denied (`consent_not_configured`). No consent model exists.
-6. Otherwise allowed (`allowed`).
+1. Unknown capability: `unknown_capability`.
+2. Plan feature, for capabilities that declare one, read from SIBVO's attested session snapshot
+   (`app/governance/entitlement.py`, fail closed): `entitlement_unverified`, `wrong_organization`,
+   `product_membership_inactive`, `trial_expired`, `subscription_not_active`, `entitlement_missing`,
+   `entitlement_disabled`.
+3. Organization switches, from the top of the chain: `master_disabled`, `capability_disabled`.
+4. Executable capability with no confirmed plan feature: `entitlement_not_defined`.
+5. Approval required by the catalogue: `approval_not_available`. No approval model exists (DFR1-025).
+6. Provider required: `provider_not_connected`. No provider connection model exists.
+7. Consent required: `consent_not_configured`. No consent model exists.
+8. Otherwise `allowed`.
 
-Denial explanations are generic. They never reveal plan contents or internal policy.
+The policy is also used to show capability state in the settings screen. That display call writes no audit
+record, because it does not authorize anything.
 
-The snapshot is the one E12 validates through SIBVO introspection. Its freshness is bounded by the
-E12 revalidation interval (30 seconds by default). A subscription change in SIBVO can therefore take up
-to that interval to reach Dealsflo. This is an accepted bound, not an immediate revocation.
+### 2.3 The execution gate (`app/governance/execution_gate.py`)
 
-### 2.3 Enforcement points
+Every governed execution calls `authorize_execution`. It is the only path from a policy decision to
+an execution, and it is used by every caller, including internal ones. The checks, in order:
 
-- **Deal-created automation** (`execute_deal_created_automations`, called from `POST /api/v1/deals`)
-  evaluates `automation.deal_created_rules` with the request's user context. A denial returns an empty
-  list and creates no execution. The deal is created normally, so manual CRM work is unaffected.
-- No other execution path is governed, because no other execution path exists (section 11).
+1. Actor present. No actor (background or internal call without a user): `actor_required`.
+2. Session belongs to the organization: `wrong_organization`.
+3. Active membership of the actor in the organization: `membership_inactive`. Revoked access is refused here.
+4. Target resource belongs to the organization: `target_organization_mismatch`.
+5. Target resource is published and active: `resource_not_active`.
+6. Policy (section 2.2).
+7. Billable work: `budget_gate_not_available`. Billable work is refused until DFR1-017 provides budgets.
+8. Actor holds the required permission in the organization, through the existing permission lookup:
+   `actor_not_authorized`.
 
-### 2.4 In-flight policy
+Every decision writes one audit record in the caller's transaction, allowed or denied: action
+`capability.execution`, decision, permission key, resource type and ID, correlation ID, and metadata with
+the capability, reason code, stage, policy version and billable flag. The record holds no payload and no
+personal data beyond the actor's ID.
 
-- A disabled master or capability, or a lost entitlement, takes effect on the next evaluation. Tests
-  show an active rule stops producing executions as soon as its master is turned off, and as soon as the
-  entitlement is missing or disabled.
-- Work already started is not cancelled by this change. The cancel-or-complete policy belongs to the AI
-  runtime (DFR1-019), which is not built.
+### 2.4 Enforcement points
 
-### 2.5 Existing organizations (decision 1)
+- **Deal-created automation** (`execute_deal_created_automations`, called from `POST /api/v1/deals`):
+  - Initial gate before any rule is read. A denial returns no executions and leaves the deal in place, so
+    manual CRM work continues.
+  - Revalidation before each rule after the first (`stage = revalidation`). Each rule's status is read from
+    the database again first. A turned-off switch, a lost entitlement, or a paused rule stops the remaining
+    rules. Rules that already ran are kept.
+  - The required permission is `deals.create`.
+- No other execution path exists in this repository. Scheduled runs, workflow runs, agents, AI calls and
+  channel sends are not built, so there is nothing else to govern yet.
 
-**Decision.** Every existing organization starts with every optional AI and automation capability
-disabled. No migration enables anything. An organization can use a capability only after an authorized
-administrator enables it under the policy.
+### 2.5 In-flight policy
 
-**Why no existing organization has an opt-in.** Before E13 no organization-level automation switch
-existed. No action in the database recorded an enablement. The last-updating user on a rule shows who
-touched the rule, not which action or interface enabled it, so it is not evidence of opt-in and is not
-used.
+- Revalidation happens before each rule. It does not happen between the actions of one rule. An action
+  that has started completes. Deal-created actions are internal follow-ups and notifications, and they
+  run inside the same request, so no external work is in flight when a switch changes.
+- A disabled master or capability, a lost entitlement, or a paused rule takes effect at the next check.
+  Tests show each case stops the remaining rules.
+- Cancel-or-complete for runs that outlast a request belongs to the agent runtime (DFR1-019), which is not built.
 
-**Migration behaviour.** The first E13 migration (`f3a7b9c1d2e4`) enabled automation for every
-organization. The corrective migration `i7f2c9d4e1a8` removes only those unevidenced rows (no actor,
-policy version 1, source `manual`) and grants nothing. After it runs:
+### 2.6 Existing organizations
 
-- every existing organization has no automation switch, so automation is disabled;
-- existing automation rules are preserved with their configuration, status, creator and history;
-- execution history is not read or changed;
-- the migration executes no rule and creates no notification.
+Unchanged from the migration decision. Every existing organization starts with every capability disabled.
+Migration `f3a7b9c1d2e4` enabled automation for every organization. Corrective migration `i7f2c9d4e1a8` removes
+those unevidenced rows and grants nothing. Existing rules are preserved, not executed, and execution history is
+not read or changed. Enablement and revocation are recorded with the actor, previous and new state, policy version,
+source and correlation ID.
 
-**Enablement records.** Every change records the organization, the actor, the capability, the previous
-state, the new state, the timestamp, the policy version, the source (`settings_api`) and a correlation ID.
-Disablement and revocation are recorded the same way, with `action` set to `disabled`.
+### 2.7 Acceptance-criteria gap map (DFR1-006)
 
-### 2.6 ADR-0029 and DFR1-002
+| Criterion | Evidence | Status |
+|---|---|---|
+| Disabled by default, including existing organizations | `default_enabled` is False for every capability; migration `i7f2c9d4e1a8`; `test_a_new_organization_never_runs_deal_automation`; `tests/test_migration_automation_default.py` | Verified |
+| Explicit organization opt-in and revocation | `test_revoking_opt_in_stops_the_next_run_and_is_audited`; enablement audited by `set_capability_enabled` | Verified |
+| Product entitlement and subscription eligibility | `test_an_expired_trial_denies_even_when_switches_are_on`, `test_a_plan_without_the_feature_denies`, `test_a_disabled_plan_feature_denies`, `test_revoked_product_access_denies`, `test_an_unverified_snapshot_fails_closed`, `test_a_session_for_another_organization_is_refused` | Verified for `workflow_automation`. AI and channel plan keys unconfirmed (DFR1-005) |
+| Consent and channel eligibility | `test_a_consent_requirement_denies_while_no_consent_model_exists`; channels deny | Fails closed. Consent model not built |
+| Provider health and configuration | `test_a_provider_requirement_denies_while_no_provider_connection_exists`; AI and channel capabilities deny | Fails closed. Provider connection model not built (DFR1-003, DFR1-004, DFR1-015) |
+| Resource publication and activation | `test_a_draft_or_paused_rule_never_executes`; `test_pausing_a_rule_mid_run_stops_it...`; per-rule revalidation | Verified for deal-created rules. Agent and workflow publication not built (DFR1-019, DFR1-023) |
+| Actor permission and target-resource permission | `test_an_actor_without_the_permission_for_the_action_is_refused`; `test_a_target_from_another_organization_is_refused`; `test_an_inactive_membership_denies...`; `test_another_organizations_deal_cannot_be_executed` | Verified at organization scope. **Record-level permission** (for example, owner-only deals) is not defined by the policy sheet and is not implemented |
+| Usage budgets and limits | `test_billable_work_is_denied_until_the_budget_gate_exists`. No rate, concurrency or step limits | Billable work denied. Budgets, rate and concurrency not built (DFR1-017) |
+| Required approvals | `test_a_capability_that_needs_approval_denies_because_no_approval_exists` | Fails closed. Approval model not built (DFR1-025) |
+| In-flight revalidation and safe stopping | `test_turning_automation_off_mid_run_stops_the_remaining_rules`; `test_each_later_step_is_revalidated_and_audited` | Verified at rule granularity (section 2.5) |
+| Background execution authorization | `test_an_execution_without_an_actor_is_refused`. No scheduler or background executor exists | Verified for the one path that exists. Any future background executor must call `authorize_execution` |
+| Fail-closed behaviour | Unknown capability, unverified snapshot, missing or disabled plan feature, undefined feature, no actor, no membership | Verified |
+| Complete audit of allowed and denied execution | `test_allowed_and_denied_decisions_are_both_audited_with_the_reason` | Verified. Audit is in the caller's transaction, so a rolled-back operation leaves no decision record |
+| Manual CRM works when AI is disabled | `test_manual_deal_creation_still_works_when_automation_is_off`; existing deal API tests | Verified |
 
-- **ADR-0029: Accepted** on 2026-10-30, with amendments A (default policy), B (existing organizations),
-  C (transactional email exemption), D (compatibility) and E (enforcement). The ADR records the
-  enforcement status of each gate and each entry point.
-- **DFR1-002: not complete.** Its acceptance criteria require the architecture diagram, context and
-  container views, data ownership map, API conventions and approved ADRs. ADR-0025, ADR-0026 and
-  ADR-0027 are still Proposed, and the backlog still shows DFR1-002 as To Do. Its status is unchanged.
-- **DFR1-006 cannot be marked complete** while DFR1-002 is open and the remaining gates in section 11 are
-  unimplemented.
+### 2.8 Blockers and external dependencies
+
+1. **DFR1-002**: ADR-0025, ADR-0026 and ADR-0027 are still Proposed. The story stays To Do.
+2. **DFR1-005**: SIBVO plan feature keys for AI and channel capabilities are unconfirmed. Dealsflo will not invent them.
+3. **Provider connection model** (DFR1-003, DFR1-004, DFR1-015): needed for gate 6.
+4. **Consent and channel policy model** (DFR1-034 and channel stories): needed for gate 7.
+5. **Approval model** (DFR1-025, which depends on DFR1-023): needed for gate 5.
+6. **Usage budgets and limits** (DFR1-017): needed before any billable execution.
+7. **Record-level permission scope**: not defined in the policy sheet. Product decision needed.
+
+### 2.9 ADR-0029 and DFR1-002
+
+- **ADR-0029: Accepted** on 2026-10-30, with amendments A to E. Section 2.7 records the enforcement status of each gate.
+- **DFR1-002: not complete.** ADR-0025, ADR-0026 and ADR-0027 are still Proposed.
+- **DFR1-006 cannot be marked complete** while DFR1-002 is open and blockers 2 to 7 in section 2.8 remain.
 
 ## 3. Settings API and permissions
 
@@ -356,7 +387,7 @@ legal-hold bypass by external deletion.
 | Story | Status | Dependency | Owner | Remaining |
 |---|---|---|---|---|
 | DFR1-002 | **Not complete** | ADR-0025, ADR-0026, ADR-0027 still Proposed; diagrams and ownership map not recorded | Engineering and product | Approve the remaining ADRs and record the diagrams and ownership map |
-| DFR1-006 | Partial | DFR1-002 (open), ADR-0029 (Accepted), DFR1-005 (done) | Engineering and product | Consent and channel policy; provider health; publication and activation; actor permission on target; budget and rate gates; approval gate; AI runtime in-flight policy (DFR1-019); gates 3, 7, 8 and 9 for AI |
+| DFR1-006 | Partial | DFR1-002 (To Do: ADR-0025/26/27 Proposed), DFR1-005 (To Do in the backlog; the entitlement check in code exists) | Engineering and product | Provider connection and health (DFR1-003, 004, 015); consent and channel policy; approval model (DFR1-025); budget, rate and concurrency gates (DFR1-017); record-level permission scope; cancel-or-complete for runs that outlast a request (DFR1-019). Section 2.8 lists each blocker |
 | DFR1-017 | Partial | DFR1-015 (AI gateway), DFR1-005 (done) | AI platform (E06) | Gateway producers; running the outbox worker in production; dashboard breakdowns; SIBVO reconciliation (DFR1-053) |
 | DFR1-050 | Partial | DFR1-028, DFR1-035, DFR1-036 | Voice, documents, settings | Export and deletion for the CRM categories (leads, follow-ups, customer profiles, requirements, deals) and anonymization of linked records; export of conversations, calls, transcripts and AI data (no producers); a product decision on retention for contacts; scheduling of `privacy_maintenance`; decisions in section 5.6 |
 | DFR1-053 | Blocked | DFR1-017, DFR1-036, approved SIBVO ingestion contract | SIBVO and Dealsflo | Ingestion, reconciliation, lifecycle tests |
@@ -392,7 +423,7 @@ ADR-0029 Amendment C.
 
 | Story | Status | Reason |
 |---|---|---|
-| DFR1-006 | **Partial** | Foundation, entitlement enforcement and one entry point. DFR1-002 open. Consent, provider, approval and budget gates not implemented for any AI capability. |
+| DFR1-006 | **Partial** | Centralized execution gate (actor, membership, target, policy, billing, permission) with an audit record for every decision. One governed execution path (deal-created automation), revalidated before each rule. AI and channel capabilities fail closed (no confirmed plan feature, no provider or consent model, no approval model). DFR1-002 and DFR1-005 are open. |
 | DFR1-017 | **Partial** | Ledger and budgets verified by tests. Alert delivery to administrators implemented (in-app, outbox worker). No production producer. |
 | DFR1-050 | **Partial** | Background export (contacts, leads, follow-ups, invitations, documents with files), deletion (documents, invitations fully; contacts anonymized), retention for documents and invitations, expiry and cancellation with object removal, audited download, and failure-isolated maintenance. Not built: exporters and executors for most CRM categories, conversations, calls, transcripts and AI data; scheduling; provider deletion (none exists). Section 5 lists each category. |
 | DFR1-053 | **Blocked** | Dependencies not delivered. |
