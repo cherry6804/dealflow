@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
 
+    # AI usage reservations (DFR1-017). A reservation not settled within this time is released by
+    # the cleanup job. The value is operational, not a retention period.
+    usage_reservation_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+
     # Privacy exports (DFR1-050). The expiry is an operating choice, not a legal period.
     privacy_export_ttl_days: int = Field(default=7, ge=1, le=90)
     # Total stored-document bytes one export may include. Above this, documents are not exported.

@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -48,6 +48,7 @@ from app.governance.usage_ledger import (
     budget_period_for,
     budget_status,
     change_budget,
+    usage_breakdown,
 )
 from app.storage import ObjectNotFoundError, get_object_storage
 from app.tenant.dependencies import TenantContext, get_tenant_context
@@ -161,6 +162,8 @@ class BudgetStatusResponse(BaseModel):
     remaining_quantity: int
     utilization_percent: int
     overrun: bool
+    warning_percent: int
+    critical_percent: int
 
 
 class BudgetListResponse(BaseModel):
@@ -171,7 +174,25 @@ class BudgetListResponse(BaseModel):
 
 class BudgetUpdateRequest(BaseModel):
     limit_quantity: int = Field(..., ge=0)
+    # Optional. Omitted thresholds keep their current values (70 and 85 for a new budget).
+    warning_percent: int | None = Field(default=None, ge=1, le=98)
+    critical_percent: int | None = Field(default=None, ge=2, le=99)
     confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+class UsageBreakdownRow(BaseModel):
+    group: str
+    unit: str
+    reserved_quantity: int
+    recorded_quantity: int
+    entries: int
+
+
+class UsageBreakdownResponse(BaseModel):
+    period_start: date
+    period_end: date
+    group_by: str
+    items: list[UsageBreakdownRow]
 
 
 def _budget_response(result) -> BudgetStatusResponse:
@@ -185,6 +206,40 @@ def _budget_response(result) -> BudgetStatusResponse:
         remaining_quantity=result.remaining_quantity,
         utilization_percent=result.utilization_percent,
         overrun=result.overrun,
+        warning_percent=result.warning_percent,
+        critical_percent=result.critical_percent,
+    )
+
+
+@router.get("/usage/breakdown", response_model=UsageBreakdownResponse)
+def get_usage_breakdown(
+    group_by: str = Query(default="capability", pattern="^(capability|unit|provider)$"),
+    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
+    db: Session = Depends(get_db_session),
+) -> UsageBreakdownResponse:
+    """Usage for the current UTC month, grouped by capability, unit or provider. Organization-scoped."""
+    moment = datetime.now(UTC)
+    period = budget_period_for(moment)
+    rows = usage_breakdown(
+        db,
+        organization_id=tenant.organization_id,
+        moment=moment,
+        group_by=group_by,
+    )
+    return UsageBreakdownResponse(
+        period_start=period.start,
+        period_end=period.end,
+        group_by=group_by,
+        items=[
+            UsageBreakdownRow(
+                group=row.group,
+                unit=row.unit,
+                reserved_quantity=row.reserved_quantity,
+                recorded_quantity=row.recorded_quantity,
+                entries=row.entries,
+            )
+            for row in rows
+        ],
     )
 
 
@@ -217,14 +272,20 @@ def set_usage_budget(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usage unit not found.") from None
     moment = datetime.now(UTC)
-    change_budget(
-        db,
-        organization_id=tenant.organization_id,
-        actor_user_id=tenant.membership.user_id,
-        unit=usage_unit,
-        limit_quantity=payload.limit_quantity,
-        moment=moment,
-    )
+    try:
+        change_budget(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            unit=usage_unit,
+            limit_quantity=payload.limit_quantity,
+            moment=moment,
+            warning_percent=payload.warning_percent,
+            critical_percent=payload.critical_percent,
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
     db.commit()
     result = budget_status(db, organization_id=tenant.organization_id, unit=usage_unit, moment=moment)
     if result is None:

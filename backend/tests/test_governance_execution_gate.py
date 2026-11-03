@@ -368,7 +368,7 @@ def test_another_organizations_deal_cannot_be_executed() -> None:
 # --- Budget, approval, provider and consent gates -------------------------------------------------
 
 
-def test_billable_work_is_denied_until_the_budget_gate_exists() -> None:
+def test_billable_work_without_a_budget_reservation_is_denied() -> None:
     ids = _scenario()
     with SessionLocal() as db:
         user = db.get(User, ids["user_id"])
@@ -388,7 +388,7 @@ def test_billable_work_is_denied_until_the_budget_gate_exists() -> None:
             ),
         )
         db.commit()
-    assert decision.reason_code == "budget_gate_not_available"
+    assert decision.reason_code == "budget_reservation_required"
 
 
 def test_a_capability_that_needs_approval_denies_because_no_approval_exists(monkeypatch) -> None:
@@ -627,6 +627,7 @@ def test_allowed_and_denied_decisions_are_both_audited_with_the_reason() -> None
             "stage",
             "policy_version",
             "billable",
+            "budget_unit",
         }
 
 

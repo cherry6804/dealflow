@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -33,6 +34,13 @@ from app.db.models.audit_event import AuditDecision, AuditEvent
 from app.db.models.membership import Membership
 from app.db.models.organization import Organization
 from app.governance.policy import PolicyDecision, evaluate_capability
+from app.governance.usage_ledger import (
+    BudgetExceededError,
+    BudgetNotConfiguredError,
+    IdempotencyConflictError,
+    UsageUnit,
+    reserve,
+)
 from app.tenant.dependencies import TenantContext
 
 GOVERNANCE_AUDIT_EVENT_TYPE = "governance"
@@ -44,7 +52,10 @@ REASON_MEMBERSHIP_INACTIVE = "membership_inactive"
 REASON_TARGET_ORGANIZATION_MISMATCH = "target_organization_mismatch"
 REASON_RESOURCE_NOT_ACTIVE = "resource_not_active"
 REASON_ACTOR_NOT_AUTHORIZED = "actor_not_authorized"
-REASON_BUDGET_GATE_NOT_AVAILABLE = "budget_gate_not_available"
+REASON_BUDGET_RESERVATION_REQUIRED = "budget_reservation_required"
+REASON_BUDGET_NOT_CONFIGURED = "budget_not_configured"
+REASON_BUDGET_EXHAUSTED = "budget_exhausted"
+REASON_USAGE_KEY_CONFLICT = "usage_key_conflict"
 REASON_ALLOWED = "allowed"
 
 _EXPLANATIONS: dict[str, str] = {
@@ -54,11 +65,27 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_TARGET_ORGANIZATION_MISMATCH: "The record does not belong to this organization.",
     REASON_RESOURCE_NOT_ACTIVE: "This automation is not published and active.",
     REASON_ACTOR_NOT_AUTHORIZED: "You do not have permission for this action.",
-    REASON_BUDGET_GATE_NOT_AVAILABLE: (
-        "Billable AI work needs a usage budget, which is not available yet."
+    REASON_BUDGET_RESERVATION_REQUIRED: (
+        "Billable AI work must reserve usage budget before it runs."
+    ),
+    REASON_BUDGET_NOT_CONFIGURED: (
+        "No usage budget is configured for this period, so billable AI work cannot run."
+    ),
+    REASON_BUDGET_EXHAUSTED: "The usage budget for this period is used up.",
+    REASON_USAGE_KEY_CONFLICT: (
+        "This usage reservation key was already used for a different request."
     ),
     REASON_ALLOWED: "The execution is allowed.",
 }
+
+
+@dataclass(frozen=True)
+class BudgetReservation:
+    """Usage the execution needs. The gate reserves it, and the caller settles or releases it."""
+
+    unit: UsageUnit | str
+    quantity: int
+    idempotency_key: str
 
 
 @dataclass(frozen=True)
@@ -74,6 +101,7 @@ class ExecutionRequest:
     resource_active: bool
     required_permission: str | None
     billable: bool = False
+    budget: BudgetReservation | None = None
     # ``initial`` before the first step, ``revalidation`` before each later step.
     stage: str = "initial"
     correlation_id: str | None = None
@@ -129,9 +157,6 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
     if not policy.allowed:
         return policy
 
-    if request.billable:
-        return _denied(request, REASON_BUDGET_GATE_NOT_AVAILABLE, policy.policy_version)
-
     if request.required_permission is not None:
         organization = db.get(Organization, request.organization_id)
         if organization is None:
@@ -141,6 +166,14 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
             db, tenant_context=tenant, permission_key=request.required_permission
         ):
             return _denied(request, REASON_ACTOR_NOT_AUTHORIZED, policy.policy_version)
+
+    if request.billable:
+        # Budget is reserved last, after every other check, so a refused execution never holds usage.
+        if request.budget is None:
+            return _denied(request, REASON_BUDGET_RESERVATION_REQUIRED, policy.policy_version)
+        reservation_refusal = _reserve_budget(db, request, policy.policy_version)
+        if reservation_refusal is not None:
+            return reservation_refusal
 
     return PolicyDecision(
         capability_key=request.capability_key,
@@ -153,7 +186,33 @@ def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
     )
 
 
+def _reserve_budget(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
+    """Reserve the requested usage. Return a denial when it cannot be reserved, otherwise None."""
+    assert request.budget is not None
+    try:
+        reserve(
+            db,
+            organization_id=request.organization_id,
+            unit=request.budget.unit,
+            quantity=request.budget.quantity,
+            idempotency_key=request.budget.idempotency_key,
+            occurred_at=datetime.now(UTC),
+            capability_key=request.capability_key,
+            correlation_id=request.correlation_id,
+        )
+    except BudgetNotConfiguredError:
+        return _denied(request, REASON_BUDGET_NOT_CONFIGURED, policy_version)
+    except BudgetExceededError:
+        return _denied(request, REASON_BUDGET_EXHAUSTED, policy_version)
+    except IdempotencyConflictError:
+        return _denied(request, REASON_USAGE_KEY_CONFLICT, policy_version)
+    return None
+
+
 def _audit(db: Session, request: ExecutionRequest, decision: PolicyDecision) -> None:
+    budget_unit = None
+    if request.budget is not None:
+        budget_unit = UsageUnit(request.budget.unit).value
     db.add(
         AuditEvent(
             user_id=request.actor.user_id if request.actor is not None else None,
@@ -172,6 +231,7 @@ def _audit(db: Session, request: ExecutionRequest, decision: PolicyDecision) -> 
                     "stage": request.stage,
                     "policy_version": decision.policy_version,
                     "billable": request.billable,
+                    "budget_unit": budget_unit,
                 },
                 sort_keys=True,
             ),

@@ -61,6 +61,13 @@ class AiUsageEvent(Base):
     correlation_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Capability that caused the usage (for example "ai.assistant"), for breakdowns. Null means
+    # the producer did not attribute it, and breakdowns show it as unattributed.
+    capability_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Reservations expire so an unsettled reservation cannot hold a budget forever.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Why a reservation was released: "expired" from cleanup, or the caller's reason.
+    release_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -23,7 +23,7 @@ describe("governance labels", () => {
   });
 
   it("explains every execution gate reason the server can return", () => {
-    for (const code of ["entitlement_not_defined", "approval_not_available", "budget_gate_not_available", "actor_required", "membership_inactive", "resource_not_active"]) {
+    for (const code of ["entitlement_not_defined", "approval_not_available", "budget_reservation_required", "budget_exhausted", "actor_required", "membership_inactive", "resource_not_active"]) {
       expect(reasonLabel(code)).not.toBe("Unavailable");
     }
   });

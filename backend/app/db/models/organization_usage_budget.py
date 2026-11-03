@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -34,6 +35,10 @@ class OrganizationUsageBudget(Base):
             "period_start",
             name="uq_organization_usage_budgets_org_unit_period",
         ),
+        CheckConstraint(
+            "warning_percent >= 1 AND critical_percent > warning_percent AND critical_percent < 100",
+            name="ck_organization_usage_budgets_thresholds",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -47,6 +52,9 @@ class OrganizationUsageBudget(Base):
     reserved_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     consumed_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_alert_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Configurable alert thresholds. The 100 percent (exhausted) alert is fixed.
+    warning_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=70, server_default="70")
+    critical_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=85, server_default="85")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

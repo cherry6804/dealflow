@@ -29,6 +29,23 @@ export interface BudgetStatus {
   remaining_quantity: number;
   utilization_percent: number;
   overrun: boolean;
+  warning_percent: number;
+  critical_percent: number;
+}
+
+export interface UsageBreakdownRow {
+  group: string;
+  unit: string;
+  reserved_quantity: number;
+  recorded_quantity: number;
+  entries: number;
+}
+
+export interface UsageBreakdown {
+  period_start: string;
+  period_end: string;
+  group_by: string;
+  items: UsageBreakdownRow[];
 }
 
 export interface BudgetList {
@@ -103,11 +120,21 @@ export const governanceApi = {
     return api.get<BudgetList>("/governance/usage/budgets");
   },
 
-  setBudget(unit: string, limitQuantity: number): Promise<BudgetStatus> {
+  setBudget(
+    unit: string,
+    limitQuantity: number,
+    thresholds?: { warningPercent: number; criticalPercent: number },
+  ): Promise<BudgetStatus> {
     return api.put<BudgetStatus>(`/governance/usage/budgets/${unit}`, {
       limit_quantity: limitQuantity,
+      warning_percent: thresholds?.warningPercent,
+      critical_percent: thresholds?.criticalPercent,
       confirm: true,
     });
+  },
+
+  getUsageBreakdown(groupBy: "capability" | "unit" | "provider"): Promise<UsageBreakdown> {
+    return api.get<UsageBreakdown>(`/governance/usage/breakdown?group_by=${groupBy}`);
   },
 
   listDataCategories(): Promise<DataCategory[]> {

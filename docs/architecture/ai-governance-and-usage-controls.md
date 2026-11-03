@@ -191,82 +191,129 @@ does not belong to is refused with 403. Owner-only keys are in `OWNER_ONLY_PERMI
 
 ## 4. AI usage ledger and budgets (DFR1-017)
 
+Status: **Partial. Not Done.** The ledger, its lifecycle, idempotency, expiry, thresholds, breakdowns and
+the execution-gate integration are implemented and tested. Nothing real is metered yet, because no AI
+producer exists (DFR1-015). SIBVO usage reconciliation (DFR1-053) is blocked: no contract has been approved,
+and nothing in the codebase calls SIBVO for usage.
+
 ### 4.1 Schema
 
-- `ai_usage_events`: unique on `(organization_id, idempotency_key)`. Unit, reserved quantity, actual
-  quantity, status (`reserved`, `recorded`, `released`, `reversed`), provider, model, task type, user,
-  agent, workflow, execution, correlation ID, currency, occurred-at.
-- `organization_usage_budgets`: unique on `(organization_id, unit, period_start)`. Limit, reserved,
-  consumed, and the highest alert threshold already announced.
+- `ai_usage_events`: unique on `(organization_id, idempotency_key)`. Unit, reserved quantity, actual quantity,
+  status (`reserved`, `recorded`, `released`, `reversed`), provider, model, task type, user, agent, workflow,
+  execution, correlation ID, currency, occurred-at, **capability key** (null when unattributed), **expiry**
+  (set for reservations), and **release reason** (for example `expired`).
+- `organization_usage_budgets`: unique on `(organization_id, unit, period_start)`. Limit, reserved, consumed,
+  highest alert already announced, and **warning and critical thresholds**. A check constraint enforces
+  `1 <= warning < critical < 100`.
+- Migration `k2b7d4e9a1c3` (after `j1a6e3c9b4d2`). Additive: new nullable columns, an index on
+  `(status, expires_at)`, two threshold columns with defaults 70 and 85, and the constraint. Existing rows keep
+  their values. Downgrade drops only these columns.
 
 ### 4.2 Units
 
 `tokens_input`, `tokens_output`, `audio_ms`, `images`, `document_pages`, `provider_cost_minor`,
 `customer_credits`. Each is an integer in its own unit. Provider cost is in minor currency units.
-Provider cost and customer credits never share a budget.
+Provider cost and customer credits never share a budget, and breakdowns never sum units together.
 
 ### 4.3 Lifecycle
 
-| Operation | Budget effect | Repeat call |
-|---|---|---|
-| `reserve` | `reserved += q`. Refused when no budget exists (`BudgetNotConfiguredError`) or `q > remaining` (`BudgetExceededError`). | Returns the existing entry. |
-| `settle` | `reserved -= reserved_q`; `consumed += actual`. Actual above the reservation is recorded as overrun. | Returns the recorded entry. |
-| `release` | `reserved -= reserved_q`. Used for failed or cancelled work. | Returns the released entry. |
-| `record` | `consumed += q`, even above the limit. Used for usage reported after the fact. | Returns the existing entry; no second count. |
-| `reverse` | `consumed -= quantity`. The row is kept with status `reversed`. | Returns the reversed entry. |
+| Operation | Budget effect | Repeat with the same key and unit and quantity | Repeat with a different unit or quantity |
+|---|---|---|---|
+| `reserve` | `reserved += q`. Refused when no budget exists (`BudgetNotConfiguredError`) or `q > remaining` (`BudgetExceededError`). The entry expires after `usage_reservation_ttl_seconds`. | Returns the existing entry. | Refused (`IdempotencyConflictError`). Nothing changes. |
+| `settle` | `reserved -= reserved_q`; `consumed += actual`. Actual above the reservation is recorded as overrun. | Returns the recorded entry. | Not applicable. |
+| `release` | `reserved -= reserved_q`. Records a reason, for example `failed` or `entitlement_removed`. | Returns the released entry. | Not applicable. |
+| `record` | `consumed += q`, even above the limit. For usage reported after the fact. | Returns the existing entry; no second count. | Refused. |
+| `reverse` | `consumed -= quantity`. The row is kept with status `reversed`. | Returns the reversed entry. | Not applicable. |
+| `release_expired` | `reserved -= reserved_q` for each reservation whose expiry has passed. Status `released`, reason `expired`. Audited. | Released entries are skipped. | Not applicable. |
 
-Budget rows are locked (`SELECT ... FOR UPDATE`) before any change. A concurrent test runs two
-reservations against one budget; exactly one is refused.
+**Concurrency.** Budget rows are locked (`SELECT ... FOR UPDATE`) before any change. Entries are locked before
+settlement, release, reversal and expiry, and the lock order is always entry then budget. `reserve` and
+`record` insert the new entry inside a savepoint first. If a concurrent request with the same key wins the race,
+the unique index refuses the insert, nothing else has changed, and the winner's entry is returned or the
+conflict is reported. Expiry locks entries with `SKIP LOCKED`, so two cleanup runs never work on one entry.
 
-### 4.4 Threshold alerts: delivery status
+**Expiry.** A reservation not settled within `USAGE_RESERVATION_TTL_SECONDS` (default 900, range 60 to 86400) is
+released by `python -m app.governance.usage_maintenance`. That default is an operating choice, not a legal period.
+Settling or releasing an expired entry is refused, so its quantity is never counted twice. Cleanup is platform-wide and
+idempotent, and it runs in batches, each committed on its own. Nothing schedules the job in this repository, so
+until a scheduler runs it, an unsettled reservation holds its budget. Its quantity is never counted as consumed.
 
-`70`, `85` and `100` percent thresholds enqueue `ai.usage.threshold_reached` to the transactional outbox.
-One event is enqueued per period at the highest threshold newly crossed.
+### 4.4 Thresholds and alerts
 
-**Delivery.** The outbox worker registers `deliver_usage_threshold_alert`
-(`app/governance/alert_delivery.py`). It creates an **in-app notification** for each active member whose
-role grants `governance.budgets.manage`. It sends no email, SMS, or other external message. Notifications
-are keyed by event, recipient and threshold, so a retry does not duplicate them. An administrator who has
-turned off notifications for this type is skipped, which is their preference.
+- Warning and critical thresholds are configurable per budget (`PUT /api/v1/governance/usage/budgets/{unit}` with
+  optional `warning_percent` and `critical_percent`). Valid values are `1 <= warning < critical < 100`. The 100 percent
+  (exhausted) alert is fixed. A change applies to future crossings.
+- The highest threshold newly crossed by a change is announced once per budget per period. A change crossing several
+  thresholds announces only the highest. Repeats are not announced again.
+- Delivery is an **in-app notification** to each administrator (`governance.budgets.manage`), through the outbox
+  (`deliver_usage_threshold_alert`). Retries are safe, and a failure to notify is retried and then dead-lettered.
+  No email or other external message is sent. The outbox worker must be deployed to deliver anything (section 4.6).
+- Budget changes are audited with the before and after limit and thresholds.
 
-**Failure.** If no notification can be created (no administrator, or every administrator has notifications
-off), the handler raises. The event is retried and then dead-lettered, so the failure stays visible. The
-event is marked `delivered` only after the handler returns without error.
+### 4.5 Breakdowns
 
-**The worker must run.** Delivery happens only in the outbox worker process (`python -m app.outbox.worker`).
-The repository defines no deployment of that worker, so until an operator runs it, an alert remains pending.
-An enqueued alert is not a delivered alert.
+`GET /api/v1/governance/usage/breakdown?group_by=capability|unit|provider` (`governance.usage.read`). The current UTC
+calendar month. Only live entries count: reservations not yet settled, and recorded usage. Released, expired and
+reversed entries are excluded. Each row shows recorded and reserved quantities and the entry count, per unit.
+Entries without a capability or provider are shown as `unattributed`. Totals are organization-scoped.
 
-**Tested.** `tests/test_usage_alert_delivery.py`: delivery to the administrator and `delivered` status;
-no notification for a user without the permission; idempotent redelivery; and dead-lettering when no
-administrator exists.
+### 4.6 Execution gate integration (DFR1-006)
 
-### 4.5 Verification (what the tests show)
+A billable execution must reserve budget through the central gate (`app/governance/execution_gate.py`).
+`ExecutionRequest.budget` carries the unit, quantity and idempotency key. The gate reserves last, after
+every other check, so a refused execution never holds usage. Refusals:
 
-| Property | Evidence |
+| Reason code | Meaning |
 |---|---|
-| Idempotency under duplicate events | Repeated reserve, settle, release, record and reverse calls change nothing. `test_a_delayed_provider_report_delivered_twice_is_counted_once`. |
-| Concurrent reservations | `test_concurrent_reservations_cannot_exceed_the_limit` (two threads, PostgreSQL row lock). |
-| Reserve / settle / release / reverse | Lifecycle tests, including partial settlement (60 reserved, 25 used, 35 returned). |
-| Failed and partially completed executions | Release on failure; settlement below the reservation returns the difference; settlement above it is recorded as overrun. |
-| Alert deduplication | Each of 70, 85 and 100 fires once; a single change crossing several thresholds announces only the highest. |
-| Period boundaries and timezone | Calendar months in UTC. `test_period_is_decided_in_utc_not_local_time`. |
-| Provider cost vs customer credits | Separate units and budgets (`test_units_are_budgeted_independently`). |
-| No double counting during retries | Repeated settle, release and record calls are no-ops. |
-| Tenant isolation | Same idempotency key in two organizations creates two entries; cross-tenant budget read and change refused. |
+| `budget_reservation_required` | Billable execution with no budget reservation requested. |
+| `budget_not_configured` | No budget for the unit in this period. |
+| `budget_exhausted` | The reservation would exceed the remaining budget. |
+| `usage_key_conflict` | The key was already used for a different unit or quantity. |
 
-### 4.6 Missing AI gateway producers
+The caller owns the reservation after an allowed decision. It must settle it when the work completes, or release it
+when the work fails or the run stops. A run stopped by a removed entitlement releases its reservation (tested).
 
-No producer exists in the codebase, so no real usage is recorded. Every production usage path is
-missing:
+**No producer calls the gate with billable work.** No AI gateway, agent, voice or workflow runtime exists.
 
-- AI gateway (DFR1-015): text, embedding, speech and multimodal calls. It must emit reserve, settle or
-  release for each billable call, with provider, model, tokens, audio duration, image count, document
-  pages and provider cost, and it must reuse the call's idempotency key on retry.
-- Agent runtime (DFR1-019), workflow runtime, voice (DFR1-027, DFR1-028): all bill through the gateway.
-- SIBVO usage summaries and reconciliation (DFR1-053): blocked on the approved contract.
+### 4.7 Acceptance-criteria gap map (DFR1-017)
 
-No usage data has been fabricated.
+| Criterion | Evidence | Status |
+|---|---|---|
+| Accurate organization-scoped usage ledger | Schema; `test_usage_and_idempotency_are_scoped_to_one_organization`; breakdown isolation test | Verified |
+| Idempotent usage recording | `test_repeating_a_reservation_key_changes_nothing`; `test_a_delayed_provider_report_delivered_twice_is_counted_once`; `test_a_repeated_reservation_with_the_same_quantity_returns_the_same_entry` | Verified |
+| Duplicate and conflicting idempotency keys | `test_a_conflicting_reservation_quantity_is_refused_and_changes_nothing`; `test_a_conflicting_unit_for_the_same_key_is_refused`; `test_a_conflicting_recording_for_an_existing_key_is_refused`; `test_two_simultaneous_first_requests_with_one_key_create_one_entry` | Verified (PostgreSQL) |
+| Reservation, settlement, release, reversal | `tests/test_usage_ledger.py` lifecycle tests | Verified |
+| Concurrency-safe budget enforcement | `test_concurrent_reservations_cannot_exceed_the_limit`; `test_concurrent_reservations_at_the_limit_admit_only_what_fits` | Verified (PostgreSQL) |
+| Reservation expiry and automated cleanup | `test_an_unsettled_reservation_is_released_at_expiry...`; `test_cleanup_is_idempotent...`; `test_settling_an_expired_reservation_is_refused...`; `test_the_cleanup_job_releases...` | Verified. **Not scheduled** (section 4.3) |
+| Organization budgets | `configure_budget`, `change_budget`, `PUT /usage/budgets/{unit}` | Verified |
+| Configurable warning and critical thresholds | `test_configured_thresholds_drive_the_alerts`; `test_invalid_threshold_pairs_are_refused`; `test_the_default_thresholds_are_70_and_85` | Verified |
+| Threshold transitions and duplicate alert prevention | `test_threshold_alerts_fire_once...`; `test_repeated_crossings_do_not_duplicate_alerts`; `test_a_threshold_is_announced_once_per_period_even_after_settlement` | Verified |
+| In-app budget alerts and delivery reliability | `tests/test_usage_alert_delivery.py` (delivery, idempotent redelivery, dead-lettering). Outbox worker must run | Verified in tests. **Not deployed** |
+| Accurate usage breakdowns by capability and period | `test_breakdowns_group_by_capability_unit_and_provider...`; `test_breakdowns_are_organization_scoped`. Current month only | Verified for the current period. Period selection not built |
+| Dashboards | Usage panel: budgets, thresholds and breakdown table | Verified in unit tests. Not browser-verified |
+| Safe behaviour when budgets are exhausted | `test_exhausted_budget_refuses_new_work_until_capacity_is_released`; `test_gate_denies_billable_work_when_the_budget_is_exhausted...` | Verified |
+| Integration with the DFR1-006 gate | `test_billable_work_reserves_budget_through_the_gate`; gate denial tests; `test_entitlement_removed_during_execution...` | Verified for the gate. **No producer** calls it |
+| Entitlement removal during execution | `test_entitlement_removed_during_execution_stops_the_run_and_the_caller_releases_usage` | Verified at the gate |
+| Usage producers (AI gateway, agents, voice, workflows) | None | **Blocked: DFR1-015** |
+| SIBVO usage reconciliation | None | **Blocked: DFR1-053 (E12) needs an approved contract** |
+| Capability-level budgets "where appropriate" | Budgets are per unit only | **Decision needed**: which capabilities get their own limit |
+
+### 4.8 Blockers and dependencies
+
+1. **DFR1-015 (AI gateway)**: the only source of real usage. Until it exists, every figure in the ledger is zero.
+2. **DFR1-053 (E12), SIBVO reconciliation**: needs an approved contract for usage summaries and reconciliation. No
+   contract is approved, so nothing has been implemented or called, and no reconciliation success is reported.
+3. **Scheduling**: `usage_maintenance` and the outbox worker need a deployment that runs them. None is defined here.
+4. **Per-capability budgets**: a product decision on which capabilities get their own limits.
+
+### 4.9 Verification
+
+- `tests/test_usage_reservations.py`: 25 test functions (28 cases, one parametrized) covering duplicate and conflicting keys, the concurrent first request,
+  concurrent reservations at the limit, expiry and cleanup, exhaustion and recovery, thresholds, breakdowns, organization
+  isolation, and the gate.
+- `tests/test_usage_ledger.py` and `tests/test_usage_alert_delivery.py`: the existing lifecycle, threshold and delivery tests.
+- Migration `k2b7d4e9a1c3`: upgrade, downgrade and re-upgrade verified on a fresh PostgreSQL cluster that ran the full
+  chain from empty.
 
 ## 5. Privacy, retention and requests (DFR1-050)
 
@@ -413,7 +460,7 @@ legal-hold bypass by external deletion.
 |---|---|---|---|---|
 | DFR1-002 | **Not complete** | ADR-0025, ADR-0026, ADR-0027 still Proposed; diagrams and ownership map not recorded | Engineering and product | Approve the remaining ADRs and record the diagrams and ownership map |
 | DFR1-006 | Partial | DFR1-002 (To Do: ADR-0025/26/27 Proposed), DFR1-005 (To Do in the backlog; the entitlement check in code exists) | Engineering and product | Provider connection and health (DFR1-003, 004, 015); consent and channel policy; approval model (DFR1-025); budget, rate and concurrency gates (DFR1-017); record-level permission scope; cancel-or-complete for runs that outlast a request (DFR1-019). Section 2.8 lists each blocker |
-| DFR1-017 | Partial | DFR1-015 (AI gateway), DFR1-005 (done) | AI platform (E06) | Gateway producers; running the outbox worker in production; dashboard breakdowns; SIBVO reconciliation (DFR1-053) |
+| DFR1-017 | Partial | DFR1-015 (AI gateway, not built), DFR1-005 (To Do in the backlog) | AI platform (E06) | Gateway producers; running the outbox worker in production; dashboard breakdowns; SIBVO reconciliation (DFR1-053) |
 | DFR1-050 | Partial | DFR1-028, DFR1-035, DFR1-036 | Voice, documents, settings | Export and deletion for the CRM categories (leads, follow-ups, customer profiles, requirements, deals) and anonymization of linked records; export of conversations, calls, transcripts and AI data (no producers); a product decision on retention for contacts; scheduling of `privacy_maintenance`; decisions in section 5.6 |
 | DFR1-053 | Blocked | DFR1-017, DFR1-036, approved SIBVO ingestion contract | SIBVO and Dealsflo | Ingestion, reconciliation, lifecycle tests |
 
@@ -449,7 +496,7 @@ ADR-0029 Amendment C.
 | Story | Status | Reason |
 |---|---|---|
 | DFR1-006 | **Partial** | Centralized execution gate (actor, membership, target, policy, billing, permission) with an audit record for every decision. One governed execution path (deal-created automation), revalidated before each rule. AI and channel capabilities fail closed (no confirmed plan feature, no provider or consent model, no approval model). DFR1-002 and DFR1-005 are open. |
-| DFR1-017 | **Partial** | Ledger and budgets verified by tests. Alert delivery to administrators implemented (in-app, outbox worker). No production producer. |
+| DFR1-017 | **Partial** | Ledger lifecycle, idempotency and conflict refusal, concurrency, reservation expiry and cleanup, configurable thresholds, breakdowns, and gate integration are implemented and tested. No AI producer (DFR1-015) and no approved SIBVO reconciliation contract (DFR1-053) exist. Cleanup is not scheduled. Per-capability budgets are undecided. |
 | DFR1-050 | **Partial** | Background export (contacts, leads, follow-ups, invitations, documents with files), deletion (documents, invitations fully; contacts anonymized), retention for documents and invitations, expiry and cancellation with object removal, audited download, and failure-isolated maintenance. Not built: exporters and executors for most CRM categories, conversations, calls, transcripts and AI data; scheduling; provider deletion (none exists). Section 5 lists each category. |
 | DFR1-053 | **Blocked** | Dependencies not delivered. |
 
