@@ -399,3 +399,141 @@ def test_missing_snapshot_with_sibvo_unreachable_is_denied(organization_id, sibv
     verdict = decide(organization_id)
     assert verdict.allowed is False
     assert verdict.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+
+
+# WS6 WP6: revalidation configuration, boundaries, clock skew, stale answers and diagnostics -----------
+
+
+def _with_revalidation(monkeypatch, configured, seconds: int) -> None:
+    settings = configured.model_copy(update={"sibvo_org_entitlement_revalidation_seconds": seconds})
+    monkeypatch.setattr(org_entitlement, "get_settings", lambda: settings)
+
+
+def _stored_row(organization_id: UUID) -> OrganizationEntitlementSnapshot:
+    with SessionLocal() as db:
+        row = db.scalar(select(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == organization_id))
+        db.expunge(row)
+        return row
+
+
+def test_revalidation_interval_defaults_to_thirty_seconds_and_is_validated_at_startup() -> None:
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    assert get_settings().sibvo_org_entitlement_revalidation_seconds == 30
+    for invalid in (0, 31, -5):
+        with pytest.raises(ValidationError):
+            Settings(sibvo_org_entitlement_revalidation_seconds=invalid)
+
+
+def test_a_due_snapshot_is_refreshed_while_it_is_still_valid(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    start = datetime.now(UTC)
+    assert decide(organization_id, now=start).allowed is True
+
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    assert decide(organization_id, now=start + timedelta(seconds=20)).allowed is True
+    assert len(sibvo.calls) == 2
+
+
+def test_a_failed_refresh_uses_the_stored_snapshot_only_until_it_expires(
+    organization_id, sibvo, monkeypatch, configured
+) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    start = datetime.now(UTC)
+    assert decide(organization_id, now=start).allowed is True
+
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    still_valid = decide(organization_id, now=start + timedelta(seconds=20))
+    assert still_valid.allowed is True
+    assert len(sibvo.calls) == 2
+
+    # Inside the backoff window, SIBVO is not asked again. The still-valid snapshot is the only authority.
+    held = decide(organization_id, now=start + timedelta(seconds=21))
+    assert held.allowed is True
+    assert len(sibvo.calls) == 2
+
+    # Once the backoff has passed and the snapshot has expired, SIBVO is asked again. Still unreachable, so denied.
+    expired = decide(organization_id, now=start + timedelta(seconds=31))
+    assert expired.allowed is False
+    assert expired.reason_code == REASON_SNAPSHOT_UNAVAILABLE
+    assert len(sibvo.calls) == 3
+
+
+def test_the_exact_expiry_instant_is_expired(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    start = datetime.now(UTC)
+    assert decide(organization_id, now=start).allowed is True
+    expires_at = _stored_row(organization_id).expires_at
+
+    # SIBVO is unreachable, so only the stored snapshot can authorize. Due for revalidation, it still
+    # authorizes one millisecond before expiry, and it stops authorizing at the expiry instant.
+    sibvo.answer = SibvoUnavailable("SIBVO could not be reached.")
+    just_before = decide(organization_id, now=expires_at - timedelta(milliseconds=1))
+    assert just_before.allowed is True
+
+    # The failed refresh opened backoff, so the expiry instant is denied without asking SIBVO again.
+    at_expiry = decide(organization_id, now=expires_at)
+    assert at_expiry.allowed is False
+    assert at_expiry.reason_code == REASON_SNAPSHOT_EXPIRED
+
+
+def test_clock_skew_tolerates_a_little_future_issue_time_and_no_grace_on_expiry(organization_id, sibvo) -> None:
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=4)
+    assert decide(organization_id).allowed is True
+
+    with SessionLocal() as db:
+        _, organization = create_owner_manager(permissions=("governance.usage.read",))
+        other = organization.id
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=6)
+    verdict = decide(other)
+    assert verdict.allowed is False
+    assert verdict.reason_code == REASON_SNAPSHOT_REJECTED
+    with SessionLocal() as db:
+        db.execute(delete(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == other))
+        db.commit()
+
+
+def test_an_older_answer_never_replaces_a_newer_stored_snapshot(organization_id, sibvo, monkeypatch, configured) -> None:
+    _with_revalidation(monkeypatch, configured, 10)
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    assert decide(organization_id).allowed is True
+    stored_id = _stored_row(organization_id).snapshot_body["snapshot"]["snapshot_id"]
+
+    with SessionLocal() as db:
+        row = db.scalar(select(OrganizationEntitlementSnapshot).where(
+            OrganizationEntitlementSnapshot.organization_id == organization_id))
+        row.fetched_at = datetime.now(UTC) - timedelta(seconds=60)
+        db.commit()
+
+    # An answer issued 10 seconds before the stored one verifies, but it is older, so it must not replace it.
+    sibvo.answer = lambda org: signed(org, enabled=True, issued_offset=-10)
+    verdict = decide(organization_id)
+
+    assert verdict.allowed is True
+    assert _stored_row(organization_id).snapshot_body["snapshot"]["snapshot_id"] == stored_id
+
+
+def test_diagnostics_report_state_without_the_body_signature_or_key(organization_id, sibvo) -> None:
+    from app.governance.org_entitlement import snapshot_diagnostics
+
+    with SessionLocal() as db:
+        assert snapshot_diagnostics(db, organization_id=organization_id)["state"] == "missing"
+
+    sibvo.answer = lambda org: signed(org, enabled=True)
+    decide(organization_id)
+
+    with SessionLocal() as db:
+        diagnostics = snapshot_diagnostics(db, organization_id=organization_id)
+
+    assert diagnostics["state"] == "valid"
+    assert diagnostics["revalidation_interval_seconds"] == 30
+    text = repr(diagnostics)
+    assert KEY not in text
+    assert "signature" not in text
+    assert "snapshot_body" not in diagnostics

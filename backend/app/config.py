@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # snapshot is valid for at most 30 seconds. Retry backoff is capped at 300 seconds and never extends it.
     sibvo_org_snapshot_signing_key: SecretStr | None = Field(default=None, repr=False)
     sibvo_org_snapshot_key_id: str = Field(default="v1", min_length=1, max_length=32)
+    # How often a stored snapshot is revalidated with SIBVO (WS6 WP6). Capped at the 30-second snapshot
+    # lifetime, so it can only tighten revalidation. Retry backoff is separate and never authorizes.
+    sibvo_org_entitlement_revalidation_seconds: int = Field(default=30, ge=1, le=30)
     sso_revalidation_interval_seconds: int = Field(
         default=30,
         ge=5,
