@@ -25,7 +25,10 @@ from sqlalchemy.orm import Session
 
 from app.db.models.approval_request import ApprovalRequest
 from app.db.models.audit_event import AuditEvent
-from app.governance.capabilities import CAPABILITY_BY_KEY
+from app.governance.capabilities import (
+    APPROVAL_REQUIRED_CAPABILITIES,
+    CAPABILITY_BY_KEY,
+)
 
 APPROVAL_AUDIT_EVENT_TYPE = "governance"
 APPROVAL_AUDIT_ACTION_PREFIX = "approval"
@@ -131,7 +134,9 @@ def request_approval(
 ) -> ApprovalRequest:
     """Create a pending approval for one exact payload. Only capabilities that require approval may use it."""
     definition = CAPABILITY_BY_KEY.get(capability_key)
-    if definition is None or not definition.requires_approval:
+    if definition is None or not (
+        definition.requires_approval or capability_key in APPROVAL_REQUIRED_CAPABILITIES
+    ):
         raise ApprovalInvalidError("This capability does not use approvals.")
     if not MIN_TTL <= ttl <= MAX_TTL:
         raise ApprovalInvalidError("The approval must expire between one minute and seven days from now.")
@@ -222,6 +227,34 @@ def check_approval_for_execution(
     now: datetime | None = None,
 ) -> ApprovalRequest:
     """Check that an approval covers this exact execution. Locks the row; call ``consume_approval`` before commit."""
+    try:
+        expected_hash = payload_hash(payload)
+    except ApprovalInvalidError as error:
+        raise ApprovalError(REASON_APPROVAL_MISMATCH) from error
+    return check_approval_hash(
+        db,
+        organization_id=organization_id,
+        approval_id=approval_id,
+        capability_key=capability_key,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        expected_hash=expected_hash,
+        now=now,
+    )
+
+
+def check_approval_hash(
+    db: Session,
+    *,
+    organization_id: UUID,
+    approval_id: UUID,
+    capability_key: str,
+    resource_type: str | None,
+    resource_id: str | None,
+    expected_hash: str,
+    now: datetime | None = None,
+) -> ApprovalRequest:
+    """Check an approval against the payload hash the caller computed. Locks the row until commit."""
     current = now if now is not None else datetime.now(UTC)
     approval = _locked(db, organization_id=organization_id, approval_id=approval_id)
     if approval.consumed_at is not None:
@@ -230,17 +263,13 @@ def check_approval_for_execution(
         raise ApprovalError(REASON_APPROVAL_NOT_APPROVED)
     if current >= approval.expires_at:
         raise ApprovalError(REASON_APPROVAL_EXPIRED)
-    if (
-        approval.capability_key != capability_key
-        or approval.resource_type != resource_type
-        or approval.resource_id != resource_id
-    ):
+    if approval.capability_key != capability_key:
         raise ApprovalError(REASON_APPROVAL_MISMATCH)
-    try:
-        current_hash = payload_hash(payload)
-    except ApprovalInvalidError as error:
-        raise ApprovalError(REASON_APPROVAL_MISMATCH) from error
-    if current_hash != approval.payload_hash:
+    if resource_type is not None and approval.resource_type != resource_type:
+        raise ApprovalError(REASON_APPROVAL_MISMATCH)
+    if resource_id is not None and approval.resource_id != resource_id:
+        raise ApprovalError(REASON_APPROVAL_MISMATCH)
+    if approval.payload_hash != expected_hash:
         raise ApprovalError(REASON_APPROVAL_MISMATCH)
     return approval
 

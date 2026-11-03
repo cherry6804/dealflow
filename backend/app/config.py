@@ -61,6 +61,13 @@ class Settings(BaseSettings):
         gt=0,
         le=30,
     )
+    # Organization-level AI entitlement snapshot (WS5, ADR-0027). The key is shared with SIBVO, and the
+    # snapshot is valid for at most 30 seconds. Retry backoff is capped at 300 seconds and never extends it.
+    sibvo_org_snapshot_signing_key: SecretStr | None = Field(default=None, repr=False)
+    sibvo_org_snapshot_key_id: str = Field(default="v1", min_length=1, max_length=32)
+    # How often a stored snapshot is revalidated with SIBVO (WS6 WP6). Capped at the 30-second snapshot
+    # lifetime, so it can only tighten revalidation. Retry backoff is separate and never authorizes.
+    sibvo_org_entitlement_revalidation_seconds: int = Field(default=30, ge=1, le=30)
     sso_revalidation_interval_seconds: int = Field(
         default=30,
         ge=5,
@@ -143,9 +150,42 @@ class Settings(BaseSettings):
     # Upper bound on the database work a single event handler may do (PostgreSQL statement timeout).
     # Must be shorter than the claim lease, so an event is never reclaimed while its handler still runs.
     outbox_handler_timeout_seconds: int = Field(default=30, ge=1, le=600)
+    outbox_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+    # Full-jitter retry delays between 50% and 100% of the capped backoff.
+    outbox_jitter_enabled: bool = True
+    # Comma-separated operator names allowed to run the replay command. Empty refuses every replay.
+    outbox_operator_allowlist: str = Field(default="", max_length=1000)
+    # Background worker runtime (``python -m app.outbox.worker --serve``).
+    outbox_worker_probe_host: str = Field(default="127.0.0.1", max_length=255)
+    outbox_worker_probe_port: int = Field(default=8081, ge=1, le=65535)
+    # A loop without a heartbeat for this long makes liveness fail.
+    outbox_worker_stale_seconds: float = Field(default=120.0, gt=0, le=3600)
+    outbox_worker_max_consecutive_errors: int = Field(default=10, ge=1, le=1000)
+    outbox_worker_shutdown_grace_seconds: float = Field(default=30.0, gt=0, le=600)
+    # Server-side limits applied to every database session when greater than zero. Zero keeps the
+    # PostgreSQL defaults. Worker deployments should set both (see docs/development/worker-deployment.md).
+    database_statement_timeout_ms: int = Field(default=0, ge=0, le=3600000)
+    database_idle_transaction_timeout_ms: int = Field(default=0, ge=0, le=3600000)
+
+    # Provider connections (ADR-0032). Live adapters are off by default and never enabled in CI.
+    provider_live_adapters_enabled: bool = False
+    provider_verification_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    provider_verification_failure_threshold: int = Field(default=3, ge=1, le=20)
+    provider_verification_interval_hours: int = Field(default=12, ge=1, le=720)
+    provider_verification_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
+    provider_connection_freshness_hours: int = Field(default=24, ge=1, le=720)
 
     # Encrypted transactional email outbox.
     email_outbox_encryption_key: SecretStr | None = Field(
+        default=None,
+        repr=False,
+    )
+    # Provider credential encryption (DFR1-011 secrets boundary). Separate from the email key.
+    # Local and test: a JSON keyring of base64url 32-byte AES-256-GCM keys, keyed by key id.
+    # Production: must use a managed key provider; the local keyring is refused there.
+    provider_secrets_key_provider: Literal["local_keyring", "managed_kms"] = "local_keyring"
+    provider_secrets_active_key_id: str | None = Field(default=None, max_length=64)
+    provider_secrets_keyring: SecretStr | None = Field(
         default=None,
         repr=False,
     )
@@ -181,8 +221,6 @@ class Settings(BaseSettings):
     # AI usage reservations (DFR1-017). A reservation not settled within this time is released by
     # the cleanup job. The value is operational, not a retention period.
     usage_reservation_ttl_seconds: int = Field(default=900, ge=60, le=86400)
-    # A verified provider connection must have been checked this recently, or it is treated as unhealthy.
-    provider_health_max_age_seconds: int = Field(default=3600, ge=60, le=86400)
 
     # Privacy exports (DFR1-050). The expiry is an operating choice, not a legal period.
     privacy_export_ttl_days: int = Field(default=7, ge=1, le=90)

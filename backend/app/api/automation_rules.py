@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import require_permission
+from app.automation_rules.authority import AutomationAuthorityError
 from app.automation_rules.schemas import (
     AutomationExecutionListResponse,
     AutomationExecutionResponse,
@@ -348,6 +349,17 @@ def activate_automation_rule_endpoint(
             raise _not_found()
 
         return _commit_and_refresh(db, rule)
+
+    except AutomationAuthorityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "AUTOMATION_AUTHORITY_DENIED",
+                "reason_code": exc.reason_code,
+                "message": "You are not authorized to activate this automation rule.",
+            },
+        ) from exc
 
     except ValueError as exc:
         db.rollback()

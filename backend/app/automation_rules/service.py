@@ -11,6 +11,11 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.automation_rules.authority import (
+    authorize_activation,
+    begin_activation_audit,
+    complete_activation_audit,
+)
 from app.automation_rules.execution_service import (
     SUPPORTED_CONDITION_FIELDS,
     SUPPORTED_OPERATORS,
@@ -325,9 +330,31 @@ def activate_automation_rule(
 
     _validate_rule_for_activation(rule)
 
+    # The activator must hold the permissions of every action in the rule (WS6 WP5). A denial is recorded
+    # independently and raises AutomationAuthorityError.
+    authorize_activation(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        rule=rule,
+    )
+    requested = begin_activation_audit(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        rule=rule,
+    )
+
     rule.status = AutomationRule.STATUS_ACTIVE
     rule.updated_by_user_id = user_id
     db.flush()
+    complete_activation_audit(
+        db,
+        requested=requested,
+        organization_id=organization_id,
+        user_id=user_id,
+        rule=rule,
+    )
     return rule
 
 

@@ -58,6 +58,14 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("governance.budgets.manage", "Set organization AI usage budgets."),
     ("governance.privacy.read", "View retention policies, legal holds and privacy requests."),
     ("governance.privacy.manage", "Change retention, legal holds and privacy requests."),
+    ("governance.consent.read", "View contact consent records and their history."),
+    ("governance.consent.manage", "Record contact consent grants and revocations."),
+    ("governance.approvals.request", "Request approval of an exact AI or automation payload."),
+    ("governance.approvals.decide", "Approve or reject another member's approval request."),
+    ("governance.channels.read", "View channel policy and contact do-not-disturb settings."),
+    ("governance.channels.manage", "Configure channel policy and contact do-not-disturb."),
+    ("provider_credentials.read", "View provider credential metadata."),
+    ("provider_credentials.manage", "Create, rotate and revoke provider credentials."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)
@@ -69,8 +77,15 @@ OWNER_ONLY_PERMISSION_KEYS = frozenset(
         "governance.capabilities.manage",
         "governance.budgets.manage",
         "governance.privacy.manage",
+        "governance.consent.manage",
+        "governance.approvals.decide",
+        "governance.channels.manage",
+        "provider_credentials.manage",
     }
 )
+
+# The system Owner role. Owner-only permission keys are granted only through this role.
+OWNER_ROLE_NAME = "DealFlow Owner"
 
 OWNER_ROLE_PERMISSION_KEYS = tuple(
     key for key, _description in PERMISSION_CATALOG

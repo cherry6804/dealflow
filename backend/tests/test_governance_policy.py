@@ -21,12 +21,14 @@ from app.governance.capabilities import (
 from app.governance.policy import (
     REASON_ALLOWED,
     REASON_CAPABILITY_DISABLED,
-    REASON_ENTITLEMENT_NOT_DEFINED,
     REASON_MASTER_DISABLED,
     REASON_UNKNOWN_CAPABILITY,
     evaluate_capability,
 )
 from app.governance.service import set_capability_enabled
+
+REASON_ENTITLEMENT_NOT_DEFINED = "entitlement_not_defined"
+REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
 from tests.governance_helpers import attested_user_context
 from tests.test_team_api import create_manager
 
@@ -131,7 +133,8 @@ def test_ai_capability_fails_closed_without_a_confirmed_plan_feature(tenant) -> 
     decision = _decide(organization_id, "ai.assistant")
 
     assert decision.allowed is False
-    assert decision.reason_code == REASON_ENTITLEMENT_NOT_DEFINED
+    # AI_GATEWAY is a confirmed SIBVO feature on develop, so provider readiness denies it here.
+    assert decision.reason_code == REASON_PROVIDER_NOT_CONNECTED
 
 
 def test_channel_capability_fails_closed_without_a_confirmed_plan_feature(tenant) -> None:

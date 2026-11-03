@@ -76,13 +76,18 @@ Lint exits successfully with warnings. The current count is 41, all pre-existing
 ## 6. Transactional outbox
 
 Domain events are enqueued in the caller's transaction with
-`app.outbox.service.enqueue_event`. Dispatch runs in a worker:
+`app.outbox.service.enqueue_event`. Dispatch and account email are performed by the worker
+process, which is separate from the API:
 
 ```bash
 cd backend
+uv run python -m app.outbox.worker --serve
 uv run python -m app.outbox.worker --once
-uv run python -m app.outbox.worker --poll-interval 5
 ```
+
+Run `--serve` for the full worker. Without it, account email queues but is not sent. The
+deployment, configuration, health checks and replay procedure are in
+`docs/development/worker-deployment.md`. Design and guarantees are in ADR-0026.
 
 Inspect failures (operators only; payloads are not printed):
 

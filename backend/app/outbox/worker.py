@@ -1,35 +1,30 @@
-"""Command-line worker that dispatches outbox events.
+"""Command-line entry point for the DealFlow background worker.
 
-Run one cycle::
+Deployment entry point (runs the transactional outbox and the email outbox, with probes)::
+
+    python -m app.outbox.worker --serve
+
+Single cycle of the transactional outbox, for operators and tests::
 
     python -m app.outbox.worker --once
 
-Run continuously::
+Continuous outbox dispatch without email, probes or signal handling (kept for compatibility)::
 
     python -m app.outbox.worker --poll-interval 5
 
-The worker only dispatches events whose handlers are registered in this
-process. Handlers are registered by the modules that own them. Run one worker
-per process; multiple processes are safe because claims use row locks and
-leases.
+Only handlers registered in this process can run. ``--once`` and ``--serve`` register the
+governance handlers before dispatching. Run one worker per process. Multiple processes are safe
+because claims use row locks, leases and fencing tokens.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
-import socket
 import threading
-from uuid import uuid4
 
 from app.db.session import SessionLocal
+from app.outbox.runtime import default_worker_id
 from app.outbox.service import DispatchResult, dispatch_due_events
-
-
-def default_worker_id() -> str:
-    """Return a worker identity that is unique per process and bounded in length."""
-    host = socket.gethostname().replace(" ", "-")[:40]
-    return f"{host}:{os.getpid()}:{uuid4().hex[:8]}"[:120]
 
 
 def run_once(*, worker_id: str | None = None) -> DispatchResult:
@@ -50,30 +45,47 @@ def run_forever(
             stop.wait(poll_interval_seconds)
 
 
+def _register_handlers() -> None:
+    # Governance handlers (usage alert delivery) must be registered before any dispatch.
+    from app.governance.alert_delivery import register_governance_handlers
+    from app.providers.verification import register_provider_handlers
+
+    register_governance_handlers()
+    register_provider_handlers()
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Dispatch Dealsflo outbox events.")
+    parser = argparse.ArgumentParser(description="Run DealFlow background work.")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
-        "--once", action="store_true", help="Run one dispatch cycle and exit."
+        "--serve",
+        action="store_true",
+        help="Run the worker: outbox dispatch and email delivery, with health probes and graceful shutdown.",
+    )
+    mode.add_argument(
+        "--once", action="store_true", help="Run one outbox dispatch cycle and exit."
     )
     mode.add_argument(
         "--poll-interval",
         type=float,
         metavar="SECONDS",
-        help="Run continuously, sleeping this long when no events are due.",
+        help="Run outbox dispatch continuously. Does not run email delivery or probes.",
     )
     args = parser.parse_args(argv)
 
-    # Governance handlers (usage alert delivery) must be registered before any dispatch.
-    from app.governance.alert_delivery import register_governance_handlers
+    if args.serve:
+        from app.outbox.runtime import serve
 
-    register_governance_handlers()
+        return serve()
+
+    _register_handlers()
 
     if args.once:
         result = run_once()
         print(
             f"claimed={result.claimed} delivered={result.delivered} "
-            f"retried={result.retried} dead_lettered={result.dead_lettered}"
+            f"retried={result.retried} dead_lettered={result.dead_lettered} "
+            f"lease_lost={result.lease_lost}"
         )
         return 0
 

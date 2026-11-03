@@ -7,6 +7,7 @@ import {
   type UsageBreakdown,
 } from "../../../services/governanceApi";
 import { formatUnitQuantity, unitLabel } from "../governanceLabels";
+import AlertThresholdsPanel from "./AlertThresholdsPanel";
 import ConfirmChangeDialog from "./ConfirmChangeDialog";
 
 interface UsagePanelProps {
@@ -35,8 +36,6 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ unit: string; current: number | null } | null>(null);
   const [draft, setDraft] = useState("");
-  const [warningDraft, setWarningDraft] = useState("");
-  const [criticalDraft, setCriticalDraft] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -61,16 +60,7 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
   function openEditor(unit: string, budget: BudgetStatus | undefined) {
     setFormError(null);
     setDraft(budget ? String(budget.limit_quantity) : "");
-    setWarningDraft(String(budget ? budget.warning_percent : 70));
-    setCriticalDraft(String(budget ? budget.critical_percent : 85));
     setEditing({ unit, current: budget ? budget.limit_quantity : null });
-  }
-
-  function validPercent(text: string): number | null {
-    const trimmed = text.trim();
-    if (!/^\d+$/.test(trimmed)) return null;
-    const value = Number(trimmed);
-    return value >= 1 && value <= 99 ? value : null;
   }
 
   function validDraft(): number | null {
@@ -87,19 +77,10 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
       setFormError("Enter a whole number of zero or more.");
       return;
     }
-    const warning = validPercent(warningDraft);
-    const critical = validPercent(criticalDraft);
-    if (warning === null || critical === null || warning >= critical) {
-      setFormError("Warning must be below critical, and both must be between 1 and 99 percent.");
-      return;
-    }
     setSubmitting(true);
     setFormError(null);
     try {
-      await governanceApi.setBudget(editing.unit, value, {
-        warningPercent: warning,
-        criticalPercent: critical,
-      });
+      await governanceApi.setBudget(editing.unit, value);
       setEditing(null);
       await load();
     } catch (error) {
@@ -165,7 +146,7 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
                 </td>
                 <td>
                   {budget
-                    ? `${budget.utilization_percent}% used. Alerts at ${budget.warning_percent}% and ${budget.critical_percent}%.`
+                    ? `${budget.utilization_percent}% used.`
                     : "—"}
                 </td>
                 {canManage ? (
@@ -209,6 +190,7 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
           </tbody>
         </table>
       )}
+      <AlertThresholdsPanel canManage={canManage} />
 
       {editing !== null ? (
         <ConfirmChangeDialog
@@ -233,20 +215,6 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
               inputMode="numeric"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-            />
-            <label htmlFor="budget-warning">Warning alert (percent)</label>
-            <input
-              id="budget-warning"
-              inputMode="numeric"
-              value={warningDraft}
-              onChange={(event) => setWarningDraft(event.target.value)}
-            />
-            <label htmlFor="budget-critical">Critical alert (percent)</label>
-            <input
-              id="budget-critical"
-              inputMode="numeric"
-              value={criticalDraft}
-              onChange={(event) => setCriticalDraft(event.target.value)}
             />
           </form>
         </ConfirmChangeDialog>

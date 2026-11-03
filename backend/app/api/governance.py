@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import permission_granted, require_permission
+from app.config import get_settings
 from app.db.models.contact import Contact
 from app.db.models.contact_consent import (
     CONSENT_CHANNELS,
@@ -21,8 +22,12 @@ from app.db.models.contact_consent import (
     ContactConsentRecord,
 )
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
-from app.db.models.provider_connection import ProviderConnection
 from app.db.session import get_db_session
+from app.governance.alert_threshold_service import update_alert_thresholds
+from app.governance.alert_thresholds import (
+    InvalidAlertThresholdsError,
+    read_alert_thresholds,
+)
 from app.governance.capabilities import CapabilityCategory
 from app.governance.consent import (
     CONSENT_POLICY_VERSION,
@@ -33,14 +38,14 @@ from app.governance.consent import (
     record_consent,
 )
 from app.governance.data_classification import CATEGORIES
+from app.governance.org_entitlement import snapshot_diagnostics
 from app.governance.privacy import (
-    STATUS_AWAITING_ARTIFACT,
-    STATUS_ELIGIBILITY_RECORDED,
     InvalidRequestStateError,
     UnknownCategoryError,
     cancel_request,
     create_privacy_request,
     current_retention,
+    expire_export_if_due,
     place_legal_hold,
     release_legal_hold,
     set_retention_policy,
@@ -48,21 +53,7 @@ from app.governance.privacy import (
 from app.governance.privacy_execution import (
     ExportUnavailableError,
     PrivacyRequestNotFoundError,
-    enqueue_processing,
-    expire_request_export,
     open_export,
-)
-from app.governance.provider_connections import (
-    ProviderConnectionError,
-    ProviderConnectionExistsError,
-    ProviderConnectionNotFoundError,
-    create_connection,
-    disable_connection,
-    list_connections,
-    verify_connection,
-)
-from app.governance.provider_connections import (
-    secret_present as provider_secret_present,
 )
 from app.governance.service import (
     CapabilityState,
@@ -80,7 +71,8 @@ from app.governance.usage_ledger import (
 from app.storage import ObjectNotFoundError, get_object_storage
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
-router = APIRouter(prefix="/api/v1/governance", tags=["governance"])
+# Handlers are defined once here and mounted under two prefixes (ADR-0031).
+governance_routes = APIRouter(tags=["governance"])
 
 
 class CapabilityDecisionResponse(BaseModel):
@@ -133,7 +125,7 @@ def _state_response(state: CapabilityState) -> CapabilityStateResponse:
     )
 
 
-@router.get("/capabilities", response_model=CapabilityListResponse)
+@governance_routes.get("/capabilities", response_model=CapabilityListResponse)
 def get_capability_settings(
     tenant: TenantContext = Depends(require_permission("governance.capabilities.read")),
     db: Session = Depends(get_db_session),
@@ -147,7 +139,7 @@ def get_capability_settings(
     )
 
 
-@router.patch("/capabilities/{capability_key}", response_model=CapabilityStateResponse)
+@governance_routes.patch("/capabilities/{capability_key}", response_model=CapabilityStateResponse)
 def update_capability_setting(
     capability_key: str,
     payload: CapabilityUpdateRequest,
@@ -189,8 +181,6 @@ class BudgetStatusResponse(BaseModel):
     remaining_quantity: int
     utilization_percent: int
     overrun: bool
-    warning_percent: int
-    critical_percent: int
 
 
 class BudgetListResponse(BaseModel):
@@ -201,25 +191,7 @@ class BudgetListResponse(BaseModel):
 
 class BudgetUpdateRequest(BaseModel):
     limit_quantity: int = Field(..., ge=0)
-    # Optional. Omitted thresholds keep their current values (70 and 85 for a new budget).
-    warning_percent: int | None = Field(default=None, ge=1, le=98)
-    critical_percent: int | None = Field(default=None, ge=2, le=99)
     confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
-
-
-class UsageBreakdownRow(BaseModel):
-    group: str
-    unit: str
-    reserved_quantity: int
-    recorded_quantity: int
-    entries: int
-
-
-class UsageBreakdownResponse(BaseModel):
-    period_start: date
-    period_end: date
-    group_by: str
-    items: list[UsageBreakdownRow]
 
 
 def _budget_response(result) -> BudgetStatusResponse:
@@ -233,44 +205,10 @@ def _budget_response(result) -> BudgetStatusResponse:
         remaining_quantity=result.remaining_quantity,
         utilization_percent=result.utilization_percent,
         overrun=result.overrun,
-        warning_percent=result.warning_percent,
-        critical_percent=result.critical_percent,
     )
 
 
-@router.get("/usage/breakdown", response_model=UsageBreakdownResponse)
-def get_usage_breakdown(
-    group_by: str = Query(default="capability", pattern="^(capability|unit|provider)$"),
-    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
-    db: Session = Depends(get_db_session),
-) -> UsageBreakdownResponse:
-    """Usage for the current UTC month, grouped by capability, unit or provider. Organization-scoped."""
-    moment = datetime.now(UTC)
-    period = budget_period_for(moment)
-    rows = usage_breakdown(
-        db,
-        organization_id=tenant.organization_id,
-        moment=moment,
-        group_by=group_by,
-    )
-    return UsageBreakdownResponse(
-        period_start=period.start,
-        period_end=period.end,
-        group_by=group_by,
-        items=[
-            UsageBreakdownRow(
-                group=row.group,
-                unit=row.unit,
-                reserved_quantity=row.reserved_quantity,
-                recorded_quantity=row.recorded_quantity,
-                entries=row.entries,
-            )
-            for row in rows
-        ],
-    )
-
-
-@router.get("/usage/budgets", response_model=BudgetListResponse)
+@governance_routes.get("/usage/budgets", response_model=BudgetListResponse)
 def get_usage_budgets(
     tenant: TenantContext = Depends(require_permission("governance.usage.read")),
     db: Session = Depends(get_db_session),
@@ -286,7 +224,7 @@ def get_usage_budgets(
     return BudgetListResponse(period_start=period.start, period_end=period.end, items=items)
 
 
-@router.put("/usage/budgets/{unit}", response_model=BudgetStatusResponse)
+@governance_routes.put("/usage/budgets/{unit}", response_model=BudgetStatusResponse)
 def set_usage_budget(
     unit: str,
     payload: BudgetUpdateRequest,
@@ -299,25 +237,81 @@ def set_usage_budget(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usage unit not found.") from None
     moment = datetime.now(UTC)
-    try:
-        change_budget(
-            db,
-            organization_id=tenant.organization_id,
-            actor_user_id=tenant.membership.user_id,
-            unit=usage_unit,
-            limit_quantity=payload.limit_quantity,
-            moment=moment,
-            warning_percent=payload.warning_percent,
-            critical_percent=payload.critical_percent,
-        )
-    except ValueError as error:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    change_budget(
+        db,
+        organization_id=tenant.organization_id,
+        actor_user_id=tenant.membership.user_id,
+        unit=usage_unit,
+        limit_quantity=payload.limit_quantity,
+        moment=moment,
+    )
     db.commit()
     result = budget_status(db, organization_id=tenant.organization_id, unit=usage_unit, moment=moment)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
     return _budget_response(result)
+
+
+# ---------------------------------------------------------------------------
+# AI usage alert thresholds (WS6 WP2)
+# ---------------------------------------------------------------------------
+
+
+class AlertThresholdsResponse(BaseModel):
+    thresholds: list[int]
+    is_default: bool
+    version: int
+    updated_at: datetime | None
+
+
+class AlertThresholdsUpdateRequest(BaseModel):
+    thresholds: list[int] = Field(..., min_length=3, max_length=3)
+    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+def _thresholds_response(result) -> AlertThresholdsResponse:
+    return AlertThresholdsResponse(
+        thresholds=list(result.values),
+        is_default=result.is_default,
+        version=result.version,
+        updated_at=result.updated_at,
+    )
+
+
+@governance_routes.get("/usage/alert-thresholds", response_model=AlertThresholdsResponse)
+def get_alert_thresholds(
+    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
+    db: Session = Depends(get_db_session),
+) -> AlertThresholdsResponse:
+    """The organization's AI usage alert thresholds. Defaults apply until an owner changes them."""
+    return _thresholds_response(read_alert_thresholds(db, organization_id=tenant.organization_id))
+
+
+@governance_routes.put("/usage/alert-thresholds", response_model=AlertThresholdsResponse)
+def set_alert_thresholds(
+    payload: AlertThresholdsUpdateRequest,
+    tenant: TenantContext = Depends(require_permission("governance.budgets.manage")),
+    db: Session = Depends(get_db_session),
+) -> AlertThresholdsResponse:
+    """Set the three alert thresholds. Owner-only. Validated and audited on the server.
+
+    Alerts are in-app notifications to administrators. No email or external message is sent.
+    """
+    try:
+        result = update_alert_thresholds(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            values=payload.thresholds,
+        )
+    except InvalidAlertThresholdsError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": error.reason_code, "message": error.message},
+        ) from None
+    db.commit()
+    return _thresholds_response(result)
 
 
 # ---------------------------------------------------------------------------
@@ -371,10 +365,6 @@ class PrivacyRequestResponse(BaseModel):
     status: str
     categories: list[str]
     decisions: dict[str, object]
-    # What processing actually did, per category. Empty until the background run has happened.
-    execution: dict[str, object]
-    attempt_count: int
-    processed_at: datetime | None
     artifact_reference: str | None
     expires_at: datetime | None
     created_at: datetime
@@ -408,16 +398,13 @@ def _request_response(row) -> PrivacyRequestResponse:
         status=row.status,
         categories=json.loads(row.categories),
         decisions=json.loads(row.decisions),
-        execution=json.loads(row.execution or "{}"),
-        attempt_count=row.attempt_count,
-        processed_at=row.processed_at,
         artifact_reference=row.artifact_reference,
         expires_at=row.expires_at,
         created_at=row.created_at,
     )
 
 
-@router.get("/privacy/categories", response_model=list[DataCategoryResponse])
+@governance_routes.get("/privacy/categories", response_model=list[DataCategoryResponse])
 def list_data_categories(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
 ) -> list[DataCategoryResponse]:
@@ -425,7 +412,7 @@ def list_data_categories(
     return [_category_response(category) for category in CATEGORIES]
 
 
-@router.get("/privacy/retention", response_model=list[RetentionPolicyResponse])
+@governance_routes.get("/privacy/retention", response_model=list[RetentionPolicyResponse])
 def list_retention_policies(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
     db: Session = Depends(get_db_session),
@@ -443,7 +430,7 @@ def list_retention_policies(
     return responses
 
 
-@router.put("/privacy/retention/{category_key}", response_model=RetentionPolicyResponse)
+@governance_routes.put("/privacy/retention/{category_key}", response_model=RetentionPolicyResponse)
 def update_retention_policy(
     category_key: str,
     payload: RetentionUpdateRequest,
@@ -469,7 +456,7 @@ def update_retention_policy(
     )
 
 
-@router.post("/privacy/legal-holds", response_model=LegalHoldResponse, status_code=status.HTTP_201_CREATED)
+@governance_routes.post("/privacy/legal-holds", response_model=LegalHoldResponse, status_code=status.HTTP_201_CREATED)
 def create_legal_hold(
     payload: LegalHoldCreateRequest,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -490,7 +477,7 @@ def create_legal_hold(
     return _hold_response(hold)
 
 
-@router.post("/privacy/legal-holds/{hold_id}/release", response_model=LegalHoldResponse)
+@governance_routes.post("/privacy/legal-holds/{hold_id}/release", response_model=LegalHoldResponse)
 def end_legal_hold(
     hold_id: UUID,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -510,7 +497,7 @@ def end_legal_hold(
     return _hold_response(hold)
 
 
-@router.get("/privacy/requests", response_model=list[PrivacyRequestResponse])
+@governance_routes.get("/privacy/requests", response_model=list[PrivacyRequestResponse])
 def list_privacy_requests(
     tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
     db: Session = Depends(get_db_session),
@@ -521,14 +508,13 @@ def list_privacy_requests(
         .order_by(PrivacyDataRequest.created_at.desc())
     ).all()
     now = datetime.now(UTC)
-    storage = get_object_storage()
     for row in rows:
-        expire_request_export(db, row, storage=storage, now=now)
+        expire_export_if_due(db, request=row, now=now)
     db.commit()
     return [_request_response(row) for row in rows]
 
 
-@router.post("/privacy/requests", response_model=PrivacyRequestResponse, status_code=status.HTTP_201_CREATED)
+@governance_routes.post("/privacy/requests", response_model=PrivacyRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_privacy_request_endpoint(
     payload: PrivacyRequestCreate,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -548,14 +534,166 @@ def create_privacy_request_endpoint(
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
-    if row.status in {STATUS_AWAITING_ARTIFACT, STATUS_ELIGIBILITY_RECORDED}:
-        # Processing runs in the outbox worker, in the same commit as the request.
-        enqueue_processing(db, row)
     db.commit()
     return _request_response(row)
 
 
-@router.get("/privacy/requests/{request_id}/export")
+@governance_routes.post("/privacy/requests/{request_id}/cancel", response_model=PrivacyRequestResponse)
+def cancel_privacy_request(
+    request_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
+    db: Session = Depends(get_db_session),
+) -> PrivacyRequestResponse:
+    try:
+        row = cancel_request(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            request_id=request_id,
+        )
+    except InvalidRequestStateError as error:
+        db.rollback()
+        not_found = "not found" in str(error)
+        code = status.HTTP_404_NOT_FOUND if not_found else status.HTTP_409_CONFLICT
+        raise HTTPException(status_code=code, detail=str(error)) from None
+    stored_key = row.artifact_reference
+    row.artifact_reference = None
+    db.commit()
+    if stored_key:
+        # A cancelled export must not stay downloadable. The request is already committed as cancelled, so a
+        # failure here leaves an unreferenced object for the expiry job to report.
+        try:
+            get_object_storage().delete(stored_key)
+        except ObjectNotFoundError:
+            pass
+    return _request_response(row)
+
+
+@governance_routes.get("/privacy/legal-holds", response_model=list[LegalHoldResponse])
+def list_legal_holds(
+    tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
+    db: Session = Depends(get_db_session),
+) -> list[LegalHoldResponse]:
+    rows = db.scalars(
+        select(LegalHold)
+        .where(LegalHold.organization_id == tenant.organization_id)
+        .order_by(LegalHold.placed_at.desc())
+    ).all()
+    return [_hold_response(row) for row in rows]
+
+
+class GovernanceAccessResponse(BaseModel):
+    """Which governance permissions the caller holds. Used to shape the UI only.
+
+    The server enforces every action again on each request.
+    """
+
+    capabilities_read: bool
+    capabilities_manage: bool
+    usage_read: bool
+    budgets_manage: bool
+    privacy_read: bool
+    privacy_manage: bool
+
+
+class EntitlementStatusResponse(BaseModel):
+    """Operational state of SIBVO's organization entitlement snapshot (WS6 WP6, WP7).
+
+    Never contains the snapshot body, a signature, or the signing key. ``signing_key_configured`` is a flag.
+    """
+
+    state: str
+    product_key: str
+    revalidation_interval_seconds: int
+    fetched_at: str | None
+    expires_at: str | None
+    failure_count: int
+    next_refresh_attempt_at: str | None
+    backoff_active: bool
+    signing_key_configured: bool
+
+
+@governance_routes.get("/entitlement-status", response_model=EntitlementStatusResponse)
+def get_entitlement_status(
+    tenant: TenantContext = Depends(require_permission("governance.capabilities.read")),
+    db: Session = Depends(get_db_session),
+) -> EntitlementStatusResponse:
+    """Report whether SIBVO's organization entitlement is currently usable, for the selected organization."""
+    settings = get_settings()
+    diagnostics = snapshot_diagnostics(db, organization_id=tenant.organization_id)
+    return EntitlementStatusResponse(
+        **diagnostics,
+        signing_key_configured=settings.sibvo_org_snapshot_signing_key is not None,
+    )
+
+
+@governance_routes.get("/access", response_model=GovernanceAccessResponse)
+def get_governance_access(
+    tenant: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db_session),
+) -> GovernanceAccessResponse:
+    def granted(permission_key: str) -> bool:
+        return permission_granted(db, tenant_context=tenant, permission_key=permission_key)
+
+    return GovernanceAccessResponse(
+        capabilities_read=granted("governance.capabilities.read"),
+        capabilities_manage=granted("governance.capabilities.manage"),
+        usage_read=granted("governance.usage.read"),
+        budgets_manage=granted("governance.budgets.manage"),
+        privacy_read=granted("governance.privacy.read"),
+        privacy_manage=granted("governance.privacy.manage"),
+    )
+
+
+# Canonical AI namespace (ADR-0031). Visible in OpenAPI.
+class UsageBreakdownRow(BaseModel):
+    group: str
+    unit: str
+    reserved_quantity: int
+    recorded_quantity: int
+    entries: int
+
+
+class UsageBreakdownResponse(BaseModel):
+    period_start: date
+    period_end: date
+    group_by: str
+    items: list[UsageBreakdownRow]
+
+
+@governance_routes.get("/usage/breakdown", response_model=UsageBreakdownResponse)
+def get_usage_breakdown(
+    group_by: str = Query(default="capability", pattern="^(capability|unit|provider)$"),
+    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
+    db: Session = Depends(get_db_session),
+) -> UsageBreakdownResponse:
+    """Usage for the current UTC month, grouped by capability, unit or provider. Organization-scoped."""
+    moment = datetime.now(UTC)
+    period = budget_period_for(moment)
+    rows = usage_breakdown(
+        db,
+        organization_id=tenant.organization_id,
+        moment=moment,
+        group_by=group_by,
+    )
+    return UsageBreakdownResponse(
+        period_start=period.start,
+        period_end=period.end,
+        group_by=group_by,
+        items=[
+            UsageBreakdownRow(
+                group=row.group,
+                unit=row.unit,
+                reserved_quantity=row.reserved_quantity,
+                recorded_quantity=row.recorded_quantity,
+                entries=row.entries,
+            )
+            for row in rows
+        ],
+    )
+
+
+@governance_routes.get("/privacy/requests/{request_id}/export")
 def download_privacy_export(
     request_id: UUID,
     tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
@@ -593,88 +731,11 @@ def download_privacy_export(
     )
 
 
-@router.post("/privacy/requests/{request_id}/cancel", response_model=PrivacyRequestResponse)
-def cancel_privacy_request(
-    request_id: UUID,
-    tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
-    db: Session = Depends(get_db_session),
-) -> PrivacyRequestResponse:
-    try:
-        row = cancel_request(
-            db,
-            organization_id=tenant.organization_id,
-            actor_user_id=tenant.membership.user_id,
-            request_id=request_id,
-        )
-    except InvalidRequestStateError as error:
-        db.rollback()
-        not_found = "not found" in str(error)
-        code = status.HTTP_404_NOT_FOUND if not_found else status.HTTP_409_CONFLICT
-        raise HTTPException(status_code=code, detail=str(error)) from None
-    stored_key = row.artifact_reference
-    row.artifact_reference = None
-    db.commit()
-    if stored_key:
-        # A cancelled export must not stay downloadable. The request is already committed as
-        # cancelled, so a failure here leaves an unreferenced object for the expiry job to report.
-        try:
-            get_object_storage().delete(stored_key)
-        except ObjectNotFoundError:
-            pass
-    return _request_response(row)
-
-
-@router.get("/privacy/legal-holds", response_model=list[LegalHoldResponse])
-def list_legal_holds(
-    tenant: TenantContext = Depends(require_permission("governance.privacy.read")),
-    db: Session = Depends(get_db_session),
-) -> list[LegalHoldResponse]:
-    rows = db.scalars(
-        select(LegalHold)
-        .where(LegalHold.organization_id == tenant.organization_id)
-        .order_by(LegalHold.placed_at.desc())
-    ).all()
-    return [_hold_response(row) for row in rows]
-
-
-class GovernanceAccessResponse(BaseModel):
-    """Which governance permissions the caller holds. Used to shape the UI only.
-
-    The server enforces every action again on each request.
-    """
-
-    capabilities_read: bool
-    capabilities_manage: bool
-    usage_read: bool
-    budgets_manage: bool
-    privacy_read: bool
-    privacy_manage: bool
-
-
-@router.get("/access", response_model=GovernanceAccessResponse)
-def get_governance_access(
-    tenant: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db_session),
-) -> GovernanceAccessResponse:
-    def granted(permission_key: str) -> bool:
-        return permission_granted(db, tenant_context=tenant, permission_key=permission_key)
-
-    return GovernanceAccessResponse(
-        capabilities_read=granted("governance.capabilities.read"),
-        capabilities_manage=granted("governance.capabilities.manage"),
-        usage_read=granted("governance.usage.read"),
-        budgets_manage=granted("governance.budgets.manage"),
-        privacy_read=granted("governance.privacy.read"),
-        privacy_manage=granted("governance.privacy.manage"),
-    )
-
-# ---------------------------------------------------------------------------
 # Contact consent (DFR1-006, ADR-0029 gate 7)
 # ---------------------------------------------------------------------------
 
 
 class ConsentRecordCreate(BaseModel):
-    contact_id: UUID
     channel: Literal["whatsapp", "email", "sms", "voice"]
     purpose: Literal["customer_service", "marketing", "automated_follow_up", "voice_outreach"]
     status: Literal["granted", "revoked"]
@@ -727,7 +788,7 @@ def _consent_response(row: ContactConsentRecord) -> ConsentRecordResponse:
     )
 
 
-@router.get("/consents", response_model=ConsentStateResponse)
+@governance_routes.get("/consents/{contact_id}", response_model=ConsentStateResponse)
 def get_contact_consent(
     contact_id: UUID,
     tenant: TenantContext = Depends(require_permission("governance.consent.read")),
@@ -765,8 +826,9 @@ def get_contact_consent(
     )
 
 
-@router.post("/consents", response_model=ConsentRecordResponse, status_code=status.HTTP_201_CREATED)
+@governance_routes.post("/consents/{contact_id}", response_model=ConsentRecordResponse, status_code=status.HTTP_201_CREATED)
 def record_contact_consent(
+    contact_id: UUID,
     payload: ConsentRecordCreate,
     tenant: TenantContext = Depends(require_permission("governance.consent.manage")),
     db: Session = Depends(get_db_session),
@@ -776,7 +838,7 @@ def record_contact_consent(
         row = record_consent(
             db,
             organization_id=tenant.organization_id,
-            contact_id=payload.contact_id,
+            contact_id=contact_id,
             channel=payload.channel,
             purpose=payload.purpose,
             status=payload.status,
@@ -794,116 +856,10 @@ def record_contact_consent(
     db.commit()
     return _consent_response(row)
 
-# ---------------------------------------------------------------------------
-# Provider connections (DFR1-006 / DFR1-011 foundation)
-# ---------------------------------------------------------------------------
 
+canonical_router = APIRouter(tags=["governance"])
+canonical_router.include_router(governance_routes, prefix="/api/v1/ai/governance")
 
-class ProviderConnectionCreate(BaseModel):
-    provider_kind: Literal["llm", "whatsapp", "email", "voice"]
-    display_name: str = Field(..., min_length=1, max_length=120)
-    secret_ref: str = Field(..., min_length=3, max_length=120, pattern=r"^[A-Z][A-Z0-9_]{2,119}$")
-    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
-
-
-class ProviderConnectionResponse(BaseModel):
-    id: UUID
-    provider_kind: str
-    display_name: str
-    # The environment variable name only. The secret value is never returned.
-    secret_ref: str
-    secret_present: bool
-    status: str
-    last_verified_at: datetime | None
-    last_error_code: str | None
-    created_at: datetime
-
-
-def _provider_response(row: ProviderConnection) -> ProviderConnectionResponse:
-    return ProviderConnectionResponse(
-        id=row.id,
-        provider_kind=row.provider_kind,
-        display_name=row.display_name,
-        secret_ref=row.secret_ref,
-        secret_present=provider_secret_present(row.secret_ref),
-        status=row.status,
-        last_verified_at=row.last_verified_at,
-        last_error_code=row.last_error_code,
-        created_at=row.created_at,
-    )
-
-
-@router.get("/providers", response_model=list[ProviderConnectionResponse])
-def list_provider_connections(
-    tenant: TenantContext = Depends(require_permission("governance.providers.read")),
-    db: Session = Depends(get_db_session),
-) -> list[ProviderConnectionResponse]:
-    return [_provider_response(row) for row in list_connections(db, organization_id=tenant.organization_id)]
-
-
-@router.post("/providers", response_model=ProviderConnectionResponse, status_code=status.HTTP_201_CREATED)
-def create_provider_connection(
-    payload: ProviderConnectionCreate,
-    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
-    db: Session = Depends(get_db_session),
-) -> ProviderConnectionResponse:
-    try:
-        row = create_connection(
-            db,
-            organization_id=tenant.organization_id,
-            actor_user_id=tenant.membership.user_id,
-            provider_kind=payload.provider_kind,
-            display_name=payload.display_name,
-            secret_ref=payload.secret_ref,
-        )
-    except ProviderConnectionExistsError as error:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
-    except ProviderConnectionError as error:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
-    db.commit()
-    return _provider_response(row)
-
-
-@router.post("/providers/{connection_id}/verify", response_model=ProviderConnectionResponse)
-def verify_provider_connection(
-    connection_id: UUID,
-    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
-    db: Session = Depends(get_db_session),
-) -> ProviderConnectionResponse:
-    try:
-        row = verify_connection(
-            db,
-            organization_id=tenant.organization_id,
-            actor_user_id=tenant.membership.user_id,
-            connection_id=connection_id,
-        )
-    except ProviderConnectionNotFoundError:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider connection not found.") from None
-    except ProviderConnectionError as error:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
-    db.commit()
-    return _provider_response(row)
-
-
-@router.post("/providers/{connection_id}/disable", response_model=ProviderConnectionResponse)
-def disable_provider_connection(
-    connection_id: UUID,
-    tenant: TenantContext = Depends(require_permission("governance.providers.manage")),
-    db: Session = Depends(get_db_session),
-) -> ProviderConnectionResponse:
-    try:
-        row = disable_connection(
-            db,
-            organization_id=tenant.organization_id,
-            actor_user_id=tenant.membership.user_id,
-            connection_id=connection_id,
-        )
-    except ProviderConnectionNotFoundError:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider connection not found.") from None
-    db.commit()
-    return _provider_response(row)
+# Legacy alias for existing consumers (ADR-0031). Same handlers, hidden from OpenAPI.
+router = APIRouter(tags=["governance"])
+router.include_router(governance_routes, prefix="/api/v1/governance", include_in_schema=False)

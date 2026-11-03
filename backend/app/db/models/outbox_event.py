@@ -113,6 +113,10 @@ class OutboxEvent(Base):
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Identifies the current lease. Every transition out of "processing" must present it (WS3 fencing).
+    claim_token: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Stable reason code for a dead letter, such as "max_attempts_exhausted" or "no_administrator".
+    dead_letter_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

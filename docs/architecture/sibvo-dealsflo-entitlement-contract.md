@@ -76,13 +76,50 @@ A repeat returns `already_released: true`. A member with no Dealsflo seat return
 
 Refusals: `403 actor_not_authorized` (the actor is not an active owner, the session is
 invalid or expired, or the actor targets themself); `409 last_owner_or_owner_seat` (the
-target holds an owner seat, which removal never releases).
+target holds an owner seat, which removal never releases); `409 idempotency_key_conflict`
+(SIBVO already holds a release for this key with a different target, so nothing changed).
+
+**Retry.** The client retries transient failures (connection errors, timeouts and 5xx) with
+the same key, because SIBVO enforces the key (WP-A1). A retry cannot release a second seat.
+A repeat after a release returns `already_released`. The reason is audit text and does not
+take part in the key check, so a retry with reworded text is not a conflict. The contract is
+in SIBVO's `docs/integrations/seat-release-contract.md`.
 
 **Boundary.** This endpoint changes only the Dealsflo product membership, by setting its
 status to `suspended`. It never changes the organization membership or the global SIBVO
 identity. It does not depend on the subscription status, so a lapsed plan can still remove
 members. The audit event records the actor, organization, target product membership, reason
 and idempotency key.
+
+### 2.4 Organization-level AI entitlement snapshot (WS5, ADR-0027)
+
+Background AI work has no user session, so it cannot use `/sso/introspect`. It uses this
+authenticated service contract instead:
+
+- **Endpoint:** `POST /api/v1/sso/organization-entitlements`, form field `organization_id`.
+  HTTP Basic with the confidential Dealsflo client (the same client as `/sso/introspect`).
+  There is no unauthenticated route.
+- **Denial:** `{"active": false}` for any inactive organization, unpublished product, subscription
+  that is not active or trialing, expired trial, or unmapped plan. No reason and no plan data are returned.
+- **Grant:** `{"active": true, "snapshot": {...}, "signature": {...}}`. The snapshot holds
+  `version`, `snapshot_id`, `attested: true`, `organization_id`, `product_key`,
+  `subscription_status`, `issued_at`, `expires_at` (30 seconds after issue) and exactly one
+  entitlement, `ai_gateway`, which is `enabled: false` unless the plan enables it. It holds no
+  user or membership data.
+- **Signature:** `HMAC-SHA256` over the canonical JSON of `snapshot` (keys sorted, separators
+  `,` and `:`, ASCII). The key is `SSO_ORG_SNAPSHOT_SIGNING_KEY` in SIBVO and
+  `SIBVO_ORG_SNAPSHOT_SIGNING_KEY` in Dealsflo. The key id is `kid`. The golden vector in
+  both repositories' tests pins the canonical rule.
+- **Missing key:** SIBVO answers 503. Dealsflo denies.
+- **Validity:** Dealsflo uses a snapshot only while `now < expires_at`, with 5 seconds of
+  issue-time skew. It never uses an expired snapshot. If SIBVO cannot refresh, execution is denied.
+  Backoff after a failed refresh is capped at 300 seconds. It limits retries and never extends
+  authorization.
+- **Revocation:** a grant that SIBVO withdraws is removed at the next refresh. The longest possible
+  delay is the 30-second validity window.
+
+The entitlement rules that apply to the snapshot are the same rules that apply to a session
+snapshot (`evaluate_feature_access`). The decision is never made by a separate engine.
 
 ## 3. Team removal lifecycle (Dealsflo)
 
@@ -352,7 +389,7 @@ behaviour is claimed in this contract.
 | Story | Status | Evidence / gap |
 |---|---|---|
 | DFR1-004 identity and organization contract | Implemented and tested | Snapshot binding on every revalidation; tenant binding on feature checks; client boundary; live cross-repository checks pass against a running SIBVO |
-| DFR1-005 subscription, entitlement, seat and limit contract | **Partially implemented** | Done: fallback removed for staging and production; seat capacity read; team removal releases the seat after SIBVO confirms; plan activation checks reservations and downgrade capacity, with PostgreSQL race and lock tests. **Open:** organization-membership deactivation flow (4.2-1); numeric limits (none defined, section 6); browser verification with a live SIBVO sign-in (section 11) |
+| DFR1-005 subscription, entitlement, seat and limit contract | **Partially implemented** | Done: fallback removed for staging and production; seat capacity read; team removal releases the seat after SIBVO confirms; plan activation checks reservations and downgrade capacity, with PostgreSQL race and lock tests. **Open:** organization-membership deactivation flow (4.2-1); numeric limits (none defined, section 6); browser verification with a live SIBVO sign-in (section 11) WS5: boolean `ai_gateway` enforced for every AI decision through the organization snapshot (section 2.4). Numeric AI limits are not defined and not enforced. |
 | DFR1-053 usage reconciliation and lifecycle tests | **Blocked** | Usage contract proposed (section 7). Depends on DFR1-017, DFR1-036 and an approved SIBVO ingestion endpoint. Not claimed as complete |
 
 ## 11. Verification status

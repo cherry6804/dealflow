@@ -45,22 +45,9 @@ class CapabilityDefinition:
         return False
 
 
-# The provider kind each provider-requiring capability needs. A capability not listed here has no
-# provider kind, so it can never be satisfied and fails closed. SMS has no backlog provider yet.
-PROVIDER_KIND_BY_CAPABILITY: dict[str, str] = {
-    "ai.assistant": "llm",
-    "ai.agents": "llm",
-    "ai.workflow_execution": "llm",
-    "ai.predictions": "llm",
-    "ai.content_generation": "llm",
-    "ai.document_processing": "llm",
-    "ai.voice": "voice",
-    "channels.whatsapp": "whatsapp",
-    "channels.email": "email",
-    "channels.voice": "voice",
-}
-
 AI_MASTER = "ai.master"
+# SIBVO entitlement that gates every AI capability (WS5, ADR-0027). Boolean only; no limits.
+AI_GATEWAY_ENTITLEMENT = "ai_gateway"
 AUTOMATION_MASTER = "automation.master"
 AUTOMATION_DEAL_CREATED_RULES = "automation.deal_created_rules"
 
@@ -69,25 +56,32 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(AI_MASTER, CapabilityCategory.MASTER, None),
     CapabilityDefinition(AUTOMATION_MASTER, CapabilityCategory.MASTER, None),
     CapabilityDefinition(
-        "ai.assistant", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.assistant", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.agents", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.agents", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.workflow_execution", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.workflow_execution", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.predictions", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.predictions", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.content_generation", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.content_generation", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
-        "ai.document_processing", CapabilityCategory.AI, AI_MASTER, requires_provider=True
+        "ai.document_processing", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT
     ),
     CapabilityDefinition(
         "ai.voice", CapabilityCategory.AI, AI_MASTER, requires_provider=True,
+        entitlement_feature=AI_GATEWAY_ENTITLEMENT,
         requires_consent=True,
     ),
     CapabilityDefinition(
@@ -129,3 +123,13 @@ def ancestry(definition: CapabilityDefinition) -> tuple[CapabilityDefinition, ..
             CAPABILITY_BY_KEY[current.parent_key] if current.parent_key else None
         )
     return tuple(reversed(chain))
+
+
+# Capabilities that act on customers or channels. They need an approval bound to the exact payload.
+APPROVAL_REQUIRED_CAPABILITIES: frozenset[str] = frozenset({
+    "ai.voice",
+    "channels.whatsapp",
+    "channels.email",
+    "channels.sms",
+    "channels.voice",
+})

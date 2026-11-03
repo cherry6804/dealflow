@@ -1,0 +1,29 @@
+# Local development database with pgvector. Same image as the CI backend jobs (PostgreSQL 16,
+# digest pinned). Local only: this file is not a deployment definition.
+#
+# Start:  POSTGRES_PASSWORD=<choose a local password> docker compose -f infrastructure/local/docker-compose.yml up -d
+# Stop:   docker compose -f infrastructure/local/docker-compose.yml down
+#
+# The password is required and has no default, so no password is committed. The port is bound
+# to 127.0.0.1 and uses 5433, so it does not clash with a PostgreSQL server on 5432.
+name: dealflow-local
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+    environment:
+      POSTGRES_DB: dealflow_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your shell before starting this database.}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - dealflow_pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dealflow_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  dealflow_pgvector_data:

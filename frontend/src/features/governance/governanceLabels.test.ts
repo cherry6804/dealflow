@@ -12,6 +12,18 @@ import {
 } from "./governanceLabels";
 
 describe("governance labels", () => {
+  it("labels the AI denial reasons that the policy can return", () => {
+    for (const code of [
+      "execution_gates_pending",
+      "entitlement_disabled",
+      "snapshot_expired",
+      "snapshot_unavailable",
+      "organization_access_denied",
+    ]) {
+      expect(reasonLabel(code)).not.toBe("Unavailable");
+    }
+  });
+
   it("names every catalogue capability and falls back to the key", () => {
     expect(capabilityLabel("automation.master")).toBe("Automation (master switch)");
     expect(capabilityLabel("unknown.key")).toBe("unknown.key");

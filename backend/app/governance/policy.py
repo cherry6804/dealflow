@@ -5,22 +5,17 @@ It fails closed. An unknown capability, a disabled master or capability switch, 
 gate whose infrastructure is not built yet all produce a denial with a stable reason
 code. The frontend never decides; every execution entry point calls this engine.
 
-Gates, in evaluation order (the first failing gate decides the reason):
-1. The capability is known to the catalogue.
-2. An executable capability declares a SIBVO plan feature. Without one it is denied
-   (fail closed); the entitlement check then reads SIBVO's attested snapshot.
-3. Master and capability switches are enabled, checked from the top of the chain.
-4. A capability that requires approval is denied: no approval model exists (DFR1-025).
-5. A capability that needs a provider is denied unless a verified, fresh connection of its kind exists.
-6. A capability that needs consent is denied: no consent model exists.
+Gates implemented here:
+1. Capability is known to the catalogue.
+2. Master and capability switches are enabled, checked from the top of the chain.
+3. Capabilities that need a provider are denied until a verified provider connection exists
+   (ADR-0032). A ready provider is not an execution grant: the capability is then denied with
+   ``execution_gates_pending`` until consent, budget, approval and activation gates are built.
+4. Capabilities that need consent are denied until a consent model exists (not built).
 
-Execution callers use ``app.governance.execution_gate.authorize_execution``, which adds the
-actor, target and resource checks, the billing check, and an audit record for every decision.
-This module is the policy only. It is also used to display capability state.
-
-Not implemented, and therefore not claimed: consent and channel policy,
-approval, budgets and usage limits for billable work (DFR1-017), rate and concurrency limits,
-and in-flight cancellation for runs that outlast a request. They are blocked in the E13 document.
+Gates not implemented in this slice, and therefore not claimed: SIBVO entitlement,
+provider health, resource publication and activation, per-actor permission, budgets,
+rate limits and human approval. They are listed in the E13 documentation as blocked.
 """
 
 from __future__ import annotations
@@ -35,12 +30,12 @@ from app.auth.dependencies import CurrentUserContext
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
     CAPABILITY_BY_KEY,
-    PROVIDER_KIND_BY_CAPABILITY,
     CapabilityCategory,
     CapabilityDefinition,
     ancestry,
 )
 from app.governance.entitlement import (
+    ORG_SNAPSHOT_FEATURES,
     REASON_ENTITLEMENT_DISABLED,
     REASON_ENTITLEMENT_MISSING,
     REASON_ENTITLEMENT_UNVERIFIED,
@@ -50,39 +45,39 @@ from app.governance.entitlement import (
     REASON_WRONG_ORGANIZATION,
     verify_entitlement,
 )
-from app.governance.provider_connections import (
-    REASON_PROVIDER_HEALTH_STALE,
-    REASON_PROVIDER_UNHEALTHY,
-    provider_gate,
-)
+from app.governance.org_entitlement import organization_entitlement_verdict
+from app.providers.readiness import any_provider_ready
+from app.providers.registry import providers_for_capability
 
 REASON_ALLOWED = "allowed"
 REASON_UNKNOWN_CAPABILITY = "unknown_capability"
 REASON_MASTER_DISABLED = "master_disabled"
 REASON_CAPABILITY_DISABLED = "capability_disabled"
 REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
-REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
 REASON_ENTITLEMENT_NOT_DEFINED = "entitlement_not_defined"
-REASON_APPROVAL_REQUIRED = "approval_required"
+REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
+REASON_EXECUTION_GATES_PENDING = "execution_gates_pending"
 
 _EXPLANATIONS: dict[str, str] = {
     REASON_ALLOWED: "The capability is enabled for this organization.",
     REASON_UNKNOWN_CAPABILITY: "This capability is not recognised, so it cannot run.",
     REASON_MASTER_DISABLED: "A master switch above this capability is turned off.",
     REASON_CAPABILITY_DISABLED: "This capability is turned off for the organization.",
+    REASON_ENTITLEMENT_NOT_DEFINED: "This capability has no confirmed plan feature, so it cannot run.",
     REASON_PROVIDER_NOT_CONNECTED: (
         "A verified provider connection is required and none is available."
     ),
-    REASON_PROVIDER_UNHEALTHY: "The provider connection failed its last health check.",
-    REASON_PROVIDER_HEALTH_STALE: "The provider connection needs a fresh health check.",
+    REASON_EXECUTION_GATES_PENDING: (
+        "A provider is connected, but the consent, budget, approval and activation gates "
+        "are not yet enforced, so this capability stays disabled."
+    ),
+    "snapshot_missing": "No current SIBVO entitlement snapshot is available for this organization.",
+    "snapshot_expired": "The SIBVO entitlement snapshot has expired and could not be refreshed.",
+    "snapshot_unavailable": "SIBVO could not be reached to confirm the entitlement.",
+    "snapshot_rejected": "The SIBVO entitlement response could not be verified.",
+    "organization_access_denied": "SIBVO reports that this organization has no current access.",
     REASON_CONSENT_NOT_CONFIGURED: (
         "Consent and channel policy must be configured before this capability can run."
-    ),
-    REASON_ENTITLEMENT_NOT_DEFINED: (
-        "This capability has no confirmed plan feature, so it cannot run."
-    ),
-    REASON_APPROVAL_REQUIRED: (
-        "This action needs a human approval of its exact payload before it can run."
     ),
     REASON_ENTITLEMENT_UNVERIFIED: (
         "Your subscription could not be verified. Sign in again or try later."
@@ -144,17 +139,15 @@ def evaluate_capability(
     user_context: CurrentUserContext | None = None,
     correlation_id: str | None = None,
     consent_checked: bool = False,
-    approval_checked: bool = False,
 ) -> PolicyDecision:
     """Return whether ``capability_key`` may execute for ``organization_id`` now.
 
-    ``approval_checked`` means the caller holds an approval for this exact payload and the gate
-    checks it (see ``app.governance.approvals``) before the execution. Without it, a capability
-    that requires approval is denied.
+    ``consent_checked`` means the caller supplied a contact and the execution gate checks that contact's consent.
+    Without it, a capability that requires consent is denied.
 
-    Gates run in this order: entitlement (SIBVO snapshot, for capabilities that declare a feature),
-    organization master and child switches, undefined entitlement, approval, provider, consent. The
-    first failing gate decides the reason. A capability with no verifiable snapshot is denied.
+    Gates run in this order: entitlement (SIBVO snapshot), organization master and child
+    switches, provider, consent. The first failing gate decides the reason. A capability
+    that needs an entitlement and has no verifiable snapshot is denied.
     """
 
     definition: CapabilityDefinition | None = CAPABILITY_BY_KEY.get(capability_key)
@@ -163,8 +156,10 @@ def evaluate_capability(
             capability_key, organization_id, REASON_UNKNOWN_CAPABILITY, 0, correlation_id
         )
 
-    # A missing, null or empty feature key is not a feature. It is never matched in a snapshot.
-    if definition.entitlement_feature:
+    if (
+        definition.entitlement_feature is not None
+        and definition.entitlement_feature not in ORG_SNAPSHOT_FEATURES
+    ):
         verdict = verify_entitlement(
             user_context,
             organization_id=organization_id,
@@ -179,10 +174,14 @@ def evaluate_capability(
     rows = {
         row.capability_key: row
         for row in db.scalars(
-            select(OrganizationCapabilitySetting).where(
+            select(OrganizationCapabilitySetting)
+            .where(
                 OrganizationCapabilitySetting.organization_id == organization_id,
                 OrganizationCapabilitySetting.capability_key.in_([item.key for item in chain]),
             )
+            # Re-read the switches on every check. A switch changed by another committed session must stop
+            # in-flight work at the next revalidation, even when this session already holds the old row.
+            .execution_options(populate_existing=True)
         ).all()
     }
 
@@ -200,31 +199,46 @@ def evaluate_capability(
                 definition.key, organization_id, reason, policy_version, correlation_id
             )
 
-    # Checked after the switches, so a disabled capability reports "turned off" first. An
-    # executable capability without a confirmed plan feature can never run.
+    # An executable capability without a confirmed plan feature can never run. A null or empty key is not a feature,
+    # so it cannot skip the entitlement check (E13 invariant, fail closed).
     if definition.category is not CapabilityCategory.MASTER and not definition.entitlement_feature:
         return _decision(
-            definition.key, organization_id, REASON_ENTITLEMENT_NOT_DEFINED, policy_version,
-            correlation_id,
-        )
-
-    if definition.requires_approval and not approval_checked:
-        return _decision(
-            definition.key, organization_id, REASON_APPROVAL_REQUIRED, policy_version,
-            correlation_id,
+            definition.key, organization_id, REASON_ENTITLEMENT_NOT_DEFINED, policy_version, correlation_id,
         )
 
     if definition.requires_provider:
-        reason = provider_gate(
+        provider_ready = any_provider_ready(
             db,
             organization_id=organization_id,
-            provider_kind=PROVIDER_KIND_BY_CAPABILITY.get(definition.key),
+            provider_keys=providers_for_capability(definition.key),
         )
-        if reason is not None:
-            return _decision(definition.key, organization_id, reason, policy_version, correlation_id)
+        if not provider_ready:
+            return _decision(
+                definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
+                correlation_id,
+            )
 
-    # A capability that needs consent is allowed here only when the caller supplies the contact and
-    # the gate checks that contact's consent. Without it, the capability fails closed.
+    if definition.entitlement_feature in ORG_SNAPSHOT_FEATURES:
+        # Organization-level SIBVO snapshot (WS5). Valid for background and synchronous callers alike.
+        org_verdict = organization_entitlement_verdict(
+            db,
+            organization_id=organization_id,
+            feature_key=definition.entitlement_feature,
+        )
+        if not org_verdict.allowed:
+            return _decision(
+                definition.key, organization_id, org_verdict.reason_code, policy_version,
+                correlation_id,
+            )
+
+    if definition.requires_provider:
+        # Entitlement and readiness are gates, never grants. Consent, budget, approval and activation
+        # are not built, so execution stays closed even when every gate above passes.
+        return _decision(
+            definition.key, organization_id, REASON_EXECUTION_GATES_PENDING, policy_version,
+            correlation_id,
+        )
+
     if definition.requires_consent and not consent_checked:
         return _decision(
             definition.key, organization_id, REASON_CONSENT_NOT_CONFIGURED, policy_version,

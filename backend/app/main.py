@@ -2,9 +2,6 @@
 """Application entry point for the DealFlow API."""
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from threading import Event, Thread
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +19,7 @@ from app.api.deals import router as deals_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
+from app.api.governance import canonical_router as ai_governance_router
 from app.api.governance import router as governance_router
 from app.api.governance_controls import router as governance_controls_router
 from app.api.imports import router as imports_router
@@ -31,12 +29,18 @@ from app.api.notifications import router as notifications_router
 from app.api.organizations import router as organizations_router
 from app.api.payment_milestones import router as payment_milestones_router
 from app.api.properties import router as properties_router
+from app.api.provider_connections import (
+    canonical_router as ai_provider_connections_router,
+)
+from app.api.provider_credentials import (
+    canonical_router as ai_provider_credentials_router,
+)
+from app.api.provider_credentials import router as provider_credentials_router
 from app.api.referrals import router as referrals_router
 from app.api.requirements import router as requirements_router
 from app.api.site_visits import router as site_visits_router
 from app.api.sso import router as sso_router
 from app.api.team import router as team_router
-from app.auth.email_outbox_worker import run_worker
 from app.config import get_settings
 from app.errors import register_error_handlers
 from app.logging import configure_logging
@@ -47,40 +51,6 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Manage application startup and email worker shutdown."""
-    stop_event = Event()
-    worker_thread = Thread(
-        target=run_worker,
-        kwargs={"stop_event": stop_event},
-        name="dealflow-email-outbox-worker",
-        daemon=False,
-    )
-
-    logger.info(
-        "DealFlow API starting",
-        extra={"environment": settings.app_environment},
-    )
-
-    worker_thread.start()
-
-    try:
-        yield
-    finally:
-        stop_event.set()
-        worker_thread.join(
-            timeout=settings.email_outbox_poll_seconds + 10
-        )
-
-        if worker_thread.is_alive():
-            logger.error(
-                "Email outbox worker did not stop within the timeout"
-            )
-
-        logger.info("DealFlow API shutting down")
-
-
 def create_app() -> FastAPI:
     """Create and configure the DealFlow API application."""
     application = FastAPI(
@@ -89,7 +59,6 @@ def create_app() -> FastAPI:
         description=(
             "API for the DealFlow real-estate business platform."
         ),
-        lifespan=lifespan,
         docs_url=None if settings.app_environment == "production" else "/docs",
         redoc_url=None if settings.app_environment == "production" else "/redoc",
         openapi_url=None if settings.app_environment == "production" else "/openapi.json",
@@ -148,8 +117,12 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     application.include_router(billing_audit_router)
     application.include_router(team_router)
+    application.include_router(ai_governance_router)
     application.include_router(governance_router)
     application.include_router(governance_controls_router)
+    application.include_router(ai_provider_credentials_router)
+    application.include_router(ai_provider_connections_router)
+    application.include_router(provider_credentials_router)
     application.include_router(invitation_signup_router)
     application.include_router(sso_router)
     @application.get("/health", tags=["system"])

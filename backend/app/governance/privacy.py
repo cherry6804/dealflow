@@ -6,9 +6,12 @@ What this module does:
 - Deletion eligibility per category, with stable reason codes.
 - Export and deletion request records with audited status changes.
 
-Request records do no work by themselves. The background processing that generates export
-artifacts and executes deletions lives in ``app.governance.privacy_execution`` and runs from the
-outbox worker. Nothing is reported complete until that processing has recorded it.
+What it does not do (documented as blocked in E13):
+- It does not generate export artifacts. An export stays "awaiting_artifact_generation"
+  until an artifact producer exists, and nothing is marked ready without one.
+- It does not delete or anonymize data. A deletion request records eligibility only.
+- It does not call external providers to delete their copies.
+- It does not run automatic retention purges.
 
 Every write is audited with the actor and the decision.
 """
@@ -18,11 +21,21 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
+from app.audit.independent import (
+    OUTCOME_COMPLETED,
+    OUTCOME_REQUESTED,
+    persist_independent_audit_event,
+)
 from app.db.models.audit_event import AuditEvent
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
 from app.governance.data_classification import CATEGORY_BY_KEY, is_customer_deletable
@@ -33,17 +46,17 @@ REASON_CATEGORY_UNKNOWN = "category_unknown"
 REASON_NOT_CUSTOMER_DELETABLE = "not_customer_deletable"
 REASON_LEGAL_HOLD = "legal_hold_active"
 REASON_NO_PRODUCER = "no_producer_yet"
-REASON_NO_EXPORT_PRODUCER = "no_export_producer_yet"
-REASON_EXECUTOR_NOT_BUILT = "deletion_executor_not_built"
-REASON_NOT_ORGANIZATION_OWNED = "not_organization_owned"
 
 STATUS_AWAITING_ARTIFACT = "awaiting_artifact_generation"
 STATUS_READY = "ready"
-STATUS_READY_PARTIAL = "ready_partial"
 STATUS_EXPIRED = "expired"
 STATUS_CANCELLED = "cancelled"
 STATUS_BLOCKED = "blocked"
 STATUS_ELIGIBILITY_RECORDED = "eligibility_recorded"
+REASON_NO_EXPORT_PRODUCER = "no_export_producer_yet"
+REASON_EXECUTOR_NOT_BUILT = "deletion_executor_not_built"
+REASON_NOT_ORGANIZATION_OWNED = "not_organization_owned"
+STATUS_READY_PARTIAL = "ready_partial"
 STATUS_COMPLETED = "completed"
 STATUS_PARTIALLY_COMPLETED = "partially_completed"
 
@@ -67,16 +80,43 @@ class DeletionDecision:
     reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
-def audit_privacy_event(
+def _attempt(
     db: Session,
     *,
     organization_id: UUID,
-    actor_user_id: UUID | None,
+    actor_user_id: UUID,
     action: str,
     resource_type: str,
     resource_id: str,
     metadata: dict,
-    correlation_id: str | None = None,
+) -> AuditEvent:
+    """Commit the requested record before the change (WP3). Fails closed if it cannot be written."""
+    return persist_independent_audit_event(
+        db,
+        attribution=user_attribution(
+            organization_id=organization_id, actor_user_id=actor_user_id
+        ),
+        event_type=PRIVACY_EVENT_TYPE,
+        action=action,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=None,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metadata=metadata,
+    )
+
+
+def _audit(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    metadata: dict,
+    requested: AuditEvent,
 ) -> None:
     db.add(
         AuditEvent(
@@ -85,13 +125,82 @@ def audit_privacy_event(
             event_type=PRIVACY_EVENT_TYPE,
             action=action,
             decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
             permission_key=None,
             resource_type=resource_type,
             resource_id=resource_id,
-            correlation_id=correlation_id,
+            correlation_id=requested.correlation_id,
             event_metadata=json.dumps(metadata, sort_keys=True, default=str),
         )
     )
+
+
+PRIVACY_SYSTEM_ACTOR = register_system_actor("privacy_lifecycle")
+
+
+def record_requested_privacy_event(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID | None,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    metadata: dict,
+) -> AuditEvent:
+    """Commit the requested record in its own transaction, before the governed change (WP3).
+
+    The row survives a rollback of the business transaction, and if it cannot be written the change must not run.
+    Work with no user (processing, expiry, retention) is attributed to the registered privacy system actor, within
+    the bound organization. The request's own requester is kept in the metadata by the caller.
+    """
+    attribution = (
+        user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+        if actor_user_id is not None
+        else system_attribution(organization_id=organization_id, capability=PRIVACY_SYSTEM_ACTOR)
+    )
+    return persist_independent_audit_event(
+        db,
+        attribution=attribution,
+        event_type=PRIVACY_EVENT_TYPE,
+        action=action,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=None,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metadata=metadata,
+    )
+
+
+def record_completed_privacy_event(
+    db: Session,
+    *,
+    requested: AuditEvent,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    metadata: dict,
+) -> None:
+    """Record the outcome in the business transaction. It commits or rolls back with the change it describes."""
+    db.add(
+        AuditEvent(
+            user_id=requested.user_id,
+            organization_id=requested.organization_id,
+            event_type=PRIVACY_EVENT_TYPE,
+            action=action,
+            decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            permission_key=None,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            correlation_id=requested.correlation_id,
+            event_metadata=json.dumps(metadata, sort_keys=True, default=str),
+        )
+    )
+    db.flush()
 
 
 def _require_category(category_key: str) -> None:
@@ -128,6 +237,15 @@ def set_retention_policy(
         raise ValueError("Retention days must be a positive integer or null.")
     previous = current_retention(db, organization_id=organization_id, category_key=category_key)
     version = (previous.version + 1) if previous is not None else 1
+    requested = _attempt(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="privacy.retention.changed",
+        resource_type="retention_policy",
+        resource_id=category_key,
+        metadata={"category_key": category_key, "requested_retention_days": retention_days, "requested_version": version},
+    )
     policy = RetentionPolicy(
         organization_id=organization_id,
         category_key=category_key,
@@ -137,7 +255,7 @@ def set_retention_policy(
     )
     db.add(policy)
     db.flush()
-    audit_privacy_event(
+    _audit(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -149,6 +267,7 @@ def set_retention_policy(
             "retention_days": retention_days,
             "version": version,
         },
+        requested=requested,
     )
     db.flush()
     return policy
@@ -166,7 +285,18 @@ def place_legal_hold(
     cleaned = reason.strip()
     if not cleaned:
         raise ValueError("A legal hold needs a reason.")
+    hold_id = uuid4()
+    requested = _attempt(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="privacy.legal_hold.placed",
+        resource_type="legal_hold",
+        resource_id=str(hold_id),
+        metadata={"category_key": category_key},
+    )
     hold = LegalHold(
+        id=hold_id,
         organization_id=organization_id,
         category_key=category_key,
         reason=cleaned[:500],
@@ -174,7 +304,7 @@ def place_legal_hold(
     )
     db.add(hold)
     db.flush()
-    audit_privacy_event(
+    _audit(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -182,6 +312,7 @@ def place_legal_hold(
         resource_type="legal_hold",
         resource_id=str(hold.id),
         metadata={"category_key": category_key, "reason": cleaned[:500]},
+        requested=requested,
     )
     db.flush()
     return hold
@@ -204,10 +335,7 @@ def release_legal_hold(
         raise InvalidRequestStateError("Legal hold not found.")
     if hold.released_at is not None:
         return hold
-    hold.released_at = datetime.now(UTC)
-    hold.released_by_user_id = actor_user_id
-    db.flush()
-    audit_privacy_event(
+    requested = _attempt(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -215,6 +343,19 @@ def release_legal_hold(
         resource_type="legal_hold",
         resource_id=str(hold.id),
         metadata={"category_key": hold.category_key},
+    )
+    hold.released_at = datetime.now(UTC)
+    hold.released_by_user_id = actor_user_id
+    db.flush()
+    _audit(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="privacy.legal_hold.released",
+        resource_type="legal_hold",
+        resource_id=str(hold.id),
+        metadata={"category_key": hold.category_key},
+        requested=requested,
     )
     db.flush()
     return hold
@@ -286,7 +427,18 @@ def create_privacy_request(
             else STATUS_BLOCKED
         )
 
+    request_id = uuid4()
+    requested = _attempt(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=f"privacy.{request_type}.requested",
+        resource_type="privacy_request",
+        resource_id=str(request_id),
+        metadata={"categories": unique_keys, "requested_status": status},
+    )
     request = PrivacyDataRequest(
+        id=request_id,
         organization_id=organization_id,
         request_type=request_type,
         status=status,
@@ -296,7 +448,7 @@ def create_privacy_request(
     )
     db.add(request)
     db.flush()
-    audit_privacy_event(
+    _audit(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -304,6 +456,7 @@ def create_privacy_request(
         resource_type="privacy_request",
         resource_id=str(request.id),
         metadata={"categories": unique_keys, "status": status, "decisions": decisions},
+        requested=requested,
     )
     db.flush()
     return request
@@ -338,11 +491,20 @@ def mark_export_ready(
         raise InvalidRequestStateError(f"Export is {request.status}.")
     if not artifact_reference.strip():
         raise ValueError("An artifact reference is required.")
+    requested = _attempt(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="privacy.export.ready",
+        resource_type="privacy_request",
+        resource_id=str(request.id),
+        metadata={"requested_expires_at": expires_at.isoformat()},
+    )
     request.status = STATUS_READY
     request.artifact_reference = artifact_reference.strip()[:500]
     request.expires_at = expires_at
     db.flush()
-    audit_privacy_event(
+    _audit(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -350,6 +512,7 @@ def mark_export_ready(
         resource_type="privacy_request",
         resource_id=str(request.id),
         metadata={"expires_at": expires_at.isoformat()},
+        requested=requested,
     )
     db.flush()
     return request
@@ -363,16 +526,9 @@ def cancel_request(
     request_id: UUID,
 ) -> PrivacyDataRequest:
     request = _request_for(db, organization_id=organization_id, request_id=request_id)
-    if request.status not in {
-        STATUS_AWAITING_ARTIFACT,
-        STATUS_ELIGIBILITY_RECORDED,
-        STATUS_READY,
-        STATUS_READY_PARTIAL,
-    }:
+    if request.status not in {STATUS_AWAITING_ARTIFACT, STATUS_ELIGIBILITY_RECORDED, STATUS_READY}:
         raise InvalidRequestStateError(f"Request is {request.status} and cannot be cancelled.")
-    request.status = STATUS_CANCELLED
-    db.flush()
-    audit_privacy_event(
+    requested = _attempt(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -380,6 +536,18 @@ def cancel_request(
         resource_type="privacy_request",
         resource_id=str(request.id),
         metadata={},
+    )
+    request.status = STATUS_CANCELLED
+    db.flush()
+    _audit(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=f"privacy.{request.request_type}.cancelled",
+        resource_type="privacy_request",
+        resource_id=str(request.id),
+        metadata={},
+        requested=requested,
     )
     db.flush()
     return request

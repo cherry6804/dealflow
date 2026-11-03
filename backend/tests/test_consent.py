@@ -36,11 +36,15 @@ from app.governance.consent import (
     current_consent,
     record_consent,
 )
-from app.governance.execution_gate import ExecutionRequest, authorize_execution
+from app.governance.execution_gate import ExecutionRequest, evaluate_execution
 from app.governance.service import set_capability_enabled
-from tests.governance_helpers import attested_user_context
+from tests.governance_helpers import (
+    allow_actor_execution_permission,
+    allow_organization_entitlements,
+    attested_user_context,
+)
 from tests.test_governance_api import _app_for
-from tests.test_team_api import create_manager
+from tests.test_team_api import create_manager, create_owner_manager
 
 BASE = "/api/v1/governance"
 CHANNEL_CAPABILITY = "channels.email"
@@ -49,7 +53,7 @@ TEST_FEATURE = "channels_email"
 
 @pytest.fixture
 def tenant() -> Iterator[tuple[UUID, UUID]]:
-    user, organization = create_manager(
+    user, organization = create_owner_manager(
         permissions=("governance.consent.manage", "governance.consent.read")
     )
     yield organization.id, user.id
@@ -58,7 +62,7 @@ def tenant() -> Iterator[tuple[UUID, UUID]]:
 
 @pytest.fixture
 def other_tenant() -> Iterator[tuple[UUID, UUID]]:
-    user, organization = create_manager(permissions=("governance.consent.manage",))
+    user, organization = create_owner_manager(permissions=("governance.consent.manage",))
     yield organization.id, user.id
     _cleanup(organization.id)
 
@@ -230,9 +234,8 @@ def test_an_authorized_user_records_and_reads_consent_through_the_api(tenant) ->
     with TestClient(_app_for(_actor_for(actor_id))) as client:
         client.headers.update({"X-Organization-ID": str(organization_id)})
         created = client.post(
-            f"{BASE}/consents",
+            f"{BASE}/consents/{contact_id}",
             json={
-                "contact_id": str(contact_id),
                 "channel": "email",
                 "purpose": "marketing",
                 "status": "granted",
@@ -241,7 +244,7 @@ def test_an_authorized_user_records_and_reads_consent_through_the_api(tenant) ->
                 "confirm": True,
             },
         )
-        read = client.get(f"{BASE}/consents", params={"contact_id": str(contact_id)})
+        read = client.get(f"{BASE}/consents/{contact_id}")
 
     assert created.status_code == 201
     assert created.json()["policy_version"] == CONSENT_POLICY_VERSION
@@ -262,9 +265,8 @@ def test_a_read_only_user_cannot_record_consent(tenant) -> None:
         with TestClient(_app_for(_actor_for(reader.id))) as client:
             client.headers.update({"X-Organization-ID": str(reader_org.id)})
             response = client.post(
-                f"{BASE}/consents",
+                f"{BASE}/consents/{contact_id}",
                 json={
-                    "contact_id": str(contact_id),
                     "channel": "email",
                     "purpose": "marketing",
                     "status": "granted",
@@ -283,11 +285,10 @@ def test_the_api_does_not_reveal_another_organizations_contact(tenant, other_ten
 
     with TestClient(_app_for(_actor_for(actor_id))) as client:
         client.headers.update({"X-Organization-ID": str(organization_id)})
-        read = client.get(f"{BASE}/consents", params={"contact_id": str(foreign_contact)})
+        read = client.get(f"{BASE}/consents/{foreign_contact}")
         write = client.post(
-            f"{BASE}/consents",
+            f"{BASE}/consents/{foreign_contact}",
             json={
-                "contact_id": str(foreign_contact),
                 "channel": "email",
                 "purpose": "marketing",
                 "status": "granted",
@@ -306,6 +307,16 @@ def test_the_api_does_not_reveal_another_organizations_contact(tenant, other_ten
 @pytest.fixture
 def channel_capability(monkeypatch) -> None:
     """A test-only channel capability with a plan feature and no provider requirement."""
+    allow_organization_entitlements(monkeypatch)
+    allow_actor_execution_permission(monkeypatch, "governance.consent.read")
+    # Consent is isolated here. Approval for channel sends is covered in test_approvals_and_channel_policy.py.
+    monkeypatch.setattr(execution_gate, "APPROVAL_REQUIRED_CAPABILITIES", frozenset())
+    # The rate gate runs an approved rule. Channels have none yet, so the test reuses an approved one.
+    monkeypatch.setitem(
+        execution_gate.RATE_EXECUTION_TYPE,
+        CHANNEL_CAPABILITY,
+        execution_gate.RATE_EXECUTION_TYPE["automation.deal_created_rules"],
+    )
     original = CAPABILITY_BY_KEY[CHANNEL_CAPABILITY]
     monkeypatch.setitem(
         CAPABILITY_BY_KEY,
@@ -355,17 +366,13 @@ def _authorize(organization_id, actor_id, contact_id, *, channel="email", purpos
             organization_id=organization_id,
             entitlements=[{"feature_key": TEST_FEATURE, "enabled": True}],
         )
-        decision = authorize_execution(
+        decision = evaluate_execution(
             db,
             ExecutionRequest(
                 organization_id=organization_id,
                 capability_key=CHANNEL_CAPABILITY,
-                actor=context,
-                resource_type="contact",
+                user_context=context,
                 resource_id=str(contact_id),
-                resource_organization_id=organization_id,
-                resource_active=True,
-                required_permission=None,
                 consent=ConsentSubject(contact_id=contact_id, channel=channel, purpose=purpose) if subject else None,
             ),
         )
@@ -459,7 +466,8 @@ def test_the_gate_decision_is_audited_with_the_consent_reason(tenant, channel_ca
         audit = db.scalar(
             select(AuditEvent).where(
                 AuditEvent.organization_id == organization_id,
-                AuditEvent.action == "capability.execution",
+                AuditEvent.action == "denied",
+                AuditEvent.resource_id == CHANNEL_CAPABILITY,
             )
         )
     assert audit is not None
@@ -470,6 +478,12 @@ def test_the_gate_decision_is_audited_with_the_consent_reason(tenant, channel_ca
     assert str(contact_id) not in (audit.event_metadata or "")
 
 
-def test_every_consent_reason_has_a_user_facing_explanation() -> None:
-    for code in ("consent_missing", "consent_revoked", "consent_expired", "consent_channel_mismatch"):
-        assert code in execution_gate._EXPLANATIONS
+def test_every_consent_reason_is_a_named_gate_reason() -> None:
+    """Reason codes are stable constants of the gate. The user-facing labels are checked in the frontend tests."""
+    expected = {
+        "consent_missing": execution_gate.REASON_CONSENT_MISSING,
+        "consent_revoked": execution_gate.REASON_CONSENT_REVOKED,
+        "consent_expired": execution_gate.REASON_CONSENT_EXPIRED,
+        "consent_channel_mismatch": execution_gate.REASON_CONSENT_CHANNEL_MISMATCH,
+    }
+    assert expected == {code: code for code in expected}

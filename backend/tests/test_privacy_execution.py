@@ -66,7 +66,7 @@ from app.governance.privacy_execution import (
 from app.governance.privacy_maintenance import run_export_expiry, run_retention
 from app.storage import LocalObjectStorage, StorageError
 from tests.test_governance_api import _app_for
-from tests.test_team_api import create_manager
+from tests.test_team_api import create_manager, create_owner_manager
 
 BASE = "/api/v1/governance"
 
@@ -82,7 +82,7 @@ def storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalObjectStora
 
 @pytest.fixture
 def tenant() -> Iterator[tuple[UUID, UUID]]:
-    user, organization = create_manager(
+    user, organization = create_owner_manager(
         permissions=("governance.privacy.manage", "governance.privacy.read")
     )
     yield organization.id, user.id
@@ -458,9 +458,7 @@ def test_an_expired_export_is_refused_and_its_object_is_removed(
 
 def test_another_organization_cannot_download_an_export(tenant, storage) -> None:
     request_id = _download_setup(tenant, storage)
-    other_user, other_organization = create_manager(
-        permissions=("governance.privacy.manage",)
-    )
+    other_user, other_organization = create_owner_manager(permissions=("governance.privacy.manage",))
     try:
         with TestClient(_app_for(other_user)) as client:
             client.headers.update({"X-Organization-ID": str(other_organization.id)})

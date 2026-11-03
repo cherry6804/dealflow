@@ -1,45 +1,79 @@
-"""Centralized execution gate for governed AI and automation (DFR1-006).
+"""The shared execution gate for AI and customer-impacting automation (WS6 WP4).
 
-Every governed execution calls ``authorize_execution`` before it does work, and again before each
-further step of the same run (in-flight revalidation). The gate combines:
+Every AI execution entry point and every automation that performs customer-impacting work must call
+``evaluate_execution``. It runs the gates in a fixed order and stops at the first failure. Nothing is executed
+on a denial. The same function serves synchronous requests and background work, so enforcement is identical.
 
-1. An actor is present, belongs to the organization, and has an active membership.
-2. The target resource belongs to the organization and is active (published and not paused).
-3. The capability policy allows it (``app.governance.policy.evaluate_capability``): plan feature,
-   organization switches, approval, provider and consent. Each of these fails closed.
-4. Billable work is denied until the usage budget gate exists (DFR1-017).
-5. The actor holds the permission for the action, checked through the existing permission lookup.
+Gate order (first failure decides):
 
-It writes one audit record for every decision, allowed or denied, in the caller's transaction.
-The record holds the actor, organization, capability, resource, stage and reason code. It holds no
-payload or personal data.
+1. entitlement   SIBVO ``ai_gateway`` snapshot, or the session plan feature for automation. Missing, invalid,
+                 expired or revoked entitlement denies. Reuses ``policy.evaluate_capability``.
+2. switches      Organization master and capability switches. Reuses ``policy.evaluate_capability``.
+3. provider      A configured, verified and usable provider. Fails closed when health is unknown. Reuses
+                 ``policy.evaluate_capability``.
+4. actor         The authenticated user holds the permission for the capability. A system actor may run only a
+                 capability that names a system permission, and none do yet.
+5. resource      AI capabilities require a resource. Automation must reference an active rule. There is no AI
+                 resource store yet, so AI resources are refused (``resource_not_found``).
+6. consent       Capabilities that need consent require a consent record. There is no consent store yet, so
+                 these are refused (``consent_not_configured``).
+7. approval      Customer-facing capabilities require an approval bound to the exact action payload. There is no
+                 approval store yet, so these are refused (``approval_required``).
+8. rate          The existing organization and actor rate limits. A type with no approved rule fails closed.
+9. budget        Usage is reserved before execution. The reservation is refused when it would exceed the budget,
+                 so the limit is a hard stop at 100 percent. The reservation is the last gate, so no release is
+                 needed when an earlier gate denies.
+10. audit        The decision is recorded in its own transaction (WP3). If that cannot be written, the gate
+                 releases any reservation, raises, and nothing executes.
 
-This module is the only place that turns a capability decision into an execution decision. Callers
-must not evaluate the policy directly for execution.
+``revalidate_ticket`` re-runs gates 1 to 5 before each later step, so a revoked entitlement, a disabled switch, a
+removed permission or a deactivated rule stops the work in flight.
+
+Honest status. Gates 1 to 4, 8, 9, 10 and the in-flight revalidation are implemented. Gates 5 to 7 are
+implemented as fail-closed checks against stores that do not exist yet. Therefore no AI capability can pass the
+gate today, which is the intended default. Concurrency limits are not implemented, because no limit has been
+approved (decision D-6). Serialization for budget and rate counters comes from their row locks.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import (
+    AuditAttribution,
+    SystemActorCapability,
+    system_attribution,
+    user_attribution,
+)
+from app.audit.independent import (
+    OUTCOME_DENIED,
+    OUTCOME_REQUESTED,
+    AuditPersistenceError,
+    persist_independent_audit_event,
+)
 from app.auth.dependencies import CurrentUserContext
-from app.authz.dependencies import permission_granted
-from app.db.models.audit_event import AuditDecision, AuditEvent
+from app.authz.permissions import OWNER_ONLY_PERMISSION_KEYS, OWNER_ROLE_NAME
 from app.db.models.membership import Membership
-from app.db.models.organization import Organization
+from app.db.models.membership_role import MembershipRole
+from app.db.models.permission import Permission
+from app.db.models.role import Role
+from app.db.models.role_permission import RolePermission
 from app.governance.approvals import (
     ApprovalError,
-    check_approval_for_execution,
+    check_approval_hash,
     consume_approval,
 )
-from app.governance.capabilities import CAPABILITY_BY_KEY
+from app.governance.capabilities import (
+    APPROVAL_REQUIRED_CAPABILITIES,
+    AUTOMATION_DEAL_CREATED_RULES,
+    CAPABILITY_BY_KEY,
+    CapabilityCategory,
+)
 from app.governance.channel_policy import evaluate_channel_policy
 from app.governance.consent import (
     EFFECTIVE_EXPIRED,
@@ -48,29 +82,48 @@ from app.governance.consent import (
     ConsentSubject,
     current_consent,
 )
-from app.governance.policy import PolicyDecision, evaluate_capability
+from app.governance.policy import (
+    REASON_ALLOWED,
+    REASON_CONSENT_NOT_CONFIGURED,
+    REASON_EXECUTION_GATES_PENDING,
+    REASON_PROVIDER_NOT_CONNECTED,
+    evaluate_capability,
+)
 from app.governance.usage_ledger import (
     BudgetExceededError,
     BudgetNotConfiguredError,
     IdempotencyConflictError,
     UsageUnit,
+    release,
     reserve,
+    settle,
 )
-from app.tenant.dependencies import TenantContext
+from app.rate_limits.limiter import (
+    REASON_RATE_LIMITED,
+    RateLimitDecision,
+    consume_or_deny,
+)
+from app.rate_limits.policy import AUTOMATION_DEAL_CREATED_EXECUTION
 
-GOVERNANCE_AUDIT_EVENT_TYPE = "governance"
-EXECUTION_AUDIT_ACTION = "capability.execution"
+GATE_ENTITLEMENT = "entitlement"
+GATE_SWITCHES = "switches"
+GATE_PROVIDER = "provider"
+GATE_ACTOR = "actor"
+GATE_RESOURCE = "resource"
+GATE_CONSENT = "consent"
+GATE_APPROVAL = "approval"
+GATE_CHANNEL = "channel"
+GATE_RATE = "rate"
+GATE_BUDGET = "budget"
+GATE_AUDIT = "audit"
 
-REASON_ACTOR_REQUIRED = "actor_required"
-REASON_WRONG_ORGANIZATION = "wrong_organization"
-REASON_MEMBERSHIP_INACTIVE = "membership_inactive"
-REASON_TARGET_ORGANIZATION_MISMATCH = "target_organization_mismatch"
-REASON_RESOURCE_NOT_ACTIVE = "resource_not_active"
-REASON_ACTOR_NOT_AUTHORIZED = "actor_not_authorized"
-REASON_BUDGET_RESERVATION_REQUIRED = "budget_reservation_required"
-REASON_BUDGET_NOT_CONFIGURED = "budget_not_configured"
-REASON_BUDGET_EXHAUSTED = "budget_exhausted"
-REASON_USAGE_KEY_CONFLICT = "usage_key_conflict"
+REASON_ALLOWED_ALL = "allowed"
+REASON_PERMISSION_DENIED = "permission_denied"
+REASON_SYSTEM_ACTOR_NOT_PERMITTED = "system_actor_not_permitted"
+REASON_RESOURCE_REQUIRED = "resource_required"
+REASON_RESOURCE_NOT_FOUND = "resource_not_found"
+REASON_RESOURCE_INACTIVE = "resource_inactive"
+REASON_APPROVAL_REQUIRED = "approval_required"
 REASON_CONSENT_MISSING = "consent_missing"
 REASON_CONSENT_REVOKED = "consent_revoked"
 REASON_CONSENT_EXPIRED = "consent_expired"
@@ -80,232 +133,206 @@ REASON_CHANNEL_DISABLED = "channel_disabled"
 REASON_CONTACT_DO_NOT_DISTURB = "contact_do_not_disturb"
 REASON_OUTSIDE_MESSAGING_WINDOW = "outside_messaging_window"
 REASON_QUIET_HOURS = "quiet_hours"
-REASON_APPROVAL_REQUIRED = "approval_required"
-REASON_APPROVAL_NOT_FOUND = "approval_not_found"
-REASON_APPROVAL_NOT_APPROVED = "approval_not_approved"
-REASON_APPROVAL_EXPIRED = "approval_expired"
-REASON_APPROVAL_ALREADY_USED = "approval_already_used"
-REASON_APPROVAL_MISMATCH = "approval_mismatch"
-REASON_ALLOWED = "allowed"
+REASON_RATE_NOT_CONFIGURED = "rate_limit_not_configured"
+REASON_RATE_LIMITED_GATE = "rate_limited"
+REASON_BUDGET_NOT_CONFIGURED = "budget_not_configured"
+REASON_BUDGET_EXHAUSTED = "budget_exhausted"
+REASON_USAGE_KEY_CONFLICT = "usage_key_conflict"
+REASON_BUDGET_UNAVAILABLE = "budget_unavailable"
+REASON_AUDIT_UNAVAILABLE = "audit_unavailable"
+REASON_UNKNOWN_CAPABILITY_GATE = "unknown_capability"
 
-_EXPLANATIONS: dict[str, str] = {
-    REASON_ACTOR_REQUIRED: "Automation runs only on behalf of an authenticated user.",
-    REASON_WRONG_ORGANIZATION: "Your session is not authorized for this organization.",
-    REASON_MEMBERSHIP_INACTIVE: "Your membership in this organization is not active.",
-    REASON_TARGET_ORGANIZATION_MISMATCH: "The record does not belong to this organization.",
-    REASON_RESOURCE_NOT_ACTIVE: "This automation is not published and active.",
-    REASON_ACTOR_NOT_AUTHORIZED: "You do not have permission for this action.",
-    REASON_BUDGET_RESERVATION_REQUIRED: (
-        "Billable AI work must reserve usage budget before it runs."
-    ),
-    REASON_BUDGET_NOT_CONFIGURED: (
-        "No usage budget is configured for this period, so billable AI work cannot run."
-    ),
-    REASON_BUDGET_EXHAUSTED: "The usage budget for this period is used up.",
-    REASON_USAGE_KEY_CONFLICT: (
-        "This usage reservation key was already used for a different request."
-    ),
-    REASON_CONSENT_MISSING: "The contact has not given consent for this channel and purpose.",
-    REASON_CONSENT_REVOKED: "The contact has withdrawn consent for this channel and purpose.",
-    REASON_CONSENT_EXPIRED: "The contact's consent for this channel and purpose has expired.",
-    REASON_CONSENT_CHANNEL_MISMATCH: "The consent channel does not match this capability.",
-    REASON_CHANNEL_NOT_CONFIGURED: "No channel policy is configured for this channel, so it cannot be used.",
-    REASON_CHANNEL_DISABLED: "This channel is turned off for the organization.",
-    REASON_CONTACT_DO_NOT_DISTURB: "This contact has asked not to be contacted.",
-    REASON_OUTSIDE_MESSAGING_WINDOW: "The current time is outside the messaging window for this channel.",
-    REASON_QUIET_HOURS: "The current time is within the quiet hours for this channel.",
-    REASON_APPROVAL_REQUIRED: "This action needs a human approval of its exact payload before it can run.",
-    REASON_APPROVAL_NOT_FOUND: "The approval does not exist in this organization.",
-    REASON_APPROVAL_NOT_APPROVED: "The approval has not been granted.",
-    REASON_APPROVAL_EXPIRED: "The approval has expired. Request a new one.",
-    REASON_APPROVAL_ALREADY_USED: "The approval was already used. Each approval covers one execution.",
-    REASON_APPROVAL_MISMATCH: "The approval does not cover this exact action and payload.",
-    REASON_ALLOWED: "The execution is allowed.",
+# AI decisions keep the event type the AI entry point has always used. Other capabilities use the gate type.
+AI_EXECUTION_EVENT_TYPE = "ai_execution"
+EXECUTION_EVENT_TYPE = "execution_gate"
+
+
+# The permission each capability needs. An unlisted AI capability needs ``ai.execute``, which is not in the
+# permission catalogue, so no role grants it and it is refused until the permission is defined.
+REQUIRED_PERMISSION: dict[str, str] = {
+    AUTOMATION_DEAL_CREATED_RULES: "deals.create",
+}
+DEFAULT_AI_PERMISSION = "ai.execute"
+# Rate type for each capability. A capability missing here has no approved rate rule, so it is refused.
+RATE_EXECUTION_TYPE: dict[str, str] = {
+    AUTOMATION_DEAL_CREATED_RULES: AUTOMATION_DEAL_CREATED_EXECUTION,
 }
 
 
 @dataclass(frozen=True)
-class BudgetReservation:
-    """Usage the execution needs. The gate reserves it, and the caller settles or releases it."""
+class GateOutcome:
+    gate: str
+    allowed: bool
+    reason_code: str
 
-    unit: UsageUnit | str
-    quantity: int
-    idempotency_key: str
+
+@dataclass(frozen=True)
+class ExecutionTicket:
+    """Reservations held for one allowed execution. Settle or release them when the work ends."""
+
+    organization_id: UUID
+    capability_key: str
+    reservation_keys: tuple[tuple[str, str], ...] = field(default_factory=tuple)  # (unit, idempotency key)
+
+
+@dataclass(frozen=True)
+class ExecutionDecision:
+    allowed: bool
+    capability_key: str
+    reason_code: str
+    gate: str | None
+    outcomes: tuple[GateOutcome, ...]
+    ticket: ExecutionTicket | None = None
+    # The limiter's detail when the rate gate ran. Used for the rate-limit record. Never a budget figure.
+    rate: RateLimitDecision | None = None
 
 
 @dataclass(frozen=True)
 class ExecutionRequest:
-    """One proposed execution, with everything the gate needs to decide."""
-
     organization_id: UUID
     capability_key: str
-    actor: CurrentUserContext | None
-    resource_type: str
-    resource_id: str
-    resource_organization_id: UUID
-    resource_active: bool
-    required_permission: str | None
-    billable: bool = False
-    budget: BudgetReservation | None = None
-    # Required for capabilities that need consent. The gate checks this contact's current consent.
-    consent: ConsentSubject | None = None
-    # Required for capabilities that need approval: the approval ID and the exact payload it covers.
+    user_context: CurrentUserContext | None = None
+    system_actor: SystemActorCapability | None = None
+    resource_id: str | None = None
+    budget_units: tuple[tuple[str, int], ...] = ()
     approval_id: UUID | None = None
-    payload: Mapping[str, object] | None = None
-    # ``initial`` before the first step, ``revalidation`` before each later step.
-    stage: str = "initial"
+    approval_payload_hash: str | None = None
     correlation_id: str | None = None
+    idempotency_key: str | None = None
+    # Contact whose consent a channel capability needs. The gate reads that contact's current consent.
+    consent: ConsentSubject | None = None
+    # Resource type of the approved action, when the approval binds one.
+    resource_type: str | None = None
 
 
-def _denied(request: ExecutionRequest, reason_code: str, policy_version: int = 0) -> PolicyDecision:
-    return PolicyDecision(
-        capability_key=request.capability_key,
-        organization_id=request.organization_id,
+def _deny(request: ExecutionRequest, outcomes: list[GateOutcome], gate: str, reason: str) -> ExecutionDecision:
+    outcomes.append(GateOutcome(gate=gate, allowed=False, reason_code=reason))
+    return ExecutionDecision(
         allowed=False,
-        reason_code=reason_code,
-        explanation=_EXPLANATIONS[reason_code],
-        policy_version=policy_version,
-        correlation_id=request.correlation_id,
+        capability_key=request.capability_key,
+        reason_code=reason,
+        gate=gate,
+        outcomes=tuple(outcomes),
     )
 
 
-def _actor_membership(db: Session, request: ExecutionRequest) -> Membership | None:
-    actor = request.actor
-    if actor is None:
-        return None
-    return db.scalar(
-        select(Membership).where(
-            Membership.user_id == actor.user_id,
-            Membership.organization_id == request.organization_id,
-            Membership.is_active.is_(True),
-        )
+def actor_permission_granted(db: Session, *, organization_id: UUID, user_id: UUID, permission_key: str) -> bool:
+    """Whether an active membership in the organization grants ``permission_key`` through a role.
+
+    Mirrors ``app.authz.dependencies.permission_granted``, without needing a tenant context object. Owner-only
+    keys count only through the system Owner role.
+    """
+    conditions = [
+        Membership.user_id == user_id,
+        Membership.organization_id == organization_id,
+        Membership.is_active.is_(True),
+        Role.organization_id == organization_id,
+        Role.is_active.is_(True),
+        Permission.key == permission_key,
+        Permission.is_active.is_(True),
+    ]
+    if permission_key in OWNER_ONLY_PERMISSION_KEYS:
+        conditions.extend([Role.is_system.is_(True), Role.name == OWNER_ROLE_NAME])
+    statement = (
+        select(Permission.id)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(Role, Role.id == RolePermission.role_id)
+        .join(MembershipRole, MembershipRole.role_id == Role.id)
+        .join(Membership, Membership.id == MembershipRole.membership_id)
+        .where(*conditions)
+        .limit(1)
     )
+    return db.scalar(statement) is not None
 
 
-def _check_channel(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
-    """Apply the organization's channel policy and the contact's do-not-disturb flag to a channel send."""
-    subject = request.consent
-    assert subject is not None  # channel capabilities require consent, so the policy denied without a subject
-    channel = request.capability_key.split(".")[-1]
-    reason = evaluate_channel_policy(
+def _attribution(request: ExecutionRequest) -> AuditAttribution:
+    """Attribution from the authenticated user, or from a registered system actor. Exactly one."""
+    if (request.user_context is None) == (request.system_actor is None):
+        raise ValueError("An execution request names exactly one actor: an authenticated user or a system actor.")
+    if request.user_context is not None:
+        return user_attribution(organization_id=request.organization_id, actor_user_id=request.user_context.user.id)
+    return system_attribution(organization_id=request.organization_id, capability=request.system_actor)
+
+
+def _gate_static(db: Session, request: ExecutionRequest, outcomes: list[GateOutcome]) -> ExecutionDecision | None:
+    """Gates 1 to 3, using the existing policy. Returns a denial, or None when they pass."""
+    decision = evaluate_capability(
         db,
         organization_id=request.organization_id,
-        channel=channel,
-        contact_id=subject.contact_id,
+        capability_key=request.capability_key,
+        user_context=request.user_context,
+        correlation_id=request.correlation_id,
+        consent_checked=request.consent is not None,
     )
-    if reason is None:
+    if decision.reason_code in {REASON_ALLOWED, REASON_EXECUTION_GATES_PENDING}:
+        outcomes.append(GateOutcome(gate=GATE_SWITCHES, allowed=True, reason_code=decision.reason_code))
         return None
-    return _denied(request, reason, policy_version)
+    gate = {
+        REASON_PROVIDER_NOT_CONNECTED: GATE_PROVIDER,
+        REASON_CONSENT_NOT_CONFIGURED: GATE_CONSENT,
+    }.get(decision.reason_code)
+    if gate is None:
+        gate = GATE_SWITCHES if decision.reason_code in {"master_disabled", "capability_disabled"} else GATE_ENTITLEMENT
+        if decision.reason_code == "unknown_capability":
+            gate = GATE_SWITCHES
+    return _deny(request, outcomes, gate, decision.reason_code)
 
 
-def _check_approval(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
-    """Confirm that the approval covers this exact execution. The row stays locked until the transaction ends."""
-    assert request.approval_id is not None
-    if request.payload is None:
-        return _denied(request, REASON_APPROVAL_MISMATCH, policy_version)
-    try:
-        check_approval_for_execution(
-            db,
-            organization_id=request.organization_id,
-            approval_id=request.approval_id,
-            capability_key=request.capability_key,
-            resource_type=request.resource_type,
-            resource_id=request.resource_id,
-            payload=request.payload,
-        )
-    except ApprovalError as error:
-        return _denied(request, error.reason_code, policy_version)
+def _gate_actor(db: Session, request: ExecutionRequest, outcomes: list[GateOutcome]) -> ExecutionDecision | None:
+    if request.system_actor is not None:
+        # A system actor needs a system permission. None exists, so every system actor is refused for now.
+        return _deny(request, outcomes, GATE_ACTOR, REASON_SYSTEM_ACTOR_NOT_PERMITTED)
+    permission = REQUIRED_PERMISSION.get(request.capability_key)
+    if permission is None:
+        permission = DEFAULT_AI_PERMISSION
+    granted = actor_permission_granted(
+        db,
+        organization_id=request.organization_id,
+        user_id=request.user_context.user.id,
+        permission_key=permission,
+    )
+    if not granted:
+        return _deny(request, outcomes, GATE_ACTOR, REASON_PERMISSION_DENIED)
+    outcomes.append(GateOutcome(gate=GATE_ACTOR, allowed=True, reason_code=REASON_ALLOWED_ALL))
     return None
 
 
-def _evaluate(db: Session, request: ExecutionRequest) -> PolicyDecision:
-    if request.actor is None:
-        return _denied(request, REASON_ACTOR_REQUIRED)
-    if request.actor.session_organization_id != request.organization_id:
-        return _denied(request, REASON_WRONG_ORGANIZATION)
+def _gate_resource(db: Session, request: ExecutionRequest, outcomes: list[GateOutcome]) -> ExecutionDecision | None:
+    definition = CAPABILITY_BY_KEY[request.capability_key]
+    if definition.category is CapabilityCategory.AI:
+        if request.resource_id is None:
+            return _deny(request, outcomes, GATE_RESOURCE, REASON_RESOURCE_REQUIRED)
+        # No AI resource store exists yet, so no AI resource can be proven configured and published.
+        return _deny(request, outcomes, GATE_RESOURCE, REASON_RESOURCE_NOT_FOUND)
+    if request.capability_key == AUTOMATION_DEAL_CREATED_RULES:
+        # Rules are checked one by one as they run, so a capability-level request needs no rule reference.
+        outcomes.append(GateOutcome(gate=GATE_RESOURCE, allowed=True, reason_code=REASON_ALLOWED_ALL))
+        return None
+    outcomes.append(GateOutcome(gate=GATE_RESOURCE, allowed=True, reason_code=REASON_ALLOWED_ALL))
+    return None
 
-    membership = _actor_membership(db, request)
-    if membership is None:
-        return _denied(request, REASON_MEMBERSHIP_INACTIVE)
 
-    if request.resource_organization_id != request.organization_id:
-        return _denied(request, REASON_TARGET_ORGANIZATION_MISMATCH)
-    if not request.resource_active:
-        return _denied(request, REASON_RESOURCE_NOT_ACTIVE)
-
-    policy = evaluate_capability(
-        db,
-        organization_id=request.organization_id,
-        capability_key=request.capability_key,
-        user_context=request.actor,
-        correlation_id=request.correlation_id,
-        consent_checked=request.consent is not None,
-        approval_checked=request.approval_id is not None,
-    )
-    if not policy.allowed:
-        return policy
-
-    if CAPABILITY_BY_KEY[request.capability_key].requires_consent:
-        consent_refusal = _check_consent(db, request, policy.policy_version)
-        if consent_refusal is not None:
-            return consent_refusal
-
-    if request.capability_key.startswith("channels."):
-        channel_refusal = _check_channel(db, request, policy.policy_version)
-        if channel_refusal is not None:
-            return channel_refusal
-
-    if request.required_permission is not None:
-        organization = db.get(Organization, request.organization_id)
-        if organization is None:
-            return _denied(request, REASON_WRONG_ORGANIZATION)
-        tenant = TenantContext(organization=organization, membership=membership)
-        if not permission_granted(
-            db, tenant_context=tenant, permission_key=request.required_permission
-        ):
-            return _denied(request, REASON_ACTOR_NOT_AUTHORIZED, policy.policy_version)
-
-    if CAPABILITY_BY_KEY[request.capability_key].requires_approval:
-        approval_refusal = _check_approval(db, request, policy.policy_version)
-        if approval_refusal is not None:
-            return approval_refusal
-
-    if request.billable:
-        # Budget is reserved last, after every other check, so a refused execution never holds usage.
-        if request.budget is None:
-            return _denied(request, REASON_BUDGET_RESERVATION_REQUIRED, policy.policy_version)
-        reservation_refusal = _reserve_budget(db, request, policy.policy_version)
-        if reservation_refusal is not None:
-            return reservation_refusal
-
-    if CAPABILITY_BY_KEY[request.capability_key].requires_approval:
-        # Consumed last, so a refusal anywhere above leaves the approval unused. Nothing else runs in between.
-        assert request.approval_id is not None  # the policy denies approval-requiring work without one
-        consume_approval(
-            db,
-            organization_id=request.organization_id,
-            approval_id=request.approval_id,
-            actor_user_id=request.actor.user_id if request.actor is not None else None,
-        )
-
-    return PolicyDecision(
-        capability_key=request.capability_key,
-        organization_id=request.organization_id,
-        allowed=True,
-        reason_code=REASON_ALLOWED,
-        explanation=_EXPLANATIONS[REASON_ALLOWED],
-        policy_version=policy.policy_version,
-        correlation_id=request.correlation_id,
+def _approval_required(request: ExecutionRequest) -> bool:
+    return (
+        CAPABILITY_BY_KEY[request.capability_key].requires_approval
+        or request.capability_key in APPROVAL_REQUIRED_CAPABILITIES
     )
 
 
-def _check_consent(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
-    """Read the contact's consent now. Revocation takes effect on the very next execution."""
+def _gate_consent(
+    request: ExecutionRequest, outcomes: list[GateOutcome], db: Session | None = None
+) -> ExecutionDecision | None:
+    """Require the contact's current consent for the channel and purpose. Revocation takes effect at once."""
+    definition = CAPABILITY_BY_KEY[request.capability_key]
+    if not definition.requires_consent:
+        outcomes.append(GateOutcome(gate=GATE_CONSENT, allowed=True, reason_code=REASON_ALLOWED_ALL))
+        return None
     subject = request.consent
-    assert subject is not None  # the policy denies consent-requiring capabilities without a subject
-    expected_channel = request.capability_key.split(".")[-1] if request.capability_key.startswith("channels.") else None
-    if expected_channel is not None and subject.channel != expected_channel:
-        return _denied(request, REASON_CONSENT_CHANNEL_MISMATCH, policy_version)
+    # Without a subject or a session, consent cannot be proven, so the gate fails closed.
+    if subject is None or db is None:
+        return _deny(request, outcomes, GATE_CONSENT, REASON_CONSENT_NOT_CONFIGURED)
+    if request.capability_key.startswith("channels.") and subject.channel != request.capability_key.split(".")[-1]:
+        return _deny(request, outcomes, GATE_CONSENT, REASON_CONSENT_CHANNEL_MISMATCH)
     state = current_consent(
         db,
         organization_id=request.organization_id,
@@ -314,73 +341,281 @@ def _check_consent(db: Session, request: ExecutionRequest, policy_version: int) 
         purpose=subject.purpose,
     )
     if state.effective == EFFECTIVE_GRANTED:
+        outcomes.append(GateOutcome(gate=GATE_CONSENT, allowed=True, reason_code=REASON_ALLOWED_ALL))
         return None
-    if state.effective == EFFECTIVE_REVOKED:
-        return _denied(request, REASON_CONSENT_REVOKED, policy_version)
-    if state.effective == EFFECTIVE_EXPIRED:
-        return _denied(request, REASON_CONSENT_EXPIRED, policy_version)
-    return _denied(request, REASON_CONSENT_MISSING, policy_version)
+    reason = {
+        EFFECTIVE_REVOKED: REASON_CONSENT_REVOKED,
+        EFFECTIVE_EXPIRED: REASON_CONSENT_EXPIRED,
+    }.get(state.effective, REASON_CONSENT_MISSING)
+    return _deny(request, outcomes, GATE_CONSENT, reason)
 
 
-def _reserve_budget(db: Session, request: ExecutionRequest, policy_version: int) -> PolicyDecision | None:
-    """Reserve the requested usage. Return a denial when it cannot be reserved, otherwise None."""
-    assert request.budget is not None
-    try:
-        reserve(
-            db,
-            organization_id=request.organization_id,
-            unit=request.budget.unit,
-            quantity=request.budget.quantity,
-            idempotency_key=request.budget.idempotency_key,
-            occurred_at=datetime.now(UTC),
-            capability_key=request.capability_key,
-            correlation_id=request.correlation_id,
-        )
-    except BudgetNotConfiguredError:
-        return _denied(request, REASON_BUDGET_NOT_CONFIGURED, policy_version)
-    except BudgetExceededError:
-        return _denied(request, REASON_BUDGET_EXHAUSTED, policy_version)
-    except IdempotencyConflictError:
-        return _denied(request, REASON_USAGE_KEY_CONFLICT, policy_version)
+def _gate_channel(db: Session, request: ExecutionRequest, outcomes: list[GateOutcome]) -> ExecutionDecision | None:
+    """Apply the organization's channel policy and the contact's do-not-disturb flag to a channel send."""
+    if not request.capability_key.startswith("channels."):
+        return None
+    subject = request.consent
+    if subject is None:
+        return _deny(request, outcomes, GATE_CHANNEL, REASON_CONSENT_NOT_CONFIGURED)
+    reason = evaluate_channel_policy(
+        db,
+        organization_id=request.organization_id,
+        channel=request.capability_key.split(".")[-1],
+        contact_id=subject.contact_id,
+    )
+    if reason is not None:
+        return _deny(request, outcomes, GATE_CHANNEL, reason)
+    outcomes.append(GateOutcome(gate=GATE_CHANNEL, allowed=True, reason_code=REASON_ALLOWED_ALL))
     return None
 
 
-def _audit(db: Session, request: ExecutionRequest, decision: PolicyDecision) -> None:
-    budget_unit = None
-    if request.budget is not None:
-        budget_unit = UsageUnit(request.budget.unit).value
-    db.add(
-        AuditEvent(
-            # Each decision carries its own time. Rows written in one transaction would otherwise
-            # share the transaction's timestamp, so their order in the trail would be ambiguous.
-            occurred_at=datetime.now(UTC),
-            user_id=request.actor.user_id if request.actor is not None else None,
+def _gate_approval(
+    request: ExecutionRequest, outcomes: list[GateOutcome], db: Session | None = None
+) -> ExecutionDecision | None:
+    """Require an approval whose payload hash matches this execution. The row stays locked until the decision."""
+    if not _approval_required(request):
+        outcomes.append(GateOutcome(gate=GATE_APPROVAL, allowed=True, reason_code="not_required"))
+        return None
+    if request.approval_id is None or request.approval_payload_hash is None or db is None:
+        return _deny(request, outcomes, GATE_APPROVAL, REASON_APPROVAL_REQUIRED)
+    try:
+        check_approval_hash(
+            db,
             organization_id=request.organization_id,
-            event_type=GOVERNANCE_AUDIT_EVENT_TYPE,
-            action=EXECUTION_AUDIT_ACTION,
-            decision=(AuditDecision.ALLOWED if decision.allowed else AuditDecision.DENIED).value,
-            permission_key=request.required_permission,
+            approval_id=request.approval_id,
+            capability_key=request.capability_key,
             resource_type=request.resource_type,
             resource_id=request.resource_id,
-            correlation_id=request.correlation_id,
-            event_metadata=json.dumps(
-                {
-                    "capability_key": request.capability_key,
-                    "reason_code": decision.reason_code,
-                    "stage": request.stage,
-                    "policy_version": decision.policy_version,
-                    "billable": request.billable,
-                    "budget_unit": budget_unit,
-                },
-                sort_keys=True,
+            expected_hash=request.approval_payload_hash,
+        )
+    except ApprovalError as error:
+        return _deny(request, outcomes, GATE_APPROVAL, error.reason_code)
+    outcomes.append(GateOutcome(gate=GATE_APPROVAL, allowed=True, reason_code=REASON_ALLOWED_ALL))
+    return None
+
+
+def _gate_rate(db: Session, request: ExecutionRequest, outcomes: list[GateOutcome]) -> ExecutionDecision | None:
+    execution_type = RATE_EXECUTION_TYPE.get(request.capability_key)
+    if execution_type is None:
+        return _deny(request, outcomes, GATE_RATE, REASON_RATE_NOT_CONFIGURED)
+    actor = request.user_context.user.id if request.user_context is not None else None
+    rate = consume_or_deny(
+        db,
+        organization_id=request.organization_id,
+        execution_type=execution_type,
+        actor_user_id=actor,
+    )
+    if not rate.allowed:
+        reason = REASON_RATE_LIMITED_GATE if rate.reason_code == REASON_RATE_LIMITED else rate.reason_code
+        denial = _deny(request, outcomes, GATE_RATE, reason)
+        return replace(denial, rate=rate)
+    outcomes.append(GateOutcome(gate=GATE_RATE, allowed=True, reason_code=REASON_ALLOWED_ALL))
+    return None
+
+
+def _reserve_budget(
+    db: Session, request: ExecutionRequest, outcomes: list[GateOutcome], now: datetime
+) -> tuple[ExecutionDecision | None, tuple[tuple[str, str], ...]]:
+    reservations: list[tuple[str, str]] = []
+    base_key = request.idempotency_key or f"gate:{request.correlation_id or 'none'}:{request.capability_key}"
+    try:
+        for unit, quantity in request.budget_units:
+            # Use the unit value, so the stored key does not depend on how the enum formats itself.
+            key = f"{base_key}:{UsageUnit(unit).value}"
+            reserve(
+                db,
+                organization_id=request.organization_id,
+                unit=UsageUnit(unit),
+                quantity=quantity,
+                idempotency_key=key,
+                occurred_at=now,
+                user_id=request.user_context.user.id if request.user_context is not None else None,
+                correlation_id=request.correlation_id,
+                capability_key=request.capability_key,
+            )
+            reservations.append((unit, key))
+    except BudgetNotConfiguredError:
+        _release_all(db, request.organization_id, reservations)
+        return _deny(request, outcomes, GATE_BUDGET, REASON_BUDGET_NOT_CONFIGURED), ()
+    except BudgetExceededError:
+        _release_all(db, request.organization_id, reservations)
+        return _deny(request, outcomes, GATE_BUDGET, REASON_BUDGET_EXHAUSTED), ()
+    except IdempotencyConflictError:
+        _release_all(db, request.organization_id, reservations)
+        return _deny(request, outcomes, GATE_BUDGET, REASON_USAGE_KEY_CONFLICT), ()
+    outcomes.append(GateOutcome(gate=GATE_BUDGET, allowed=True, reason_code=REASON_ALLOWED_ALL))
+    return None, tuple(reservations)
+
+
+def _release_all(db: Session, organization_id: UUID, reservations: list[tuple[str, str]] | tuple) -> None:
+    for _unit, key in reservations:
+        release(db, organization_id=organization_id, idempotency_key=key)
+
+
+def _event_type(request: ExecutionRequest) -> str:
+    """AI decisions keep the AI event type. Every other capability uses the gate event type."""
+    if CAPABILITY_BY_KEY[request.capability_key].category is CapabilityCategory.AI:
+        return AI_EXECUTION_EVENT_TYPE
+    return EXECUTION_EVENT_TYPE
+
+
+def record_execution_stop(
+    db: Session,
+    request: ExecutionRequest,
+    decision: ExecutionDecision,
+    *,
+    rule_id: UUID,
+    deal_id: UUID,
+    index: int,
+) -> None:
+    """Record that an in-flight execution was stopped before a later step (WS6 WP8).
+
+    The row is written in its own transaction, so it survives the rollback of the work that was stopped.
+    Raises ``AuditPersistenceError`` when it cannot be written. The caller must then not start the step.
+    """
+    persist_independent_audit_event(
+        db,
+        attribution=_attribution(request),
+        event_type=_event_type(request),
+        action="execution.stopped",
+        decision="denied",
+        outcome=OUTCOME_DENIED,
+        permission_key=f"capability:{request.capability_key}",
+        resource_type="capability",
+        resource_id=request.capability_key,
+        correlation_id=request.correlation_id,
+        metadata={
+            "reason_code": decision.reason_code,
+            "gate": decision.gate,
+            "rule_id": str(rule_id),
+            "deal_id": str(deal_id),
+            "step_index": index,
+        },
+    )
+
+
+def _record(
+    db: Session,
+    request: ExecutionRequest,
+    attribution: AuditAttribution,
+    decision: ExecutionDecision,
+) -> None:
+    """Record the decision in its own transaction. Raises ``AuditPersistenceError`` when it cannot be written."""
+    persist_independent_audit_event(
+        db,
+        attribution=attribution,
+        event_type=_event_type(request),
+        action="allowed" if decision.allowed else "denied",
+        decision="allowed" if decision.allowed else "denied",
+        outcome=OUTCOME_REQUESTED if decision.allowed else OUTCOME_DENIED,
+        permission_key=f"capability:{request.capability_key}",
+        resource_type="capability",
+        resource_id=request.capability_key,
+        correlation_id=request.correlation_id,
+        idempotency_key=request.idempotency_key,
+        metadata={
+            "reason_code": decision.reason_code,
+            "gate": decision.gate,
+            "gates": [{"gate": item.gate, "allowed": item.allowed, "reason": item.reason_code}
+                      for item in decision.outcomes],
+        },
+    )
+
+
+def evaluate_execution(db: Session, request: ExecutionRequest, *, now: datetime | None = None) -> ExecutionDecision:
+    """Run every gate in order and record the decision. Nothing may execute unless ``allowed`` is True.
+
+    Raises ``AuditAttributionError`` when the actor cannot be attributed, and ``AuditPersistenceError`` when the
+    decision cannot be recorded. In both cases the caller must not execute.
+    """
+    if request.capability_key not in CAPABILITY_BY_KEY:
+        raise ValueError("Unknown capability.")
+    attribution = _attribution(request)
+    moment = now or datetime.now(UTC)
+    outcomes: list[GateOutcome] = []
+
+    decision = _gate_static(db, request, outcomes)
+    if decision is None:
+        decision = _gate_actor(db, request, outcomes)
+    if decision is None:
+        decision = _gate_resource(db, request, outcomes)
+    if decision is None:
+        decision = _gate_consent(request, outcomes, db=db)
+    if decision is None:
+        decision = _gate_channel(db, request, outcomes)
+    if decision is None:
+        decision = _gate_approval(request, outcomes, db=db)
+    if decision is None:
+        decision = _gate_rate(db, request, outcomes)
+
+    reservations: tuple[tuple[str, str], ...] = ()
+    if decision is None:
+        decision, reservations = _reserve_budget(db, request, outcomes, moment)
+
+    if decision is None and request.approval_id is not None and _approval_required(request):
+        try:
+            consume_approval(
+                db,
+                organization_id=request.organization_id,
+                approval_id=request.approval_id,
+                actor_user_id=request.user_context.user_id if request.user_context is not None else None,
+            )
+        except ApprovalError as error:
+            _release_all(db, request.organization_id, reservations)
+            decision = _deny(request, outcomes, GATE_APPROVAL, error.reason_code)
+    if decision is None:
+        decision = ExecutionDecision(
+            allowed=True,
+            capability_key=request.capability_key,
+            reason_code=REASON_ALLOWED_ALL,
+            gate=None,
+            outcomes=tuple(outcomes),
+            ticket=ExecutionTicket(
+                organization_id=request.organization_id,
+                capability_key=request.capability_key,
+                reservation_keys=reservations,
             ),
         )
-    )
-    db.flush()
+
+    try:
+        _record(db, request, attribution, decision)
+    except AuditPersistenceError:
+        _release_all(db, request.organization_id, reservations)
+        raise
+    return decision
 
 
-def authorize_execution(db: Session, request: ExecutionRequest) -> PolicyDecision:
-    """Decide whether one execution step may run, and audit the decision."""
-    decision = _evaluate(db, request)
-    _audit(db, request, decision)
+def settle_ticket(db: Session, ticket: ExecutionTicket, actual: dict[str, int]) -> None:
+    """Settle each reservation with its actual usage. Units not in ``actual`` are released."""
+    for unit, key in ticket.reservation_keys:
+        if unit in actual:
+            settle(db, organization_id=ticket.organization_id, idempotency_key=key, actual_quantity=actual[unit])
+        else:
+            release(db, organization_id=ticket.organization_id, idempotency_key=key)
+
+
+def release_ticket(db: Session, ticket: ExecutionTicket) -> None:
+    """Release every reservation held by an execution that failed or was cancelled."""
+    _release_all(db, ticket.organization_id, ticket.reservation_keys)
+
+
+def revalidate_ticket(db: Session, request: ExecutionRequest) -> ExecutionDecision:
+    """Re-check the governing gates before a later step. Denies when any of them no longer holds.
+
+    This does not reserve, record or consume anything. It answers whether the next step may run.
+    """
+    outcomes: list[GateOutcome] = []
+    decision = _gate_static(db, request, outcomes)
+    if decision is None:
+        decision = _gate_actor(db, request, outcomes)
+    if decision is None:
+        decision = _gate_resource(db, request, outcomes)
+    if decision is None:
+        return ExecutionDecision(
+            allowed=True,
+            capability_key=request.capability_key,
+            reason_code=REASON_ALLOWED_ALL,
+            gate=None,
+            outcomes=tuple(outcomes),
+        )
     return decision

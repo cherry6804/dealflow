@@ -29,8 +29,12 @@ export interface BudgetStatus {
   remaining_quantity: number;
   utilization_percent: number;
   overrun: boolean;
-  warning_percent: number;
-  critical_percent: number;
+}
+
+export interface BudgetList {
+  period_start: string;
+  period_end: string;
+  items: BudgetStatus[];
 }
 
 export interface UsageBreakdownRow {
@@ -48,10 +52,11 @@ export interface UsageBreakdown {
   items: UsageBreakdownRow[];
 }
 
-export interface BudgetList {
-  period_start: string;
-  period_end: string;
-  items: BudgetStatus[];
+export interface AlertThresholds {
+  thresholds: number[];
+  is_default: boolean;
+  version: number;
+  updated_at: string | null;
 }
 
 export interface DataCategory {
@@ -83,12 +88,24 @@ export interface PrivacyRequest {
   status: string;
   categories: string[];
   decisions: Record<string, unknown>;
+  execution: Record<string, unknown>;
   artifact_reference: string | null;
   expires_at: string | null;
   created_at: string;
-  attempt_count: number;
-  processed_at: string | null;
-  execution: Record<string, unknown>;
+}
+
+export type EntitlementSnapshotState = "valid" | "due_for_revalidation" | "expired" | "missing";
+
+export interface EntitlementStatus {
+  state: EntitlementSnapshotState;
+  product_key: string;
+  revalidation_interval_seconds: number;
+  fetched_at: string | null;
+  expires_at: string | null;
+  failure_count: number;
+  next_refresh_attempt_at: string | null;
+  backoff_active: boolean;
+  signing_key_configured: boolean;
 }
 
 export interface GovernanceAccess {
@@ -102,62 +119,71 @@ export interface GovernanceAccess {
 
 export const governanceApi = {
   getAccess(): Promise<GovernanceAccess> {
-    return api.get<GovernanceAccess>("/governance/access");
+    return api.get<GovernanceAccess>("/ai/governance/access");
+  },
+
+  getEntitlementStatus(): Promise<EntitlementStatus> {
+    return api.get<EntitlementStatus>("/ai/governance/entitlement-status");
   },
 
   listCapabilities(): Promise<{ items: CapabilityState[] }> {
-    return api.get<{ items: CapabilityState[] }>("/governance/capabilities");
+    return api.get<{ items: CapabilityState[] }>("/ai/governance/capabilities");
   },
 
   setCapability(capabilityKey: string, isEnabled: boolean): Promise<CapabilityState> {
-    return api.patch<CapabilityState>(`/governance/capabilities/${capabilityKey}`, {
+    return api.patch<CapabilityState>(`/ai/governance/capabilities/${capabilityKey}`, {
       is_enabled: isEnabled,
       confirm: true,
     });
   },
 
   getBudgets(): Promise<BudgetList> {
-    return api.get<BudgetList>("/governance/usage/budgets");
+    return api.get<BudgetList>("/ai/governance/usage/budgets");
   },
 
-  setBudget(
-    unit: string,
-    limitQuantity: number,
-    thresholds?: { warningPercent: number; criticalPercent: number },
-  ): Promise<BudgetStatus> {
-    return api.put<BudgetStatus>(`/governance/usage/budgets/${unit}`, {
+  setBudget(unit: string, limitQuantity: number): Promise<BudgetStatus> {
+    return api.put<BudgetStatus>(`/ai/governance/usage/budgets/${unit}`, {
       limit_quantity: limitQuantity,
-      warning_percent: thresholds?.warningPercent,
-      critical_percent: thresholds?.criticalPercent,
       confirm: true,
     });
   },
 
   getUsageBreakdown(groupBy: "capability" | "unit" | "provider"): Promise<UsageBreakdown> {
-    return api.get<UsageBreakdown>(`/governance/usage/breakdown?group_by=${groupBy}`);
+    return api.get<UsageBreakdown>(`/ai/governance/usage/breakdown?group_by=${groupBy}`);
+  },
+
+  getAlertThresholds(): Promise<AlertThresholds> {
+    return api.get<AlertThresholds>("/ai/governance/usage/alert-thresholds");
+  },
+
+  setAlertThresholds(thresholds: readonly number[]): Promise<AlertThresholds> {
+    return api.put<AlertThresholds>("/ai/governance/usage/alert-thresholds", {
+      thresholds: [...thresholds],
+      confirm: true,
+    });
   },
 
   listDataCategories(): Promise<DataCategory[]> {
-    return api.get<DataCategory[]>("/governance/privacy/categories");
+    return api.get<DataCategory[]>("/ai/governance/privacy/categories");
   },
 
   listRetention(): Promise<RetentionPolicy[]> {
-    return api.get<RetentionPolicy[]>("/governance/privacy/retention");
+    return api.get<RetentionPolicy[]>("/ai/governance/privacy/retention");
   },
 
   setRetention(categoryKey: string, retentionDays: number | null): Promise<RetentionPolicy> {
-    return api.put<RetentionPolicy>(`/governance/privacy/retention/${categoryKey}`, {
+    return api.put<RetentionPolicy>(`/ai/governance/privacy/retention/${categoryKey}`, {
       retention_days: retentionDays,
       confirm: true,
     });
   },
 
   listLegalHolds(): Promise<LegalHold[]> {
-    return api.get<LegalHold[]>("/governance/privacy/legal-holds");
+    return api.get<LegalHold[]>("/ai/governance/privacy/legal-holds");
   },
 
   placeLegalHold(categoryKey: string, reason: string): Promise<LegalHold> {
-    return api.post<LegalHold>("/governance/privacy/legal-holds", {
+    return api.post<LegalHold>("/ai/governance/privacy/legal-holds", {
       category_key: categoryKey,
       reason,
       confirm: true,
@@ -165,15 +191,15 @@ export const governanceApi = {
   },
 
   releaseLegalHold(holdId: string): Promise<LegalHold> {
-    return api.post<LegalHold>(`/governance/privacy/legal-holds/${holdId}/release`);
+    return api.post<LegalHold>(`/ai/governance/privacy/legal-holds/${holdId}/release`);
   },
 
   listPrivacyRequests(): Promise<PrivacyRequest[]> {
-    return api.get<PrivacyRequest[]>("/governance/privacy/requests");
+    return api.get<PrivacyRequest[]>("/ai/governance/privacy/requests");
   },
 
   createPrivacyRequest(requestType: "export" | "deletion", categories: string[]): Promise<PrivacyRequest> {
-    return api.post<PrivacyRequest>("/governance/privacy/requests", {
+    return api.post<PrivacyRequest>("/ai/governance/privacy/requests", {
       request_type: requestType,
       categories,
       confirm: true,
@@ -181,12 +207,12 @@ export const governanceApi = {
   },
 
   cancelPrivacyRequest(requestId: string): Promise<PrivacyRequest> {
-    return api.post<PrivacyRequest>(`/governance/privacy/requests/${requestId}/cancel`);
+    return api.post<PrivacyRequest>(`/ai/governance/privacy/requests/${requestId}/cancel`);
   },
 
   downloadPrivacyExport(requestId: string): Promise<void> {
     return api.download(
-      `/governance/privacy/requests/${encodeURIComponent(requestId)}/export`,
+      `/ai/governance/privacy/requests/${encodeURIComponent(requestId)}/export`,
       `privacy-export-${requestId}.zip`,
     );
   },

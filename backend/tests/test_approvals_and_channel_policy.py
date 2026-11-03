@@ -22,6 +22,7 @@ from app.db.models.contact_consent import ContactConsentRecord
 from app.db.models.organization import Organization
 from app.db.models.user import User
 from app.db.session import SessionLocal
+from app.governance import execution_gate
 from app.governance.approvals import (
     ApprovalError,
     ApprovalInvalidError,
@@ -32,8 +33,6 @@ from app.governance.approvals import (
     request_approval,
 )
 from app.governance.capabilities import (
-    AUTOMATION_DEAL_CREATED_RULES,
-    AUTOMATION_MASTER,
     CAPABILITY_BY_KEY,
 )
 from app.governance.channel_policy import (
@@ -50,14 +49,19 @@ from app.governance.channel_policy import (
     validate_policy,
 )
 from app.governance.consent import ConsentSubject, record_consent
-from app.governance.execution_gate import ExecutionRequest, authorize_execution
+from app.governance.execution_gate import ExecutionRequest, evaluate_execution
 from app.governance.service import set_capability_enabled
-from tests.governance_helpers import attested_user_context
+from tests.governance_helpers import (
+    allow_actor_execution_permission,
+    allow_organization_entitlements,
+    allow_provider_readiness,
+    attested_user_context,
+)
 from tests.test_activities_api import create_membership, create_user, grant_permission
 from tests.test_contacts_api import create_contact
 from tests.test_deals_api import create_authorized_user
 
-APPROVAL_KEY = "automation.deal_created_rules"
+APPROVAL_KEY = "channels.email"
 APPROVAL_RESOURCE = "deal"
 MONDAY_09_30_IST = datetime(2026, 11, 2, 4, 0, tzinfo=UTC)
 MONDAY_08_30_IST = datetime(2026, 11, 2, 3, 0, tzinfo=UTC)
@@ -552,80 +556,44 @@ def test_do_not_disturb_cannot_be_set_on_another_organizations_contact(manager, 
 
 
 # --- Gate integration -----------------------------------------------------------------------------------
+#
+# These run through the shared execution gate. Each test stubs only the gates it is not about: the signed SIBVO
+# entitlement snapshot, the actor permission key and the rate rule for channel sends. Those gates have their own
+# tests. Consent, channel policy, approval and budget behaviour is what these tests exercise.
 
 
-def _enable_automation(ids: dict[str, UUID]) -> None:
+def _gate_ready(ids: dict[str, UUID], monkeypatch) -> UUID:
+    """Make a channel send reach the approval gate: entitled, permitted, rate-allowed, open window, consent granted."""
+    allow_organization_entitlements(monkeypatch)
+    allow_provider_readiness(monkeypatch)
+    allow_actor_execution_permission(monkeypatch, "governance.approvals.request")
+    original = CAPABILITY_BY_KEY[APPROVAL_KEY]
+    monkeypatch.setitem(CAPABILITY_BY_KEY, APPROVAL_KEY, replace(original, entitlement_feature="channels_email"))
+    monkeypatch.setitem(
+        execution_gate.RATE_EXECUTION_TYPE,
+        APPROVAL_KEY,
+        execution_gate.RATE_EXECUTION_TYPE["automation.deal_created_rules"],
+    )
     with SessionLocal() as db:
-        for key in (AUTOMATION_MASTER, AUTOMATION_DEAL_CREATED_RULES):
-            set_capability_enabled(db, organization_id=ids["organization_id"], actor_user_id=ids["requester_id"], capability_key=key, is_enabled=True)
-        db.commit()
-
-
-CHANNEL_ENTITLEMENTS = (
-    {"feature_key": "workflow_automation", "enabled": True, "limit_value": 10, "limit_unit": "runs"},
-    {"feature_key": "channels_email", "enabled": True, "limit_value": 1000, "limit_unit": "messages"},
-)
-
-
-def _gate(ids: dict[str, UUID], *, approval_id: UUID | None, payload: dict | None, key: str = APPROVAL_KEY, consent: ConsentSubject | None = None) -> str:
-    with SessionLocal() as db:
-        user = db.get(User, ids["requester_id"])
-        assert user is not None
-        decision = authorize_execution(
+        organization = db.get(Organization, ids["organization_id"])
+        assert organization is not None
+        contact = create_contact(db, organization=organization, first_name="Asha", email="asha@example.test")
+        contact_id = contact.id
+        set_channel_policy(
             db,
-            ExecutionRequest(
-                organization_id=ids["organization_id"],
-                capability_key=key,
-                actor=attested_user_context(
-                    user, organization_id=ids["organization_id"], entitlements=CHANNEL_ENTITLEMENTS
-                ),
-                resource_type=APPROVAL_RESOURCE,
-                resource_id="d-1",
-                resource_organization_id=ids["organization_id"],
-                resource_active=True,
-                required_permission=None,
-                approval_id=approval_id,
-                payload=payload,
-                consent=consent,
+            organization_id=ids["organization_id"],
+            actor_user_id=ids["requester_id"],
+            policy=ChannelPolicyInput(
+                channel="email",
+                is_enabled=True,
+                timezone="UTC",
+                messaging_days=ALL_DAYS,
+                messaging_start=time(0, 0),
+                messaging_end=time(23, 59),
+                quiet_start=None,
+                quiet_end=None,
             ),
         )
-        db.commit()
-        return decision.reason_code
-
-
-def test_the_gate_denies_an_approval_action_without_an_approval_and_allows_the_approved_one_once(org) -> None:
-    _enable_automation(org)
-    assert _gate(org, approval_id=None, payload=None) == "approval_required"
-    approval_id = _request(org)
-    _decide(org, approval_id, by="approver_id")
-    assert _gate(org, approval_id=approval_id, payload=PAYLOAD) == "allowed"
-    assert _status(approval_id)[1] is not None
-    assert _gate(org, approval_id=approval_id, payload=PAYLOAD) == "approval_already_used"
-
-
-def test_a_refused_execution_does_not_consume_the_approval(org) -> None:
-    _enable_automation(org)
-    approval_id = _request(org)
-    _decide(org, approval_id, by="approver_id")
-    assert _gate(org, approval_id=approval_id, payload={"title": "changed"}) == "approval_mismatch"
-    assert _status(approval_id)[1] is None
-    assert _gate(org, approval_id=approval_id, payload=PAYLOAD) == "allowed"
-
-
-def test_a_channel_send_is_denied_by_do_not_disturb_and_allowed_after_it_is_lifted(manager, org, monkeypatch) -> None:
-    original = CAPABILITY_BY_KEY["channels.email"]
-    monkeypatch.setitem(
-        CAPABILITY_BY_KEY,
-        "channels.email",
-        replace(original, requires_provider=False, entitlement_feature="channels_email"),
-    )
-    ids = {"organization_id": manager["organization_id"], "requester_id": manager["user_id"]}
-    with SessionLocal() as db:
-        set_capability_enabled(db, organization_id=ids["organization_id"], actor_user_id=ids["requester_id"], capability_key="channels.email", is_enabled=True)
-        db.commit()
-    _configure(manager, messaging_days=ALL_DAYS, messaging_start=time(0, 0), messaging_end=time(23, 59))
-    contact_id = _contact(manager)
-    with SessionLocal() as db:
         record_consent(
             db,
             organization_id=ids["organization_id"],
@@ -636,15 +604,93 @@ def test_a_channel_send_is_denied_by_do_not_disturb_and_allowed_after_it_is_lift
             source="test",
             actor_user_id=ids["requester_id"],
         )
-        set_contact_do_not_disturb(db, organization_id=ids["organization_id"], actor_user_id=ids["requester_id"], contact_id=contact_id, enabled=True)
         db.commit()
-    subject = ConsentSubject(contact_id=contact_id, channel="email", purpose="customer_service")
-    assert _gate(ids, approval_id=None, payload=None, key="channels.email", consent=subject) == "contact_do_not_disturb"
+    return contact_id
+
+
+def _gate(
+    ids: dict[str, UUID],
+    *,
+    contact_id: UUID,
+    approval_id: UUID | None,
+    payload: dict | None,
+) -> str:
+    """Run one channel send through the gate and return the decision's reason code."""
     with SessionLocal() as db:
-        set_contact_do_not_disturb(db, organization_id=ids["organization_id"], actor_user_id=ids["requester_id"], contact_id=contact_id, enabled=False)
+        user = db.get(User, ids["requester_id"])
+        assert user is not None
+        decision = evaluate_execution(
+            db,
+            ExecutionRequest(
+                organization_id=ids["organization_id"],
+                capability_key=APPROVAL_KEY,
+                user_context=attested_user_context(
+                    user, organization_id=ids["organization_id"], entitlements=CHANNEL_ENTITLEMENTS
+                ),
+                resource_type=APPROVAL_RESOURCE,
+                resource_id="d-1",
+                approval_id=approval_id,
+                approval_payload_hash=payload_hash(payload) if payload is not None else None,
+                consent=ConsentSubject(contact_id=contact_id, channel="email", purpose="customer_service"),
+            ),
+        )
         db.commit()
-    # The window is always open for this policy, so only the do-not-disturb state changed.
-    assert _gate(ids, approval_id=None, payload=None, key="channels.email", consent=subject) == "allowed"
+        return decision.reason_code
+
+
+CHANNEL_ENTITLEMENTS = (
+    {"feature_key": "channels_email", "enabled": True, "limit_value": 1000, "limit_unit": "messages"},
+)
+
+
+def test_the_gate_denies_an_approval_action_without_an_approval_and_allows_the_approved_one_once(org, monkeypatch) -> None:
+    contact_id = _gate_ready(org, monkeypatch)
+    _enable_channel_switch(org)
+    assert _gate(org, contact_id=contact_id, approval_id=None, payload=None) == "approval_required"
+    approval_id = _request(org)
+    _decide(org, approval_id, by="approver_id")
+    assert _gate(org, contact_id=contact_id, approval_id=approval_id, payload=PAYLOAD) == "allowed"
+    assert _status(approval_id)[1] is not None
+    assert _gate(org, contact_id=contact_id, approval_id=approval_id, payload=PAYLOAD) == "approval_already_used"
+
+
+def test_a_refused_execution_does_not_consume_the_approval(org, monkeypatch) -> None:
+    contact_id = _gate_ready(org, monkeypatch)
+    _enable_channel_switch(org)
+    approval_id = _request(org)
+    _decide(org, approval_id, by="approver_id")
+    assert _gate(org, contact_id=contact_id, approval_id=approval_id, payload={"title": "changed"}) == "approval_mismatch"
+    assert _status(approval_id)[1] is None
+    assert _gate(org, contact_id=contact_id, approval_id=approval_id, payload=PAYLOAD) == "allowed"
+
+
+def test_do_not_disturb_is_checked_before_the_approval_is_considered(manager, org, monkeypatch) -> None:
+    """A do-not-disturb contact is refused by the channel gate, which runs before the approval gate."""
+    contact_id = _gate_ready(org, monkeypatch)
+    _enable_channel_switch(org)
+    with SessionLocal() as db:
+        set_contact_do_not_disturb(db, organization_id=org["organization_id"], actor_user_id=org["requester_id"], contact_id=contact_id, enabled=True)
+        db.commit()
+    assert _gate(org, contact_id=contact_id, approval_id=None, payload=None) == "contact_do_not_disturb"
+    with SessionLocal() as db:
+        set_contact_do_not_disturb(db, organization_id=org["organization_id"], actor_user_id=org["requester_id"], contact_id=contact_id, enabled=False)
+        db.commit()
+    # Lifted: the channel gate passes, and the approval gate is the next refusal.
+    assert _gate(org, contact_id=contact_id, approval_id=None, payload=None) == "approval_required"
+
+
+def _enable_channel_switch(ids: dict[str, UUID]) -> None:
+    """Turn on the channel capability's own switch, which the policy checks before the gates below."""
+    with SessionLocal() as db:
+        set_capability_enabled(
+            db,
+            organization_id=ids["organization_id"],
+            actor_user_id=ids["requester_id"],
+            capability_key=APPROVAL_KEY,
+            is_enabled=True,
+        )
+        db.commit()
+
 
 
 def test_two_racing_executions_cannot_both_use_one_approval(org) -> None:

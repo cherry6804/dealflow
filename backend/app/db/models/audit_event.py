@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -57,6 +57,14 @@ class AuditEvent(Base):
             "ix_audit_events_decision_occurred_at",
             "decision",
             "occurred_at",
+        ),
+        # At most one row per organization and idempotency key. Rows without a key are unconstrained.
+        Index(
+            "uq_audit_events_org_idempotency_key",
+            "organization_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
     )
 
@@ -121,6 +129,24 @@ class AuditEvent(Base):
 
     event_metadata: Mapped[str | None] = mapped_column(
         Text,
+        nullable=True,
+    )
+
+    # Lifecycle of a governed change: requested, completed or denied. Null for older rows.
+    outcome: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    # The requested row that a completed row follows from. Null when there is no parent.
+    causation_id: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    # Client or operation key. A repeated write with the same key returns the stored row.
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(200),
         nullable=True,
     )
 

@@ -46,7 +46,8 @@ def _format_row(event: OutboxEvent) -> str:
     return (
         f"{event.id} | {event.organization_id} | {event.event_type} | "
         f"{event.status} | attempts={event.attempts}/{event.max_attempts} | "
-        f"available_at={event.available_at.isoformat()} | error={error}"
+        f"available_at={event.available_at.isoformat()} | "
+        f"reason={event.dead_letter_reason or '-'} | error={error}"
     )
 
 

@@ -58,22 +58,33 @@ from app.db.models.sibvo_identity_link import SibvoIdentityLink
 from app.db.models.sibvo_organization_link import SibvoOrganizationLink
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
+from app.db.models.organization_usage_alert_settings import OrganizationUsageAlertSettings
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
 from app.db.models.contact_consent import ContactConsentRecord
 from app.db.models.provider_connection import ProviderConnection
 from app.db.models.approval_request import ApprovalRequest
 from app.db.models.channel_policy import ChannelPolicy, ContactDoNotDisturb
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
+from app.db.models.execution_rate_limit_window import ExecutionRateLimitWindow
+from app.db.models.provider_credential import ProviderCredential
 from app.db.models.team_member_removal import TeamMemberRemoval
 from app.db.models.site_visit import SiteVisit
 from app.db.models.subscription import Subscription
 from app.db.models.team_invitation import TeamInvitation
 from app.db.models.user import User
 
+from app.db.models.organization_entitlement_snapshot import OrganizationEntitlementSnapshot
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.outbox_replay_record import OutboxReplayRecord
+from app.db.models.provider_connection import ProviderConnection
+from app.db.models.provider_verification_attempt import ProviderVerificationAttempt
 
 __all__ = [
+    "OrganizationEntitlementSnapshot",
     "OutboxEvent",
+    "OutboxReplayRecord",
+    "ProviderConnection",
+    "ProviderVerificationAttempt",
     "Activity",
     "AuditEvent",
     "AuthLoginRateLimit",
@@ -130,7 +141,10 @@ __all__ = [
     "ContactDoNotDisturb",
     "RetentionPolicy",
     "OrganizationCapabilitySetting",
+    "ExecutionRateLimitWindow",
+    "ProviderCredential",
     "OrganizationUsageBudget",
+    "OrganizationUsageAlertSettings",
     "TeamMemberRemoval",
     "SiteVisit",
     "Subscription",

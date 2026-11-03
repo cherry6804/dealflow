@@ -43,17 +43,36 @@ them, those capabilities cannot run. This is deliberate. Dealsflo does not inven
 `evaluate_capability` decides whether a capability is allowed for an organization. Gates run in this order,
 and the first failing gate gives the reason:
 
-1. Unknown capability: `unknown_capability`.
-2. Plan feature, for capabilities that declare one, read from SIBVO's attested session snapshot
-   (`app/governance/entitlement.py`, fail closed): `entitlement_unverified`, `wrong_organization`,
-   `product_membership_inactive`, `trial_expired`, `subscription_not_active`, `entitlement_missing`,
-   `entitlement_disabled`.
-3. Organization switches, from the top of the chain: `master_disabled`, `capability_disabled`.
-4. Executable capability with no confirmed plan feature: `entitlement_not_defined`.
-5. Approval required by the catalogue: `approval_not_available`. No approval model exists (DFR1-025).
-6. Provider required: a verified, fresh connection of the matching kind must exist. Denials are `provider_not_connected`, `provider_unhealthy` and `provider_health_stale`. No provider probe is registered yet, so none can pass.
-7. Consent required: `consent_not_configured`. No consent model exists.
-8. Otherwise `allowed`.
+1. **Unknown capability:** denied (`unknown_capability`).
+2. **Entitlement** (only where the capability declares a SIBVO feature). `app/governance/entitlement.py`
+   reads the attested session snapshot:
+   - no attested session, or no snapshot (SIBVO unavailable, session revoked): `entitlement_unverified`;
+   - snapshot bound to another organization: `wrong_organization`;
+   - no product role (product membership inactive or suspended): `product_membership_inactive`;
+   - expired trial: `trial_expired`; other non-eligible subscription status: `subscription_not_active`;
+     only `active` and `trialing` are eligible;
+   - malformed or non-list entitlements: `entitlement_unverified`;
+   - feature absent from the plan: `entitlement_missing`; present but disabled: `entitlement_disabled`.
+3. **Organization switches:** walk the chain from the top master down. `master_disabled` above the
+   capability, `capability_disabled` on the capability itself.
+4. **Executable capability with no confirmed plan feature:** `entitlement_not_defined`. A null or empty feature
+   key is not a feature, so it can never skip the entitlement check.
+5. **SIBVO entitlement for AI:** every AI capability requires the `ai_gateway` entitlement in SIBVO's current
+   organization-level snapshot (WS5, ADR-0027). The snapshot is valid for 30 seconds. Expired snapshots and refresh
+   failures deny.
+6. **Provider required:** denied (`provider_not_connected`) unless a verified provider connection is ready (ADR-0032).
+   A ready provider is still denied with `execution_gates_pending` while the gates below are not all in place.
+7. **Consent required (gate):** the contact's current consent for the channel and purpose must be granted. Missing,
+   revoked, expired and channel-mismatched consent deny with `consent_missing`, `consent_revoked`, `consent_expired`
+   and `consent_channel_mismatch`. A capability with no contact denies with `consent_not_configured`.
+8. **Channel policy (channel capabilities):** enablement, messaging window, quiet hours and contact do-not-disturb.
+   Denials are `channel_policy_not_configured`, `channel_disabled`, `outside_messaging_window`, `quiet_hours` and
+   `contact_do_not_disturb`. Without a policy row a channel fails closed.
+9. **Approval required:** capabilities in the approval set need an approval whose payload hash matches the action.
+   Denials are `approval_required`, `approval_not_found`, `approval_not_approved`, `approval_expired`,
+   `approval_already_used` and `approval_mismatch`. The approval is consumed last, after budget reservation, so a
+   refusal earlier in the gate leaves it unused.
+10. Rate, budget and audit gates follow, then `allowed`.
 
 The policy is also used to show capability state in the settings screen. That display call writes no audit
 record, because it does not authorize anything.
@@ -171,20 +190,22 @@ source and correlation ID.
 
 | Method and path | Permission | Notes |
 |---|---|---|
-| `GET /api/v1/governance/access` | authenticated tenant member | Which governance permissions the caller holds. Shapes the UI only. |
-| `GET /api/v1/governance/capabilities` | `governance.capabilities.read` | Stored switch plus effective decision. |
-| `PATCH /api/v1/governance/capabilities/{key}` | `governance.capabilities.manage` (owner-only) | Requires `confirm: true`. Audited. |
-| `GET /api/v1/governance/usage/budgets` | `governance.usage.read` | Current UTC month. |
-| `PUT /api/v1/governance/usage/budgets/{unit}` | `governance.budgets.manage` (owner-only) | Requires `confirm: true`. Audited with before and after. |
-| `GET /api/v1/governance/privacy/categories` | `governance.privacy.read` | Classification register, including `producer_exists`. |
-| `GET /api/v1/governance/privacy/retention` | `governance.privacy.read` | Current retention per category. |
-| `PUT /api/v1/governance/privacy/retention/{category}` | `governance.privacy.manage` (owner-only) | Versioned. Audited. |
-| `GET /api/v1/governance/privacy/legal-holds` | `governance.privacy.read` | Organization-scoped. |
-| `POST /api/v1/governance/privacy/legal-holds` | `governance.privacy.manage` (owner-only) | Reason required. Audited. |
-| `POST /api/v1/governance/privacy/legal-holds/{id}/release` | `governance.privacy.manage` (owner-only) | Audited. |
-| `GET /api/v1/governance/privacy/requests` | `governance.privacy.read` | Also expires ready exports past their window. |
-| `POST /api/v1/governance/privacy/requests` | `governance.privacy.manage` (owner-only) | Export or deletion. Requires `confirm: true`. |
-| `POST /api/v1/governance/privacy/requests/{id}/cancel` | `governance.privacy.manage` (owner-only) | Audited. |
+| `GET /api/v1/ai/governance/access` | authenticated tenant member | Which governance permissions the caller holds. Shapes the UI only. |
+| `GET /api/v1/ai/governance/capabilities` | `governance.capabilities.read` | Stored switch plus effective decision. |
+| `PATCH /api/v1/ai/governance/capabilities/{key}` | `governance.capabilities.manage` (owner-only) | Requires `confirm: true`. Audited. |
+| `GET /api/v1/ai/governance/usage/budgets` | `governance.usage.read` | Current UTC month. |
+| `PUT /api/v1/ai/governance/usage/budgets/{unit}` | `governance.budgets.manage` (owner-only) | Requires `confirm: true`. Audited with before and after. |
+| `GET /api/v1/ai/governance/privacy/categories` | `governance.privacy.read` | Classification register, including `producer_exists`. |
+| `GET /api/v1/ai/governance/privacy/retention` | `governance.privacy.read` | Current retention per category. |
+| `PUT /api/v1/ai/governance/privacy/retention/{category}` | `governance.privacy.manage` (owner-only) | Versioned. Audited. |
+| `GET /api/v1/ai/governance/privacy/legal-holds` | `governance.privacy.read` | Organization-scoped. |
+| `POST /api/v1/ai/governance/privacy/legal-holds` | `governance.privacy.manage` (owner-only) | Reason required. Audited. |
+| `POST /api/v1/ai/governance/privacy/legal-holds/{id}/release` | `governance.privacy.manage` (owner-only) | Audited. |
+| `GET /api/v1/ai/governance/privacy/requests` | `governance.privacy.read` | Also expires ready exports past their window. |
+| `POST /api/v1/ai/governance/privacy/requests` | `governance.privacy.manage` (owner-only) | Export or deletion. Requires `confirm: true`. |
+| `POST /api/v1/ai/governance/privacy/requests/{id}/cancel` | `governance.privacy.manage` (owner-only) | Audited. |
+
+**Namespace and legacy aliases (ADR-0031).** Governance and provider-credential routes live under `/api/v1/ai/`. The previous `/api/v1/governance/...` and `/api/v1/provider-credentials/...` paths remain as legacy aliases for existing consumers. They call the same handlers, enforce the same permissions and tenant checks, and return the same responses. They are hidden from the OpenAPI schema and documented here as deprecated. They are not removed in this change, and no `Deprecation` or `Sunset` header is sent yet. Removal requires a separate, approved change (ADR-0031, section 4).
 
 Every organization comes from the server-side tenant context. A request for an organization the caller
 does not belong to is refused with 403. Owner-only keys are in `OWNER_ONLY_PERMISSION_KEYS`.
@@ -240,22 +261,24 @@ until a scheduler runs it, an unsettled reservation holds its budget. Its quanti
 
 ### 4.4 Thresholds and alerts
 
-- Warning and critical thresholds are configurable per budget (`PUT /api/v1/governance/usage/budgets/{unit}` with
-  optional `warning_percent` and `critical_percent`). Valid values are `1 <= warning < critical < 100`. The 100 percent
-  (exhausted) alert is fixed. A change applies to future crossings.
-- The highest threshold newly crossed by a change is announced once per budget per period. A change crossing several
-  thresholds announces only the highest. Repeats are not announced again.
-- Delivery is an **in-app notification** to each administrator (`governance.budgets.manage`), through the outbox
-  (`deliver_usage_threshold_alert`). Retries are safe, and a failure to notify is retried and then dead-lettered.
-  No email or other external message is sent. The outbox worker must be deployed to deliver anything (section 4.6).
-- Budget changes are audited with the before and after limit and thresholds.
+**Delivery.** The worker process registers `deliver_usage_threshold_alert`
+(`app/governance/alert_delivery.py`). It creates an **in-app notification** for each active member whose
+role grants `governance.budgets.manage`. It sends no email, SMS, or other external message. Notifications
+are keyed by event, recipient and threshold, so a retry does not duplicate them. An administrator who has
+turned off notifications for this type is skipped, which is their preference.
 
-### 4.5 Breakdowns
+**Failure.** If no administrator can receive the alert, or every administrator has notifications off, the
+handler raises a permanent error. The event is dead-lettered at once with reason `no_administrator` or
+`no_recipient_accepts_alerts`, and it is not retried, because no retry can succeed until a person corrects the
+configuration. An operator replays it after the correction (WS3, ADR-0026). The event is marked `delivered` only
+after the handler returns without error.
 
-`GET /api/v1/governance/usage/breakdown?group_by=capability|unit|provider` (`governance.usage.read`). The current UTC
-calendar month. Only live entries count: reservations not yet settled, and recorded usage. Released, expired and
-reversed entries are excluded. Each row shows recorded and reserved quantities and the entry count, per unit.
-Entries without a capability or provider are shown as `unattributed`. Totals are organization-scoped.
+**Alert state.** The budget's `last_alert_percent` advances only in the transaction that records a successful
+delivery. A failed alert therefore stays re-announceable, and a replay re-announces it.
+
+**The worker must run.** Delivery happens only in the worker process (`python -m app.outbox.worker --serve`,
+see `docs/development/worker-deployment.md`). The repository defines no deployment of that worker, so until an
+operator deploys it, an alert remains pending. An enqueued alert is not a delivered alert.
 
 ### 4.6 Execution gate integration (DFR1-006)
 

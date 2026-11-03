@@ -7,6 +7,7 @@ import GovernancePage from "./GovernancePage";
 vi.mock("../../../services/governanceApi", () => ({
   governanceApi: {
     getAccess: vi.fn(),
+    getEntitlementStatus: vi.fn(),
     listCapabilities: vi.fn(),
     setCapability: vi.fn(),
   },
@@ -39,6 +40,18 @@ const AUTOMATION_OFF: CapabilityState = {
 describe("GovernancePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The capabilities view shows SIBVO plan verification. Default to a not-yet-verified plan.
+    vi.mocked(governanceApi.getEntitlementStatus).mockResolvedValue({
+      state: "missing",
+      product_key: "dealsflo",
+      revalidation_interval_seconds: 30,
+      fetched_at: null,
+      expires_at: null,
+      failure_count: 0,
+      next_refresh_attempt_at: null,
+      backoff_active: false,
+      signing_key_configured: false,
+    });
   });
 
   it("explains when the caller has no governance permission", async () => {

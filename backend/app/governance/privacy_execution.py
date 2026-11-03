@@ -85,10 +85,11 @@ from app.governance.privacy import (
     STATUS_READY,
     STATUS_READY_PARTIAL,
     InvalidRequestStateError,
-    audit_privacy_event,
     current_retention,
     evaluate_deletion,
     expire_export_if_due,
+    record_completed_privacy_event,
+    record_requested_privacy_event,
 )
 from app.outbox.service import enqueue_event, register_handler
 from app.storage import ObjectNotFoundError, ObjectStorage, get_object_storage
@@ -694,6 +695,15 @@ def generate_export(
     if request.status != STATUS_AWAITING_ARTIFACT:
         return
 
+    started = record_requested_privacy_event(
+        db,
+        organization_id=request.organization_id,
+        actor_user_id=None,
+        action="privacy.export.generation",
+        resource_type="privacy_request",
+        resource_id=str(request.id),
+        metadata={"categories": json.loads(request.categories), "requested_by_user_id": str(request.requested_by_user_id)},
+    )
     requested: list[str] = json.loads(request.categories)
     included: dict[str, list[dict[str, Any]]] = {}
     members: dict[str, bytes] = {}
@@ -721,10 +731,9 @@ def generate_export(
     request.execution = json.dumps({"not_exported": not_exported}, sort_keys=True)
     if not included:
         request.status = STATUS_BLOCKED
-        audit_privacy_event(
+        record_completed_privacy_event(
             db,
-            organization_id=request.organization_id,
-            actor_user_id=request.requested_by_user_id,
+            requested=started,
             action="privacy.export.blocked",
             resource_type="privacy_request",
             resource_id=str(request.id),
@@ -756,10 +765,9 @@ def generate_export(
     request.artifact_reference = key
     request.expires_at = now + ttl
     request.status = STATUS_READY if not not_exported else STATUS_READY_PARTIAL
-    audit_privacy_event(
+    record_completed_privacy_event(
         db,
-        organization_id=request.organization_id,
-        actor_user_id=request.requested_by_user_id,
+        requested=started,
         action="privacy.export.ready",
         resource_type="privacy_request",
         resource_id=str(request.id),
@@ -1010,6 +1018,15 @@ def execute_deletion(
     eligible = sorted(
         key for key, decision in decisions.items() if decision.get("eligible")
     )
+    started = record_requested_privacy_event(
+        db,
+        organization_id=request.organization_id,
+        actor_user_id=None,
+        action="privacy.deletion.requested",
+        resource_type="privacy_request",
+        resource_id=str(request.id),
+        metadata={"eligible": eligible, "requested_by_user_id": str(request.requested_by_user_id)},
+    )
     execution: dict[str, dict[str, Any]] = {}
     outcomes: dict[str, str] = {}
     for key in eligible:
@@ -1045,10 +1062,9 @@ def execute_deletion(
     request.processed_at = now
     request.status = status
     request.execution = json.dumps(execution, sort_keys=True)
-    audit_privacy_event(
+    record_completed_privacy_event(
         db,
-        organization_id=request.organization_id,
-        actor_user_id=request.requested_by_user_id,
+        requested=started,
         action=f"privacy.deletion.{status}",
         resource_type="privacy_request",
         resource_id=str(request.id),
@@ -1099,7 +1115,7 @@ def enforce_retention(
                 "outcome": OUTCOME_SKIPPED,
                 "reasons": list(decision.reasons),
             }
-            audit_privacy_event(
+            record_requested_privacy_event(
                 db,
                 organization_id=organization_id,
                 actor_user_id=None,
@@ -1111,6 +1127,15 @@ def enforce_retention(
             continue
 
         cutoff = now - timedelta(days=policy.retention_days)
+        started = record_requested_privacy_event(
+            db,
+            organization_id=organization_id,
+            actor_user_id=None,
+            action="privacy.retention.requested",
+            resource_type="retention_policy",
+            resource_id=key,
+            metadata={"cutoff": cutoff.isoformat(), "retention_days": policy.retention_days},
+        )
         result = _execute_category(
             db, organization_id, key, storage=storage, now=now, cutoff=cutoff
         )
@@ -1118,10 +1143,9 @@ def enforce_retention(
         record["cutoff"] = cutoff.isoformat()
         record["retention_days"] = policy.retention_days
         report[key] = record
-        audit_privacy_event(
+        record_completed_privacy_event(
             db,
-            organization_id=organization_id,
-            actor_user_id=None,
+            requested=started,
             action="privacy.retention.enforced",
             resource_type="retention_policy",
             resource_id=key,
@@ -1189,12 +1213,20 @@ def expire_request_export(
         before in {STATUS_READY, STATUS_READY_PARTIAL}
         and request.status == STATUS_EXPIRED
     ):
-        if stored_key:
-            _delete_export_object(storage, stored_key)
-        audit_privacy_event(
+        started = record_requested_privacy_event(
             db,
             organization_id=request.organization_id,
             actor_user_id=None,
+            action="privacy.export.expiry.requested",
+            resource_type="privacy_request",
+            resource_id=str(request.id),
+            metadata={},
+        )
+        if stored_key:
+            _delete_export_object(storage, stored_key)
+        record_completed_privacy_event(
+            db,
+            requested=started,
             action="privacy.export.expired",
             resource_type="privacy_request",
             resource_id=str(request.id),
@@ -1230,12 +1262,7 @@ def open_export(
     ):
         raise ExportUnavailableError("This export is not ready.")
 
-    try:
-        handle = storage.open_read(request.artifact_reference)
-    except ObjectNotFoundError as error:
-        raise ExportUnavailableError("This export is not available.") from error
-
-    audit_privacy_event(
+    record_requested_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -1244,5 +1271,10 @@ def open_export(
         resource_id=str(request.id),
         metadata={"status": request.status},
     )
+    try:
+        handle = storage.open_read(request.artifact_reference)
+    except ObjectNotFoundError as error:
+        raise ExportUnavailableError("This export is not available.") from error
+
     db.flush()
     return handle

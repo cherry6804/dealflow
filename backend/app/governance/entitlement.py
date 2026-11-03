@@ -29,6 +29,9 @@ from uuid import UUID
 from app.auth.dependencies import CurrentUserContext
 
 ELIGIBLE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
+# Features checked against the organization-level snapshot (WS5). Every other feature is checked
+# against the user's session snapshot, as before.
+ORG_SNAPSHOT_FEATURES = frozenset({"ai_gateway"})
 EXPIRED_SUBSCRIPTION_STATUSES = frozenset({"expired", "trial_expired"})
 
 REASON_ENTITLEMENT_UNVERIFIED = "entitlement_unverified"
@@ -64,6 +67,20 @@ def verify_entitlement(
         return EntitlementVerdict(False, REASON_WRONG_ORGANIZATION)
 
     access = user_context.sibvo_access
+    return evaluate_feature_access(access, feature_key=feature_key, require_product_role=True)
+
+
+def evaluate_feature_access(
+    access: object,
+    *,
+    feature_key: str,
+    require_product_role: bool,
+) -> EntitlementVerdict:
+    """The single rule set for a SIBVO access snapshot, from a user session or an organization.
+
+    Session snapshots require a product role. Organization snapshots (WS5) involve no user and carry
+    no role, so they pass ``require_product_role=False``. Every other rule is the same for both.
+    """
     if not isinstance(access, dict):
         return EntitlementVerdict(False, REASON_ENTITLEMENT_UNVERIFIED)
 
@@ -71,7 +88,7 @@ def verify_entitlement(
     if not isinstance(entitlements, list):
         return EntitlementVerdict(False, REASON_ENTITLEMENT_UNVERIFIED)
 
-    if not access.get("product_role"):
+    if require_product_role and not access.get("product_role"):
         return EntitlementVerdict(False, REASON_PRODUCT_MEMBERSHIP_INACTIVE)
 
     status = access.get("subscription_status")

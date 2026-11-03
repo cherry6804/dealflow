@@ -369,6 +369,21 @@ def fetch_introspection(
     )
 
 
+def fetch_organization_entitlements(settings: Settings, organization_id: UUID) -> dict[str, Any]:
+    """Return SIBVO's signed organization snapshot body. Callers verify the signature.
+
+    Uses the same confidential client, timeout, breaker and bounded retry as the other calls. The
+    operation is a read, so it is safe to retry.
+    """
+    return _send(
+        settings,
+        operation="organization_entitlements",
+        path="/sso/organization-entitlements",
+        data={"organization_id": str(organization_id)},
+        retry_safe=True,
+    )
+
+
 def fetch_seat_usage(
     settings: Settings,
     *,
@@ -415,9 +430,11 @@ def release_product_seat(
 ) -> SibvoSeatRelease:
     """Revoke a member's Dealsflo product membership in SIBVO and release the seat.
 
-    Safe to retry: SIBVO reports an already released seat as `already_released`.
-    Raises SibvoRequestDenied when SIBVO refuses, and SibvoUnavailable when the
-    outcome is unknown. Callers must not report success on either.
+    Retried on transient failures with the same `idempotency_key`. SIBVO enforces that key:
+    a repeat returns the stored result (`already_released` once released), and the same key
+    for a different member is refused with `idempotency_key_conflict`. Raises
+    SibvoRequestDenied when SIBVO refuses, and SibvoUnavailable when the outcome is unknown.
+    Callers must not report success on either.
     """
     body = _send(
         settings,
@@ -431,7 +448,8 @@ def release_product_seat(
             "reason": reason[:500],
             "idempotency_key": idempotency_key,
         },
-        retry_safe=False,
+        # Safe to repeat: SIBVO enforces the key (WP-A1). A retry cannot release a second seat.
+        retry_safe=True,
     )
     released = body.get("released")
     already = body.get("already_released", False)

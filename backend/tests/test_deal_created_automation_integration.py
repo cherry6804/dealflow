@@ -14,8 +14,8 @@ from tests.governance_helpers import (
     attested_user_context,
     enable_deal_created_automation,
 )
+from tests.test_automation_execution_service import create_authorized_user
 from tests.test_deals_api import (
-    create_authorized_user,
     create_customer_profile,
     create_lead,
     create_property,
@@ -68,6 +68,7 @@ def test_creating_deal_through_api_executes_active_automation() -> None:
             ],
             status=AutomationRule.STATUS_ACTIVE,
             created_by_user_id=user.id,
+            updated_by_user_id=user.id,
         )
         db.add(rule)
         db.commit()
@@ -165,6 +166,7 @@ def test_creating_deal_with_nonmatching_rule_records_skipped_execution() -> None
             ],
             status=AutomationRule.STATUS_ACTIVE,
             created_by_user_id=user.id,
+            updated_by_user_id=user.id,
         )
         db.add(rule)
         db.commit()

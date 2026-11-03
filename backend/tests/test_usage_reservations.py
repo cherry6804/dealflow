@@ -10,7 +10,7 @@ import json
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy import delete, select
@@ -24,20 +24,17 @@ from app.db.models.outbox_event import OutboxEvent
 from app.db.session import SessionLocal
 from app.governance import usage_maintenance
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES, AUTOMATION_MASTER
-from app.governance.execution_gate import (
-    BudgetReservation,
-    ExecutionRequest,
-    authorize_execution,
-)
+from app.governance.execution_gate import ExecutionRequest, evaluate_execution
 from app.governance.service import set_capability_enabled
 from app.governance.usage_ledger import (
     THRESHOLD_EVENT_TYPE,
     BudgetExceededError,
     IdempotencyConflictError,
+    ReservationExpiredError,
     InvalidUsageStateError,
     UsageUnit,
     budget_status,
-    configure_budget,
+    configure_budget as _configure_budget,
     record,
     release,
     release_expired,
@@ -54,12 +51,62 @@ UNIT = UsageUnit.TOKENS_OUTPUT
 
 @pytest.fixture
 def org() -> Iterator[tuple[UUID, UUID]]:
-    user, organization = create_manager(permissions=())
+    # The automation capability needs deals.create at the actor gate.
+    user, organization = create_manager(permissions=("deals.create",))
     yield organization.id, user.id
     with SessionLocal() as db:
         for model in (AiUsageEvent, OrganizationUsageBudget, OutboxEvent, AuditEvent, OrganizationCapabilitySetting):
             db.execute(delete(model).where(model.organization_id == organization.id))
         db.commit()
+
+def configure_budget(
+    db,
+    *,
+    organization_id,
+    unit,
+    limit_quantity,
+    warning_percent: int = 70,
+    critical_percent: int = 85,
+    moment=None,
+):
+    """Set a budget, and the organization's alert thresholds (develop keeps thresholds per organization).
+
+    The 100 percent alert is fixed. Warning and critical default to 70 and 85. The thresholds are written only when
+    they differ from the defaults, through the same validated service the API uses.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models.membership import Membership
+    from app.governance.alert_threshold_service import update_alert_thresholds
+
+    warning_percent = 70 if warning_percent is None else warning_percent
+    critical_percent = 85 if critical_percent is None else critical_percent
+    moment = moment or datetime.now(UTC)
+    budget = _configure_budget(
+        db,
+        organization_id=organization_id,
+        unit=unit,
+        limit_quantity=limit_quantity,
+        moment=moment,
+    )
+    if (warning_percent, critical_percent) != (70, 85):
+        actor = db.scalar(
+            select(Membership.user_id).where(
+                Membership.organization_id == organization_id,
+                Membership.is_active.is_(True),
+            )
+        )
+        update_alert_thresholds(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor,
+            values=[warning_percent, critical_percent, 100],
+            moment=moment,
+        )
+    return budget
+
 
 
 def _budget(organization_id: UUID, limit: int, *, unit: UsageUnit = UNIT, warning=None, critical=None) -> None:
@@ -274,7 +321,7 @@ def test_an_unsettled_reservation_is_released_at_expiry_and_its_budget_returns(o
         event = db.get(AiUsageEvent, event_id)
         assert event is not None
         assert event.status == AiUsageEvent.STATUS_RELEASED
-        assert event.release_reason == "expired"
+        assert event.released_reason == "expired"
         audit = db.scalar(select(AuditEvent).where(AuditEvent.resource_id == str(event_id)))
         assert audit is not None and audit.action == "usage.reservation.expired"
         assert json.loads(audit.event_metadata) == {"reserved_quantity": 60, "unit": UNIT.value}
@@ -317,7 +364,7 @@ def test_settling_an_expired_reservation_is_refused_so_the_budget_is_not_double_
         db.commit()
 
     with SessionLocal() as db:
-        with pytest.raises(InvalidUsageStateError):
+        with pytest.raises(ReservationExpiredError):
             settle(db, organization_id=organization_id, idempotency_key="late-settle", actual_quantity=30)
         db.rollback()
     budget = _budget_row(organization_id)
@@ -364,7 +411,7 @@ def test_exhausted_budget_refuses_new_work_until_capacity_is_released(org) -> No
         db.rollback()
 
     with SessionLocal() as db:
-        release(db, organization_id=organization_id, idempotency_key="exhaust-1", reason="failed")
+        release(db, organization_id=organization_id, idempotency_key="exhaust-1")
         db.commit()
     _reserve(organization_id, "exhaust-3", 50)
     assert _budget_row(organization_id).reserved_quantity == 50
@@ -417,7 +464,11 @@ def test_the_default_thresholds_are_70_and_85(org) -> None:
     with SessionLocal() as db:
         status = budget_status(db, organization_id=organization_id, unit=UNIT, moment=NOW)
     assert status is not None
-    assert (status.warning_percent, status.critical_percent) == (70, 85)
+    from app.governance.alert_thresholds import read_alert_thresholds
+
+    with SessionLocal() as db:
+        thresholds = read_alert_thresholds(db, organization_id=organization_id)
+    assert thresholds.values == (70, 85, 100)
 
 
 # --- Breakdowns -----------------------------------------------------------------------------------
@@ -491,19 +542,14 @@ def _gate(organization_id: UUID, user_id: UUID, *, key: str, quantity: int, cont
         user = db.get(User, user_id)
         assert user is not None
         actor = context or attested_user_context(user, organization_id=organization_id)
-        decision = authorize_execution(
+        decision = evaluate_execution(
             db,
             ExecutionRequest(
                 organization_id=organization_id,
                 capability_key=AUTOMATION_DEAL_CREATED_RULES,
-                actor=actor,
-                resource_type="deal",
-                resource_id=str(uuid4()),
-                resource_organization_id=organization_id,
-                resource_active=True,
-                required_permission=None,
-                billable=True,
-                budget=BudgetReservation(unit=UNIT, quantity=quantity, idempotency_key=key),
+                user_context=actor,
+                budget_units=((UNIT, quantity),),
+                idempotency_key=key,
             ),
         )
         db.commit()
@@ -520,7 +566,7 @@ def test_billable_work_reserves_budget_through_the_gate(org) -> None:
     assert decision.allowed is True
     assert _budget_row(organization_id).reserved_quantity == 40
     with SessionLocal() as db:
-        event = db.scalar(select(AiUsageEvent).where(AiUsageEvent.idempotency_key == "gate-1"))
+        event = db.scalar(select(AiUsageEvent).where(AiUsageEvent.idempotency_key == f"gate-1:{UNIT.value}"))
         assert event is not None and event.capability_key == AUTOMATION_DEAL_CREATED_RULES
 
 
@@ -580,7 +626,7 @@ def test_entitlement_removed_during_execution_stops_the_run_and_the_caller_relea
     assert stopped.reason_code == "entitlement_disabled"
     # The stopped step never reserved. The caller releases the earlier reservation when it stops.
     with SessionLocal() as db:
-        release(db, organization_id=organization_id, idempotency_key="inflight-1", reason="entitlement_removed")
+        release(db, organization_id=organization_id, idempotency_key=f"inflight-1:{UNIT.value}")
         db.commit()
     budget = _budget_row(organization_id)
     assert budget.reserved_quantity == 0

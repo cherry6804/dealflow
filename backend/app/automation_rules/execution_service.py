@@ -11,16 +11,37 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
+from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
+from app.automation_rules.authority import (
+    PermissionChecker,
+    audit_action_decision,
+    audit_action_result,
+    authorize_action,
+)
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
+from app.db.models.membership import Membership
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
-from app.governance.execution_gate import ExecutionRequest, authorize_execution
+from app.governance.execution_gate import (
+    ExecutionRequest,
+    evaluate_execution,
+    record_execution_stop,
+    revalidate_ticket,
+)
 from app.notifications.service import create_notification
-
+from app.rate_limits.limiter import (
+    REASON_RATE_LIMITED,
+    RateLimitDecision,
+)
 
 SUPPORTED_CONDITION_FIELDS = {
     "stage",
@@ -251,6 +272,20 @@ def _notify_automation_execution(
 
     title, outcome = details
 
+    # The creator may have left the organization since the rule was activated. Their notification is
+    # skipped, and the execution and the deal that triggered it are unaffected.
+    recipient_is_active = db.scalar(
+        select(Membership.id)
+        .where(
+            Membership.organization_id == organization_id,
+            Membership.user_id == rule.created_by_user_id,
+            Membership.is_active.is_(True),
+        )
+        .limit(1)
+    )
+    if recipient_is_active is None:
+        return
+
     create_notification(
         db,
         organization_id=organization_id,
@@ -267,55 +302,45 @@ def _notify_automation_execution(
     )
 
 
-def _gate_step(
+RATE_LIMIT_EVENT_TYPE = "rate_limit"
+# The rate-limit gate's own system actor. Only this module holds its capability (WP3 hardening).
+_RATE_LIMIT_ACTOR = register_system_actor("automation_rate_limit")
+RATE_LIMIT_DENIED_ACTION = "rate_limit.denied"
+
+
+def _record_rate_limit_denial(
     db: Session,
     *,
     organization_id: UUID,
-    user_context: CurrentUserContext | None,
+    actor_user_id: UUID | None,
     deal: Deal,
-    stage: str,
-    resource_type: str,
-    resource_id: str,
-    resource_active: bool,
-) -> bool:
-    """Run one centralized execution decision for a deal-created automation step."""
-    decision = authorize_execution(
+    rate: RateLimitDecision,
+) -> None:
+    """Audit a rate-limit denial in its own transaction (WP3).
+
+    Records the scope and retry time, never a budget or usage figure. The row survives the deal creation
+    transaction being rolled back.
+    """
+    persist_independent_audit_event(
         db,
-        ExecutionRequest(
-            organization_id=organization_id,
-            capability_key=AUTOMATION_DEAL_CREATED_RULES,
-            actor=user_context,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            resource_organization_id=deal.organization_id,
-            resource_active=resource_active,
-            required_permission="deals.create",
-            stage=stage,
+        attribution=(
+            user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+            if actor_user_id is not None
+            else system_attribution(organization_id=organization_id, capability=_RATE_LIMIT_ACTOR)
         ),
-    )
-    return decision.allowed
-
-
-def _action_allowed(
-    db: Session,
-    *,
-    organization_id: UUID,
-    user_context: CurrentUserContext | None,
-    deal: Deal,
-    rule: AutomationRule,
-    position: int,
-) -> bool:
-    """Revalidate the governance gate, and the rule's status, before one action."""
-    db.refresh(rule)
-    return _gate_step(
-        db,
-        organization_id=organization_id,
-        user_context=user_context,
-        deal=deal,
-        stage="action",
-        resource_type="automation_action",
-        resource_id=f"{rule.id}:{position}",
-        resource_active=rule.status == AutomationRule.STATUS_ACTIVE,
+        event_type=RATE_LIMIT_EVENT_TYPE,
+        action=RATE_LIMIT_DENIED_ACTION,
+        decision="denied",
+        outcome=OUTCOME_DENIED,
+        permission_key=None,
+        resource_type="deal",
+        resource_id=str(deal.id),
+        metadata={
+            "execution_type": rate.execution_type,
+            "scope": rate.scope,
+            "limit": rate.limit,
+            "retry_after_seconds": rate.retry_after_seconds,
+        },
     )
 
 
@@ -341,21 +366,6 @@ def execute_deal_created_automations(
             "The deal does not belong to the requested organization."
         )
 
-    # Governance gate (DFR1-006): deal-created automations are disabled by default. A denial
-    # creates no executions and leaves the deal untouched, so manual CRM work continues.
-    # The gate is audited whether it allows or denies.
-    if not _gate_step(
-        db,
-        organization_id=organization_id,
-        user_context=user_context,
-        deal=deal,
-        stage="initial",
-        resource_type="deal",
-        resource_id=str(deal.id),
-        resource_active=True,
-    ):
-        return []
-
     rules = list(
         db.scalars(
             select(AutomationRule)
@@ -367,25 +377,40 @@ def execute_deal_created_automations(
             .order_by(AutomationRule.created_at, AutomationRule.id)
         ).all()
     )
+    if not rules:
+        return []
+
+    # Shared execution gate (WS6 WP4). Reached only when there is an active rule to run, so a request with
+    # no rules attempts nothing and is not audited. A denial creates no executions and leaves the deal
+    # untouched, so manual CRM work continues when automation is off.
+    if user_context is None:
+        return []
+    gate_request = ExecutionRequest(
+        organization_id=organization_id,
+        capability_key=AUTOMATION_DEAL_CREATED_RULES,
+        user_context=user_context,
+    )
+    decision = evaluate_execution(db, gate_request)
+    if not decision.allowed:
+        if decision.rate is not None and decision.rate.reason_code == REASON_RATE_LIMITED:
+            _record_rate_limit_denial(
+                db,
+                organization_id=organization_id,
+                actor_user_id=user_context.user.id,
+                deal=deal,
+                rate=decision.rate,
+            )
+        return []
 
     executions: list[AutomationExecution] = []
 
-    for index, rule in enumerate(rules):
-        if index > 0:
-            # In-flight revalidation: a switch turned off, a lost entitlement or a paused rule
-            # during this run stops the remaining rules. Rules already run are kept.
-            db.refresh(rule)
-            if not _gate_step(
-                db,
-                organization_id=organization_id,
-                user_context=user_context,
-                deal=deal,
-                stage="revalidation",
-                resource_type="automation_rule",
-                resource_id=str(rule.id),
-                resource_active=rule.status == AutomationRule.STATUS_ACTIVE,
-            ):
-                break
+    # Set when an in-flight revalidation stops the event. A stop applies to every later rule and step (WS6 WP8).
+    stopped_reason: str | None = None
+    for rule in rules:
+        if stopped_reason is not None:
+            break
+        # Re-read the rule before it runs. Another session may have paused it since this run started (in-flight stop).
+        db.refresh(rule)
         try:
             # A savepoint isolates a duplicate insert or a failure in this
             # rule from the surrounding deal-creation transaction.
@@ -428,31 +453,67 @@ def execute_deal_created_automations(
                     else:
                         results: list[dict[str, Any]] = []
 
-                        stopped_by_governance = False
-                        for position, action in enumerate(rule.actions or []):
-                            # Revalidation before every action (DFR1-006). A switch turned off, a
-                            # lost entitlement or a paused rule stops this and the remaining actions.
-                            if stopped_by_governance or not _action_allowed(
-                                db,
-                                organization_id=organization_id,
-                                user_context=user_context,
-                                deal=deal,
-                                rule=rule,
-                                position=position,
-                            ):
-                                stopped_by_governance = True
+                        for index, action in enumerate(rule.actions or []):
+                            action_type = (
+                                action.get("type")
+                                if isinstance(action, dict)
+                                else None
+                            )
+                            # In-flight revalidation (WS6 WP8): re-check the governing gates before each step.
+                            # A denial stops this step and every later one. The stop is recorded independently
+                            # first, so it survives a rollback.
+                            step_gate = revalidate_ticket(db, gate_request)
+                            if not step_gate.allowed:
+                                stopped_reason = step_gate.reason_code
+                                record_execution_stop(
+                                    db,
+                                    gate_request,
+                                    step_gate,
+                                    rule_id=rule.id,
+                                    deal_id=deal.id,
+                                    index=index,
+                                )
                                 results.append(
                                     {
-                                        "action_type": (
-                                            action.get("type")
-                                            if isinstance(action, dict)
-                                            else None
-                                        ),
-                                        "status": "SKIPPED",
-                                        "reason": "Stopped by a governance check.",
+                                        "action_type": action_type,
+                                        "status": "STOPPED",
+                                        "reason": "Execution stopped before this step.",
+                                        "reason_code": stopped_reason,
+                                    }
+                                )
+                                break
+
+                            # Authority is read from the database for each step, so a permission removed
+                            # mid-run is seen at the next step (WS6 WP5, WP8). The deal creator does not
+                            # authorize actions: the rule's activator and the deal owner must hold the permission.
+                            authorization = authorize_action(
+                                PermissionChecker(db, organization_id),
+                                rule=rule,
+                                deal=deal,
+                                action_type=action_type,
+                            )
+                            # Recorded independently before the action runs, so a denial survives a
+                            # rollback. If it cannot be written, the error propagates and nothing runs.
+                            requested = audit_action_decision(
+                                db,
+                                initiator_user_id=user_context.user.id,
+                                rule=rule,
+                                deal=deal,
+                                index=index,
+                                action_type=action_type,
+                                authorization=authorization,
+                            )
+                            if not authorization.allowed:
+                                results.append(
+                                    {
+                                        "action_type": action_type,
+                                        "status": "FAILED",
+                                        "reason": "The action is not authorized.",
+                                        "reason_code": authorization.reason_code,
                                     }
                                 )
                                 continue
+
                             try:
                                 result = _execute_action(
                                     db,
@@ -461,11 +522,6 @@ def execute_deal_created_automations(
                                     action=action,
                                 )
                             except ValueError as exc:
-                                action_type = (
-                                    action.get("type")
-                                    if isinstance(action, dict)
-                                    else None
-                                )
                                 result = {
                                     "action_type": action_type,
                                     "status": "FAILED",
@@ -473,6 +529,16 @@ def execute_deal_created_automations(
                                 }
 
                             results.append(result)
+                            audit_action_result(
+                                db,
+                                requested=requested,
+                                initiator_user_id=user_context.user.id,
+                                rule=rule,
+                                deal=deal,
+                                index=index,
+                                action_type=action_type,
+                                result_status=result["status"],
+                            )
 
                         execution.action_results = results
 
@@ -483,9 +549,7 @@ def execute_deal_created_automations(
                         succeeded = action_statuses.count("SUCCEEDED")
                         failed = action_statuses.count("FAILED")
 
-                        if not action_statuses or (
-                            stopped_by_governance and not succeeded
-                        ):
+                        if not action_statuses:
                             execution.status = (
                                 AutomationExecution.STATUS_SKIPPED
                             )
@@ -511,6 +575,12 @@ def execute_deal_created_automations(
                         if failed:
                             execution.error_message = (
                                 "One or more automation actions failed."
+                            )
+
+                        if stopped_reason is not None:
+                            execution.status = AutomationExecution.STATUS_FAILED
+                            execution.error_message = (
+                                f"Execution stopped before a later step: {stopped_reason}."
                             )
 
                 execution.completed_at = datetime.now(timezone.utc)

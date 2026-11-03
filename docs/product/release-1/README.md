@@ -32,6 +32,7 @@ SIBVO platform backlog for Dealsflo planning.
 
 - [DFR1-E01 baseline audit](E01-baseline-audit.md)
 - [DFR1-E01 environment and provider matrix](E01-environment-and-provider-matrix.md)
+- [Release 1 delivery record: verified branch and tree hashes](delivery-record.md)
 
 Architecture decisions for Release 1 are recorded in `docs/adr/`:
 ADR-0025 to ADR-0030.

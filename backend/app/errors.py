@@ -5,6 +5,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.audit.attribution import AuditAttributionError
+from app.audit.independent import AuditPersistenceError
+from app.provider_secrets.redaction import REDACTED, SENSITIVE_FIELD_NAMES
+
 
 def _error_response(
     status_code: int,
@@ -56,12 +60,21 @@ async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    """Handle request validation errors consistently."""
+    """Handle request validation errors consistently.
+
+    Submitted values of sensitive fields are replaced before they reach the response.
+    """
+    details = []
+    for error in exc.errors():
+        location = error.get("loc", ())
+        if any(str(part) in SENSITIVE_FIELD_NAMES for part in location):
+            error = {**error, "input": REDACTED}
+        details.append(error)
     return _error_response(
         status_code=422,
         code="VALIDATION_ERROR",
         message="Request validation failed.",
-        details=jsonable_encoder(exc.errors()),
+        details=jsonable_encoder(details),
     )
 
 
@@ -77,6 +90,31 @@ async def unhandled_exception_handler(
     )
 
 
+async def audit_unavailable_handler(
+    request: Request,
+    exc: AuditPersistenceError,
+) -> JSONResponse:
+    """Refuse a governed change when its audit record cannot be written. Nothing was changed."""
+    return _error_response(
+        status_code=503,
+        code="AUDIT_UNAVAILABLE",
+        message="The change could not be recorded, so it was not applied. Please try again.",
+        headers={"Retry-After": "5"},
+    )
+
+
+async def audit_attribution_handler(
+    request: Request,
+    exc: AuditAttributionError,
+) -> JSONResponse:
+    """Refuse a governed change whose audit attribution cannot be verified. Names no identifiers."""
+    return _error_response(
+        status_code=403,
+        code="AUDIT_ATTRIBUTION_DENIED",
+        message="The change was refused because it could not be attributed to an authorized identity.",
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Register centralized DealFlow API exception handlers."""
     app.add_exception_handler(
@@ -86,6 +124,14 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         RequestValidationError,
         validation_exception_handler,
+    )
+    app.add_exception_handler(
+        AuditPersistenceError,
+        audit_unavailable_handler,
+    )
+    app.add_exception_handler(
+        AuditAttributionError,
+        audit_attribution_handler,
     )
     app.add_exception_handler(
         Exception,

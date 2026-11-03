@@ -130,5 +130,11 @@ TABLE_INVENTORY: dict[str, TableEntry] = {
     "auth_login_rate_limits": TableEntry(DISPOSITION_NEVER_EXPORTED, reason="Login throttling state."),
     "email_verification_tokens": TableEntry(DISPOSITION_NEVER_EXPORTED, reason="Single-use token material."),
     "password_reset_tokens": TableEntry(DISPOSITION_NEVER_EXPORTED, reason="Single-use token material."),
-    "provider_connections": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Secret references only."),
+    "provider_connections": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Connection metadata that references encrypted credentials. Never exported."),
+    "provider_credentials": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Encrypted provider secret material. Never exported or returned."),
+    "provider_verification_attempts": TableEntry(DISPOSITION_GOVERNANCE_RECORD, reason="Verification outcomes and reason codes only. Kept as evidence."),
+    "organization_entitlement_snapshots": TableEntry(DISPOSITION_SIBVO_OWNED, reason="Entitlement snapshot received from SIBVO. Dealsflo does not change it (D6)."),
+    "organization_usage_alert_settings": TableEntry(DISPOSITION_CONFIGURATION, reason="Configured alert thresholds."),
+    "outbox_replay_records": TableEntry(DISPOSITION_GOVERNANCE_RECORD, reason="Operator replay evidence for outbox events."),
+    "execution_rate_limit_windows": TableEntry(DISPOSITION_NOT_COVERED, reason="Rate-limit counters keyed by actor. Pending D9 classification."),
 }

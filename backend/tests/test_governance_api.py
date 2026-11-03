@@ -16,7 +16,7 @@ from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.db.session import SessionLocal, get_db_session
 from app.governance.capabilities import AUTOMATION_MASTER
-from tests.test_team_api import TestingSessionLocal, create_manager
+from tests.test_team_api import TestingSessionLocal, create_manager, create_owner_manager
 
 BASE = "/api/v1/governance/capabilities"
 
@@ -96,7 +96,7 @@ def test_changing_a_capability_requires_the_manage_permission(cleanup) -> None:
 
 
 def test_change_requires_explicit_confirmation(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
 
     with TestClient(_app_for(user)) as client:
@@ -111,7 +111,7 @@ def test_change_requires_explicit_confirmation(cleanup) -> None:
 
 
 def test_unknown_capability_returns_not_found(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
 
     with TestClient(_app_for(user)) as client:
@@ -124,7 +124,7 @@ def test_unknown_capability_returns_not_found(cleanup) -> None:
 
 
 def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
-    user, organization = create_manager(
+    user, organization = create_owner_manager(
         permissions=("governance.capabilities.manage", "governance.capabilities.read")
     )
     cleanup.append(organization.id)
@@ -151,10 +151,14 @@ def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
                 AuditEvent.event_type == "governance",
             )
         ).all()
-    assert len(events) == 1
-    assert events[0].resource_id == AUTOMATION_MASTER
-    assert events[0].user_id == user.id
-    metadata = json.loads(events[0].event_metadata)
+    # One change writes a requested row (committed first) and a completed row that follows it (WP3).
+    requested = [event for event in events if event.outcome == "requested"]
+    completed = [event for event in events if event.outcome == "completed"]
+    assert len(requested) == 1 and len(completed) == 1
+    assert completed[0].causation_id == str(requested[0].id)
+    assert completed[0].resource_id == AUTOMATION_MASTER
+    assert completed[0].user_id == user.id
+    metadata = json.loads(completed[0].event_metadata)
     assert metadata["capability"] == AUTOMATION_MASTER
     assert metadata["previous_state"] is False
     assert metadata["new_state"] is True
@@ -165,7 +169,7 @@ def test_change_is_persisted_versioned_and_audited(cleanup) -> None:
 
 
 def test_settings_of_one_organization_cannot_be_changed_with_another_tenant(cleanup) -> None:
-    user, organization = create_manager(permissions=("governance.capabilities.manage",))
+    user, organization = create_owner_manager(permissions=("governance.capabilities.manage",))
     cleanup.append(organization.id)
     _, other_organization = create_manager(permissions=())
     cleanup.append(other_organization.id)

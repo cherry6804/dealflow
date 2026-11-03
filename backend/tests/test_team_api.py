@@ -22,10 +22,11 @@ from app.db.models.membership_role import MembershipRole
 from app.db.models.role import Role
 from app.db.models.team_invitation import TeamInvitation
 from app.db.session import SessionLocal, get_db_session
-from app.team.service import hash_invitation_token
+from app.team.service import hash_invitation_token, provision_default_organization_roles
 from tests.test_deals_api import (
     create_authorized_user,
     create_membership,
+    create_organization,
     create_user,
 )
 
@@ -108,6 +109,31 @@ def create_manager(*, permissions: tuple[str, ...]):
         return user, organization
     finally:
         db.close()
+
+def create_owner_manager(*, permissions: tuple[str, ...]):
+    """Create a test user who holds the system Owner role, with detached attributes.
+
+    Owner-only permission keys are effective only through the system Owner role, so tests that
+    exercise them must use this helper rather than ``create_manager``. The Owner role holds every
+    catalogue permission, so ``permissions`` is documentation for the test reader only.
+    """
+    db = TestingSessionLocal()
+    try:
+        user = create_user(db)
+        organization = create_organization(db)
+        membership = create_membership(db, user=user, organization=organization)
+        owner_role = provision_default_organization_roles(db, organization_id=organization.id)
+        attach_role(db, membership=membership, role=owner_role)
+        db.commit()
+
+        db.refresh(user)
+        db.refresh(organization)
+        db.expunge(user)
+        db.expunge(organization)
+        return user, organization
+    finally:
+        db.close()
+
 
 def create_invitation(
     client: TestClient,
@@ -491,7 +517,7 @@ def test_member_management_requires_permission() -> None:
 
 
 def test_custom_role_crud_returns_tenant_and_audits_changes() -> None:
-    actor, organization = create_manager(
+    actor, organization = create_owner_manager(
         permissions=("organization.roles.manage",)
     )
     app = create_team_test_app(user=actor)
