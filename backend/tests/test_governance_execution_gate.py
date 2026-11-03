@@ -50,6 +50,7 @@ MATCHING = [{"field": "stage", "operator": "equals", "value": "NEW"}]
 def _scenario(
     *,
     rule_count: int = 1,
+    action_count: int = 1,
     rule_status: str = AutomationRule.STATUS_ACTIVE,
     enable: bool = True,
 ) -> dict[str, UUID]:
@@ -70,7 +71,7 @@ def _scenario(
                 trigger_type="DEAL_CREATED",
                 trigger_config={},
                 conditions=MATCHING,
-                actions=FOLLOW_UP_ACTION,
+                actions=FOLLOW_UP_ACTION * action_count,
                 status=rule_status,
                 created_by_user_id=user.id,
             )
@@ -535,14 +536,72 @@ def test_pausing_a_rule_mid_run_stops_it_and_later_rules_still_run_when_allowed(
     assert _denied_reasons(ids["organization_id"]) == ["resource_not_active"]
 
 
+def test_revalidation_happens_before_every_action_not_only_every_rule(monkeypatch) -> None:
+    ids = _scenario(rule_count=1, action_count=2)
+    fired = {"count": 0}
+
+    def disable_after_first_action() -> None:
+        fired["count"] += 1
+        if fired["count"] == 1:
+            with SessionLocal() as db:
+                set_capability_enabled(
+                    db,
+                    organization_id=ids["organization_id"],
+                    actor_user_id=ids["user_id"],
+                    capability_key=AUTOMATION_MASTER,
+                    is_enabled=False,
+                )
+                db.commit()
+
+    _patch_action_hook(monkeypatch, disable_after_first_action)
+
+    executions = _run(ids)
+
+    assert len(executions) == 1
+    with SessionLocal() as db:
+        execution = db.scalar(
+            select(AutomationExecution).where(
+                AutomationExecution.organization_id == ids["organization_id"]
+            )
+        )
+        assert execution is not None
+        statuses = [item["status"] for item in execution.action_results]
+    # The first action ran. The second was stopped by the gate before it executed.
+    assert statuses == ["SUCCEEDED", "SKIPPED"]
+    assert execution.status == AutomationExecution.STATUS_PARTIAL
+    stages = [audit["metadata"]["stage"] for audit in _gate_audits(ids["organization_id"])]
+    assert stages == ["initial", "action", "action"]
+    assert _denied_reasons(ids["organization_id"]) == ["master_disabled"]
+
+
+def test_a_null_or_empty_feature_key_can_never_grant_access(monkeypatch) -> None:
+    ids = _scenario()
+    original = CAPABILITY_BY_KEY[AUTOMATION_DEAL_CREATED_RULES]
+    # A snapshot that lists null and empty feature keys as enabled must not satisfy the gate.
+    permissive = [
+        {"feature_key": None, "enabled": True},
+        {"feature_key": "", "enabled": True},
+        {"enabled": True},
+    ]
+    for feature in (None, ""):
+        monkeypatch.setitem(
+            CAPABILITY_BY_KEY,
+            AUTOMATION_DEAL_CREATED_RULES,
+            replace(original, entitlement_feature=feature),
+        )
+        assert _run(ids, context_kwargs={"entitlements": permissive}) == []
+    assert _denied_reasons(ids["organization_id"]) == ["entitlement_not_defined", "entitlement_not_defined"]
+
+
 def test_each_later_step_is_revalidated_and_audited() -> None:
     ids = _scenario(rule_count=2)
 
     executions = _run(ids)
 
     assert len(executions) == 2
-    stages = [audit["metadata"]["stage"] for audit in _gate_audits(ids["organization_id"])]
-    assert stages == ["initial", "revalidation"]
+    stages = sorted(audit["metadata"]["stage"] for audit in _gate_audits(ids["organization_id"]))
+    # One initial check, one action check per action, and one revalidation before the second rule.
+    assert stages == sorted(["initial", "action", "revalidation", "action"])
 
 
 # --- Audit, allowed and denied -----------------------------------------------------------------
@@ -556,9 +615,18 @@ def test_allowed_and_denied_decisions_are_both_audited_with_the_reason() -> None
 
     audits = _gate_audits(ids["organization_id"])
     decisions = [audit["decision"] for audit in audits]
-    assert decisions == ["allowed", "denied"]
+    # The allowed run records the initial check and its one action. The denied run records one check.
+    assert decisions == ["allowed", "allowed", "denied"]
     assert audits[0]["resource_type"] == "deal"
-    assert audits[1]["metadata"]["reason_code"] == "master_disabled"
-    assert "payload" not in json.dumps(audits)
+    assert audits[-1]["metadata"]["reason_code"] == "master_disabled"
+    # Only the fields below are ever written. No payload, no names, no personal data.
+    for audit in audits:
+        assert set(audit["metadata"]) == {
+            "capability_key",
+            "reason_code",
+            "stage",
+            "policy_version",
+            "billable",
+        }
 
 

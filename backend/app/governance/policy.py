@@ -149,7 +149,8 @@ def evaluate_capability(
             capability_key, organization_id, REASON_UNKNOWN_CAPABILITY, 0, correlation_id
         )
 
-    if definition.entitlement_feature is not None:
+    # A missing, null or empty feature key is not a feature. It is never matched in a snapshot.
+    if definition.entitlement_feature:
         verdict = verify_entitlement(
             user_context,
             organization_id=organization_id,
@@ -187,7 +188,7 @@ def evaluate_capability(
 
     # Checked after the switches, so a disabled capability reports "turned off" first. An
     # executable capability without a confirmed plan feature can never run.
-    if definition.category is not CapabilityCategory.MASTER and definition.entitlement_feature is None:
+    if definition.category is not CapabilityCategory.MASTER and not definition.entitlement_feature:
         return _decision(
             definition.key, organization_id, REASON_ENTITLEMENT_NOT_DEFINED, policy_version,
             correlation_id,

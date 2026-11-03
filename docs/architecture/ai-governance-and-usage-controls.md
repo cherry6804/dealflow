@@ -78,26 +78,51 @@ Every decision writes one audit record in the caller's transaction, allowed or d
 the capability, reason code, stage, policy version and billable flag. The record holds no payload and no
 personal data beyond the actor's ID.
 
-### 2.4 Enforcement points
+### 2.4 Enforcement points and entry-point inventory
 
-- **Deal-created automation** (`execute_deal_created_automations`, called from `POST /api/v1/deals`):
-  - Initial gate before any rule is read. A denial returns no executions and leaves the deal in place, so
-    manual CRM work continues.
-  - Revalidation before each rule after the first (`stage = revalidation`). Each rule's status is read from
-    the database again first. A turned-off switch, a lost entitlement, or a paused rule stops the remaining
-    rules. Rules that already ran are kept.
-  - The required permission is `deals.create`.
-- No other execution path exists in this repository. Scheduled runs, workflow runs, agents, AI calls and
-  channel sends are not built, so there is nothing else to govern yet.
+Inventory as of this checkpoint, from a search of API routes, services, outbox handlers, jobs and
+external send paths.
+
+| Entry point | Kind | Governed by the execution gate? | Why |
+|---|---|---|---|
+| Deal-created automation (`POST /api/v1/deals` → `execute_deal_created_automations`) | Automation execution | **Yes**: initial check, a check before every action, and a check before each later rule | The only path that creates an `AutomationExecution` or runs an action (`_execute_action`). |
+| Automation rule create, update, list, get, activate, disable (`/api/v1/automation-rules`) | Configuration | No | These change rule configuration or status. They execute nothing. A rule can be activated while automation is off and will not run. |
+| Deal creation notification to the deal owner (`_notify_deal_owner`) | In-app CRM notification | No | Standard manual CRM behaviour, not an optional AI or automation capability. |
+| Usage threshold alert (outbox handler `deliver_usage_threshold_alert`) | Governance notification | No | An in-app administrator notice about the budget, not an AI execution. |
+| Privacy export and deletion (outbox handler, `privacy_maintenance`) | Compliance processing | No | Required by data-protection obligations, not an optional capability. Documented in section 5. |
+| Email outbox worker (verification, password reset, necessary account invitations) | Transactional email | No, by Amendment C | The narrow exemption for essential account communications. |
+| AI model, voice, channel or provider calls | External execution | **Not built** | No AI SDK or provider integration exists in the repository. Nothing can call one. |
+| Scheduled automation run | Background | **Not built** | No scheduler runs automation. Any future background executor must call `authorize_execution`. |
+
+Any new execution path must be added to this table and must call `authorize_execution` before it does work.
 
 ### 2.5 In-flight policy
 
-- Revalidation happens before each rule. It does not happen between the actions of one rule. An action
-  that has started completes. Deal-created actions are internal follow-ups and notifications, and they
-  run inside the same request, so no external work is in flight when a switch changes.
-- A disabled master or capability, a lost entitlement, or a paused rule takes effect at the next check.
-  Tests show each case stops the remaining rules.
+- The gate runs before the first action of each rule, before every later action, and before each later rule.
+  A switch turned off, a lost entitlement, a paused rule, or a lost membership stops the remaining actions and
+  rules. Actions already run are kept. Refused actions are recorded as `SKIPPED` with a generic reason, and the
+  run is marked `SKIPPED` or `PARTIAL`.
+- **Granularity limit.** The boundary is one call to `_execute_action`. The check runs immediately before each call.
+  Inside one action, the work is a database write in the same transaction, so there is no separate step to revalidate.
+  Each action is internal (a follow-up or an in-app notification), so no external work is ever in flight when a
+  switch changes. Revalidation of a long-running external action needs the agent runtime (DFR1-019), which is not built.
+- A disabled master or capability, a lost entitlement, or a paused rule takes effect at the next check. Tests show each
+  case stops the remaining actions and rules.
 - Cancel-or-complete for runs that outlast a request belongs to the agent runtime (DFR1-019), which is not built.
+
+### 2.5a Null and empty plan feature keys
+
+A missing, null or empty `entitlement_feature` is treated as undefined. Such a capability is denied as
+`entitlement_not_defined`, after the switch chain. A snapshot entry whose `feature_key` is null, empty or absent
+never matches a feature, so it cannot grant access. Tests cover null, empty and absent keys
+(`test_a_null_or_empty_feature_key_can_never_grant_access`).
+
+### 2.5b Record-level permission: decision required
+
+The policy sheet says the actor must have permission "for target record/action". This checkpoint checks the
+organization-level permission (`deals.create`) and the organization of the target. It does not check whether the actor
+may act on one specific deal, such as an owner-only rule. That needs a product decision on the record-level scope,
+for example owner, team or organization. Until it is decided, no record-level rule is invented and none is enforced.
 
 ### 2.6 Existing organizations
 
@@ -120,7 +145,7 @@ source and correlation ID.
 | Actor permission and target-resource permission | `test_an_actor_without_the_permission_for_the_action_is_refused`; `test_a_target_from_another_organization_is_refused`; `test_an_inactive_membership_denies...`; `test_another_organizations_deal_cannot_be_executed` | Verified at organization scope. **Record-level permission** (for example, owner-only deals) is not defined by the policy sheet and is not implemented |
 | Usage budgets and limits | `test_billable_work_is_denied_until_the_budget_gate_exists`. No rate, concurrency or step limits | Billable work denied. Budgets, rate and concurrency not built (DFR1-017) |
 | Required approvals | `test_a_capability_that_needs_approval_denies_because_no_approval_exists` | Fails closed. Approval model not built (DFR1-025) |
-| In-flight revalidation and safe stopping | `test_turning_automation_off_mid_run_stops_the_remaining_rules`; `test_each_later_step_is_revalidated_and_audited` | Verified at rule granularity (section 2.5) |
+| In-flight revalidation and safe stopping | `test_turning_automation_off_mid_run_stops_the_remaining_rules`; `test_revalidation_happens_before_every_action_not_only_every_rule`; `test_each_later_step_is_revalidated_and_audited` | Verified before every action and every later rule. Granularity limit in section 2.5 |
 | Background execution authorization | `test_an_execution_without_an_actor_is_refused`. No scheduler or background executor exists | Verified for the one path that exists. Any future background executor must call `authorize_execution` |
 | Fail-closed behaviour | Unknown capability, unverified snapshot, missing or disabled plan feature, undefined feature, no actor, no membership | Verified |
 | Complete audit of allowed and denied execution | `test_allowed_and_denied_decisions_are_both_audited_with_the_reason` | Verified. Audit is in the caller's transaction, so a rolled-back operation leaves no decision record |

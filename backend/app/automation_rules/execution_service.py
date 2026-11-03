@@ -296,6 +296,29 @@ def _gate_step(
     return decision.allowed
 
 
+def _action_allowed(
+    db: Session,
+    *,
+    organization_id: UUID,
+    user_context: CurrentUserContext | None,
+    deal: Deal,
+    rule: AutomationRule,
+    position: int,
+) -> bool:
+    """Revalidate the governance gate, and the rule's status, before one action."""
+    db.refresh(rule)
+    return _gate_step(
+        db,
+        organization_id=organization_id,
+        user_context=user_context,
+        deal=deal,
+        stage="action",
+        resource_type="automation_action",
+        resource_id=f"{rule.id}:{position}",
+        resource_active=rule.status == AutomationRule.STATUS_ACTIVE,
+    )
+
+
 def execute_deal_created_automations(
     db: Session,
     *,
@@ -405,7 +428,31 @@ def execute_deal_created_automations(
                     else:
                         results: list[dict[str, Any]] = []
 
-                        for action in rule.actions or []:
+                        stopped_by_governance = False
+                        for position, action in enumerate(rule.actions or []):
+                            # Revalidation before every action (DFR1-006). A switch turned off, a
+                            # lost entitlement or a paused rule stops this and the remaining actions.
+                            if stopped_by_governance or not _action_allowed(
+                                db,
+                                organization_id=organization_id,
+                                user_context=user_context,
+                                deal=deal,
+                                rule=rule,
+                                position=position,
+                            ):
+                                stopped_by_governance = True
+                                results.append(
+                                    {
+                                        "action_type": (
+                                            action.get("type")
+                                            if isinstance(action, dict)
+                                            else None
+                                        ),
+                                        "status": "SKIPPED",
+                                        "reason": "Stopped by a governance check.",
+                                    }
+                                )
+                                continue
                             try:
                                 result = _execute_action(
                                     db,
@@ -436,7 +483,9 @@ def execute_deal_created_automations(
                         succeeded = action_statuses.count("SUCCEEDED")
                         failed = action_statuses.count("FAILED")
 
-                        if not action_statuses:
+                        if not action_statuses or (
+                            stopped_by_governance and not succeeded
+                        ):
                             execution.status = (
                                 AutomationExecution.STATUS_SKIPPED
                             )
