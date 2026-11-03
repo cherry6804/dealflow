@@ -205,7 +205,8 @@ Gaps closed in this unit:
 
 Verification of this unit (fresh database on port 5438, final code):
 
-- Full backend suite: exit code 0; 2,128 passed, 14 skipped, 0 failed (418 s). A first full run had three failures in
+- Full backend suite: exit code 0; 2,129 passed, 14 skipped, 0 failed (473 s) on the final code, including the
+  pagination fix for stale sweeps (a first version re-read recorded episodes and could starve a backlog). A first full run had three failures in
   the approval tests, which patched the old `any_provider_ready` name. The shared seam in `tests/governance_helpers.py`
   now patches `best_provider_readiness`, and the rerun passed.
 - Focused: provider health, provider lifecycle, policy and approval tests: 84 passed.

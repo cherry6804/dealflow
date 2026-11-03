@@ -112,7 +112,7 @@ def test_a_stale_connection_is_recorded_once_for_the_episode(org, monkeypatch) -
     _make_stale(connection_id, verified_at)
 
     assert _sweep() == 1
-    assert _sweep() == 1  # A repeated sweep examines the connection again but records nothing new.
+    assert _sweep() == 0  # A repeated sweep finds the episode already recorded and records nothing new.
 
     rows = _stale_rows(organization_id)
     assert len(rows) == 1
@@ -197,11 +197,15 @@ def test_a_failed_audit_write_does_not_stop_the_sweep_for_other_organizations(ke
             return real_persist(*args, **kwargs)
 
         monkeypatch.setattr(health, "persist_independent_audit_event", fail_first)
-        assert _sweep() == 2
+        # Both episodes are attempted. The first write fails, so only the second is recorded.
+        assert _sweep() == 1
         assert len(calls) == 2
 
         recorded = len(_stale_rows(org_a.id)) + len(_stale_rows(org_b.id))
         assert recorded == 1
+        # The failed episode stays eligible, so the next sweep records it.
+        assert _sweep() == 1
+        assert len(_stale_rows(org_a.id)) + len(_stale_rows(org_b.id)) == 2
     finally:
         _cleanup(org_a.id)
         _cleanup(org_b.id)
@@ -395,4 +399,34 @@ def test_a_stale_provider_denies_execution_at_the_gate_boundary(monkeypatch, key
         assert decision.reason_code == policy_module.REASON_PROVIDER_NOT_CONNECTED
     finally:
         _cleanup(organization_id)
+
+
+def test_a_backlog_larger_than_the_sweep_limit_is_worked_through_over_sweeps(keyring, monkeypatch) -> None:
+    """Three stale episodes with a limit of two: the first sweep records two, the next records the third.
+
+    Without skipping recorded episodes, the first two would be re-read forever and the third never recorded.
+    """
+    organizations = [
+        create_owner_manager(permissions=("provider_credentials.manage", "provider_credentials.read")) for _ in range(3)
+    ]
+    try:
+        _use_adapter(monkeypatch, StubAdapter(_result(VerificationOutcome.SUCCEEDED)))
+        for user, organization in organizations:
+            connection_id = _connect(organization.id, user.id)
+            _verify(organization.id)
+            _make_stale(connection_id, _stale_at())
+
+        def sweep(limit: int) -> int:
+            with SessionLocal() as db:
+                recorded = detect_stale_connections(db, now=datetime.now(UTC), limit=limit)
+                db.commit()
+                return recorded
+
+        assert sweep(2) == 2
+        assert sweep(2) == 1
+        assert sweep(2) == 0
+        assert sum(len(_stale_rows(organization.id)) for _user, organization in organizations) == 3
+    finally:
+        for _user, organization in organizations:
+            _cleanup(organization.id)
 
