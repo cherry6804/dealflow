@@ -316,3 +316,18 @@ labelled as such, and the cost of delay. No decision is approved.
 Naming note: the user's labels for D1 and D9 differ from the existing register. The mapping is in the deliverable.
 
 Story status: unchanged. DFR1-006, DFR1-017 and DFR1-050 remain Partial; DFR1-053 remains Blocked; E13 is not Done.
+
+## 15. Post-merge verification of the decision-readiness documentation and identifier resolution
+
+- PR #151 is merged into `develop` as merge commit **`137a3d1`**. Commit `e0d558b` is an ancestor.
+- The merge changed three files, all under `docs/`: this evidence document, `e13-decision-readiness.md`, and the tracker.
+  No application code, migration, permission, entitlement key, endpoint or configuration changed.
+- `e13-decision-readiness.md` contains 20 decision entries and the dependency, implementation-impact, traceability and
+  sequence matrices (Parts A to F).
+- The identifier conflicts are recorded in `docs/architecture/e13-decision-resolution-plan.md`. D1 and D9 have competing
+  definitions in the register and in the readiness file. Several D-numbers (D1, D4, D7, D8) also name different decisions
+  in ADR-0032. No identifier was renamed or reinterpreted. The release owner must rule on the scheme (options R1 to R3
+  for D1 and D9, and N1 or N2 for the collisions).
+- The owners are recorded as roles in the sources. The repository names no individual, so no one is named in the plan.
+
+Story status: unchanged. DFR1-006, DFR1-017, DFR1-050 remain Partial; DFR1-053 remains Blocked; E13 is not Done.
