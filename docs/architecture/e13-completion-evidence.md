@@ -299,9 +299,10 @@ the evidence sections above. They are open decisions, not acceptance criteria, a
 
 ### Status summary
 - Stories Done: 0 of 4.
-- Completed (Met): 13 criteria across the four stories.
-- Partial: 11 criteria. Each has a named open item above.
-- Blocked (external): SIBVO usage reconciliation; the usage-ingestion contract.
-- Dependent (other epics): AI producers (DFR1-015), human task (DFR1-025), communication content (E03/E04).
-- Test gaps inside E13: DFR1-053 downgrade and endpoint-level webhook replay.
+- Met: 15 criteria (DFR1-006: 3; DFR1-017: 4; DFR1-050: 3; DFR1-053: 5).
+- Partial: 8 criteria (DFR1-006: 1; DFR1-017: 2; DFR1-050: 2; DFR1-053: 3). Each has a named open item above.
+- Blocked (external): 2 criteria in DFR1-053 (usage summaries, reconciled usage), which need the usage-ingestion contract.
+- Dependent (other epics): 1 criterion in DFR1-006 (queue or human task, DFR1-025). AI producers (DFR1-015) and
+  communication content (E03/E04) block the Partial items above.
+- Not covered by tests: 1 criterion in DFR1-053 (downgrade). Endpoint-level webhook replay is a further test gap.
 - Decisions still open: D1, D4, D7, D8, D9, D11, D13; channel send permission; AI and channel entitlement keys (DFR1-005).
