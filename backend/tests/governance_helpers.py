@@ -99,4 +99,9 @@ def allow_actor_execution_permission(monkeypatch, permission_key: str) -> None:
 
 def allow_provider_readiness(monkeypatch) -> None:
     """Treat a provider as ready for the policy gate. Provider readiness and verification have their own tests."""
-    monkeypatch.setattr("app.governance.policy.any_provider_ready", lambda db, *, organization_id, provider_keys: True)
+    from app.providers.readiness import ConnectionReadiness, ReadinessCode
+
+    monkeypatch.setattr(
+        "app.governance.policy.best_provider_readiness",
+        lambda db, *, organization_id, provider_keys: ConnectionReadiness(True, ReadinessCode.READY, None),
+    )

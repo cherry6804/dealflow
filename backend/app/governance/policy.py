@@ -46,7 +46,7 @@ from app.governance.entitlement import (
     verify_entitlement,
 )
 from app.governance.org_entitlement import organization_entitlement_verdict
-from app.providers.readiness import any_provider_ready
+from app.providers.readiness import best_provider_readiness
 from app.providers.registry import providers_for_capability
 
 REASON_ALLOWED = "allowed"
@@ -102,15 +102,21 @@ class PolicyDecision:
     explanation: str
     policy_version: int
     correlation_id: str | None = None
+    # Why the provider gate refused, when it did (for example ``stale`` or ``credential_revoked``). Set only for
+    # capabilities that depend on a provider, so decisions for other capabilities keep their shape.
+    provider_readiness: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "capability_key": self.capability_key,
             "allowed": self.allowed,
             "reason_code": self.reason_code,
             "explanation": self.explanation,
             "policy_version": self.policy_version,
         }
+        if self.provider_readiness is not None:
+            data["provider_readiness"] = self.provider_readiness
+        return data
 
 
 def _decision(
@@ -119,6 +125,7 @@ def _decision(
     reason_code: str,
     policy_version: int,
     correlation_id: str | None,
+    provider_readiness: str | None = None,
 ) -> PolicyDecision:
     return PolicyDecision(
         capability_key=definition_key,
@@ -128,6 +135,7 @@ def _decision(
         explanation=_EXPLANATIONS[reason_code],
         policy_version=policy_version,
         correlation_id=correlation_id,
+        provider_readiness=provider_readiness,
     )
 
 
@@ -207,15 +215,15 @@ def evaluate_capability(
         )
 
     if definition.requires_provider:
-        provider_ready = any_provider_ready(
+        provider = best_provider_readiness(
             db,
             organization_id=organization_id,
             provider_keys=providers_for_capability(definition.key),
         )
-        if not provider_ready:
+        if not provider.ready:
             return _decision(
                 definition.key, organization_id, REASON_PROVIDER_NOT_CONNECTED, policy_version,
-                correlation_id,
+                correlation_id, provider_readiness=provider.code.value,
             )
 
     if definition.entitlement_feature in ORG_SNAPSHOT_FEATURES:

@@ -35,12 +35,14 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth.email_outbox_worker import process_one_email
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.governance.usage_ledger import expire_stale_reservations
 from app.outbox.service import dispatch_due_events, registered_event_types
+from app.providers.health import detect_stale_connections
 from app.providers.service import schedule_due_verifications
 
 logger = logging.getLogger("dealflow.worker")
@@ -251,9 +253,18 @@ def _run_loop(
 
 def _outbox_cycle(worker_id: str, stop: threading.Event) -> bool:
     # Due provider checks are queued here, in the worker, and never on an API request (ADR-0032).
-    with SessionLocal() as db:
-        schedule_due_verifications(db, now=datetime.now(UTC))
-        db.commit()
+    # A provider sweep failure is logged and isolated, so reservation expiry and outbox delivery still run.
+    try:
+        with SessionLocal() as db:
+            now = datetime.now(UTC)
+            schedule_due_verifications(db, now=now)
+            detect_stale_connections(db, now=now)
+            db.commit()
+    except SQLAlchemyError as exc:
+        logger.error(
+            "Provider health sweep failed",
+            extra={"worker_id": worker_id, "error_type": type(exc).__name__},
+        )
     # Open AI usage reservations past their expiry are released here. Bounded per cycle (WS6 WP1).
     with SessionLocal() as db:
         reaped = expire_stale_reservations(db)
