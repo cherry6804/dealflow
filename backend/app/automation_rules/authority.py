@@ -76,10 +76,10 @@ class AutomationAuthorityError(PermissionError):
 
 
 class PermissionChecker:
-    """Permission lookups for one organization, remembered for the life of one call.
+    """Permission lookups for one organization. Answers are remembered only for this instance.
 
-    Each answer is read from the database, so a permission removed after activation is seen at the next
-    execution. Nothing is cached across calls.
+    Create one per decision. A checker shared across steps would keep answers from before a permission was
+    removed, so each step must build its own (WS6 WP8).
     """
 
     def __init__(self, db: Session, organization_id: UUID) -> None:
