@@ -30,6 +30,7 @@ from app.auth.dependencies import CurrentUserContext
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.governance.capabilities import (
     CAPABILITY_BY_KEY,
+    CapabilityCategory,
     CapabilityDefinition,
     ancestry,
 )
@@ -53,6 +54,7 @@ REASON_UNKNOWN_CAPABILITY = "unknown_capability"
 REASON_MASTER_DISABLED = "master_disabled"
 REASON_CAPABILITY_DISABLED = "capability_disabled"
 REASON_PROVIDER_NOT_CONNECTED = "provider_not_connected"
+REASON_ENTITLEMENT_NOT_DEFINED = "entitlement_not_defined"
 REASON_CONSENT_NOT_CONFIGURED = "consent_not_configured"
 REASON_EXECUTION_GATES_PENDING = "execution_gates_pending"
 
@@ -61,6 +63,7 @@ _EXPLANATIONS: dict[str, str] = {
     REASON_UNKNOWN_CAPABILITY: "This capability is not recognised, so it cannot run.",
     REASON_MASTER_DISABLED: "A master switch above this capability is turned off.",
     REASON_CAPABILITY_DISABLED: "This capability is turned off for the organization.",
+    REASON_ENTITLEMENT_NOT_DEFINED: "This capability has no confirmed plan feature, so it cannot run.",
     REASON_PROVIDER_NOT_CONNECTED: (
         "A verified provider connection is required and none is available."
     ),
@@ -135,8 +138,12 @@ def evaluate_capability(
     capability_key: str,
     user_context: CurrentUserContext | None = None,
     correlation_id: str | None = None,
+    consent_checked: bool = False,
 ) -> PolicyDecision:
     """Return whether ``capability_key`` may execute for ``organization_id`` now.
+
+    ``consent_checked`` means the caller supplied a contact and the execution gate checks that contact's consent.
+    Without it, a capability that requires consent is denied.
 
     Gates run in this order: entitlement (SIBVO snapshot), organization master and child
     switches, provider, consent. The first failing gate decides the reason. A capability
@@ -167,10 +174,14 @@ def evaluate_capability(
     rows = {
         row.capability_key: row
         for row in db.scalars(
-            select(OrganizationCapabilitySetting).where(
+            select(OrganizationCapabilitySetting)
+            .where(
                 OrganizationCapabilitySetting.organization_id == organization_id,
                 OrganizationCapabilitySetting.capability_key.in_([item.key for item in chain]),
             )
+            # Re-read the switches on every check. A switch changed by another committed session must stop
+            # in-flight work at the next revalidation, even when this session already holds the old row.
+            .execution_options(populate_existing=True)
         ).all()
     }
 
@@ -187,6 +198,13 @@ def evaluate_capability(
             return _decision(
                 definition.key, organization_id, reason, policy_version, correlation_id
             )
+
+    # An executable capability without a confirmed plan feature can never run. A null or empty key is not a feature,
+    # so it cannot skip the entitlement check (E13 invariant, fail closed).
+    if definition.category is not CapabilityCategory.MASTER and not definition.entitlement_feature:
+        return _decision(
+            definition.key, organization_id, REASON_ENTITLEMENT_NOT_DEFINED, policy_version, correlation_id,
+        )
 
     if definition.requires_provider:
         provider_ready = any_provider_ready(
@@ -221,7 +239,7 @@ def evaluate_capability(
             correlation_id,
         )
 
-    if definition.requires_consent:
+    if definition.requires_consent and not consent_checked:
         return _decision(
             definition.key, organization_id, REASON_CONSENT_NOT_CONFIGURED, policy_version,
             correlation_id,

@@ -37,6 +37,21 @@ export interface BudgetList {
   items: BudgetStatus[];
 }
 
+export interface UsageBreakdownRow {
+  group: string;
+  unit: string;
+  reserved_quantity: number;
+  recorded_quantity: number;
+  entries: number;
+}
+
+export interface UsageBreakdown {
+  period_start: string;
+  period_end: string;
+  group_by: string;
+  items: UsageBreakdownRow[];
+}
+
 export interface AlertThresholds {
   thresholds: number[];
   is_default: boolean;
@@ -73,6 +88,7 @@ export interface PrivacyRequest {
   status: string;
   categories: string[];
   decisions: Record<string, unknown>;
+  execution: Record<string, unknown>;
   artifact_reference: string | null;
   expires_at: string | null;
   created_at: string;
@@ -132,6 +148,10 @@ export const governanceApi = {
     });
   },
 
+  getUsageBreakdown(groupBy: "capability" | "unit" | "provider"): Promise<UsageBreakdown> {
+    return api.get<UsageBreakdown>(`/ai/governance/usage/breakdown?group_by=${groupBy}`);
+  },
+
   getAlertThresholds(): Promise<AlertThresholds> {
     return api.get<AlertThresholds>("/ai/governance/usage/alert-thresholds");
   },
@@ -188,5 +208,12 @@ export const governanceApi = {
 
   cancelPrivacyRequest(requestId: string): Promise<PrivacyRequest> {
     return api.post<PrivacyRequest>(`/ai/governance/privacy/requests/${requestId}/cancel`);
+  },
+
+  downloadPrivacyExport(requestId: string): Promise<void> {
+    return api.download(
+      `/ai/governance/privacy/requests/${encodeURIComponent(requestId)}/export`,
+      `privacy-export-${requestId}.zip`,
+    );
   },
 };

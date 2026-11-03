@@ -27,7 +27,7 @@ def _cleanup_upload(storage_key: str) -> None:
         delete_stored_upload(storage_key)
     except Exception:
         # Preserve the original database error and report the cleanup failure.
-        logger.exception(
+        logger.error(
             "Failed to clean up an import upload after a database error."
         )
 
@@ -68,7 +68,7 @@ async def upload_import_source(
         db.rollback()
         _cleanup_upload(stored_upload.storage_key)
 
-        logger.exception(
+        logger.error(
             "Failed to persist an import batch for organization %s.",
             organization_id,
         )

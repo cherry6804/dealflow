@@ -37,6 +37,21 @@ export const REASON_LABELS: Record<string, string> = {
   snapshot_rejected: "Plan could not be verified",
   snapshot_stale: "Plan could not be verified",
   organization_access_denied: "No current access to the product",
+  entitlement_not_defined: "Not included in your plan yet",
+  approval_not_available: "Needs approval, which is not available yet",
+  budget_reservation_required: "Billable use must reserve usage budget first",
+  budget_not_configured: "No usage budget is set for this period",
+  budget_exhausted: "The usage budget for this period is used up",
+  usage_key_conflict: "This usage key was already used for a different request",
+  actor_required: "Runs only for a signed-in user",
+  actor_not_authorized: "You do not have permission for this action",
+  membership_inactive: "Your membership in this organization is not active",
+  resource_not_active: "Not published and active",
+  target_organization_mismatch: "This record belongs to another organization",
+  wrong_organization: "Your session is not authorized for this organization",
+  trial_expired: "The trial has ended",
+  subscription_not_active: "The subscription is not active",
+  product_membership_inactive: "Your access to this product is not active",
 };
 
 export const UNIT_LABELS: Record<string, string> = {
@@ -104,6 +119,57 @@ export function retentionLabel(treatment: string): string {
   }
 }
 
+const PRIVACY_REASON_LABELS: Record<string, string> = {
+  no_export_producer_yet: "Not yet exportable",
+  no_producer_yet: "No data source exists yet",
+  not_organization_owned: "Platform data, not organization data",
+  deletion_executor_not_built: "Deletion not available yet",
+  stored_object_missing: "A stored file is missing",
+  stored_object_checksum_mismatch: "A stored file failed its integrity check",
+  export_size_limit_exceeded: "Over the export size limit",
+  encrypted_payload_not_exportable: "Encrypted content cannot be exported",
+  retention_enforcement_not_built: "Retention is not enforced for this category",
+  legal_hold_active: "Legal hold in place",
+  not_customer_deletable: "Not deletable on request",
+  category_unknown: "Unknown category",
+};
+
+const PRIVACY_OUTCOME_LABELS: Record<string, string> = {
+  deleted: "Deleted",
+  anonymized: "Anonymized",
+  anonymized_partial: "Identity fields anonymized; linked records kept",
+  not_executed: "Not processed",
+  skipped: "Skipped",
+};
+
+/** Plain-language reason for a privacy decision. Unknown reasons are never shown as a permission. */
+export function privacyReasonLabel(reason: string): string {
+  return PRIVACY_REASON_LABELS[reason] ?? "Not available";
+}
+
+/** One line per category, saying what processing did, for both exports and deletions. */
+export function describePrivacyExecution(execution: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const notExported = execution.not_exported;
+  if (Array.isArray(notExported)) {
+    for (const item of notExported as Array<{ category_key?: unknown; reason?: unknown }>) {
+      lines.push(
+        `${String(item.category_key)}: not exported (${privacyReasonLabel(String(item.reason))})`,
+      );
+    }
+  }
+  for (const [key, value] of Object.entries(execution)) {
+    if (key === "not_exported" || typeof value !== "object" || value === null) continue;
+    const record = value as { outcome?: unknown; reasons?: unknown };
+    const outcome = PRIVACY_OUTCOME_LABELS[String(record.outcome)] ?? "Unknown outcome";
+    const reasons = Array.isArray(record.reasons)
+      ? ` (${record.reasons.map((reason) => privacyReasonLabel(String(reason))).join("; ")})`
+      : "";
+    lines.push(`${key}: ${outcome}${reasons}`);
+  }
+  return lines;
+}
+
 export function requestStatusLabel(status: string): string {
   switch (status) {
     case "awaiting_artifact_generation":
@@ -114,6 +180,12 @@ export function requestStatusLabel(status: string): string {
       return "Blocked by policy";
     case "ready":
       return "Ready to download";
+    case "ready_partial":
+      return "Ready to download (incomplete: some categories are not exported)";
+    case "completed":
+      return "Completed";
+    case "partially_completed":
+      return "Partly completed (some data was not deleted)";
     case "expired":
       return "Expired";
     case "cancelled":

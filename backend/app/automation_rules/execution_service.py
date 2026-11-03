@@ -409,6 +409,8 @@ def execute_deal_created_automations(
     for rule in rules:
         if stopped_reason is not None:
             break
+        # Re-read the rule before it runs. Another session may have paused it since this run started (in-flight stop).
+        db.refresh(rule)
         try:
             # A savepoint isolates a duplicate insert or a failure in this
             # rule from the surrounding deal-creation transaction.

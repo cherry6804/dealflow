@@ -61,7 +61,7 @@ TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[
 
 @dataclass(frozen=True)
 class RouteCase:
-    """One of the 19 routes, described by its legacy path."""
+    """One of the documented shared governance routes, described by its legacy path."""
 
     name: str
     method: str
@@ -115,6 +115,17 @@ ROUTES: tuple[RouteCase, ...] = (
     RouteCase("privacy.requests.cancel", "POST",
               "/api/v1/governance/privacy/requests/{request_id}/cancel",
               "governance.privacy.manage", True, 200, prerequisite="privacy_request"),
+    RouteCase("usage.breakdown.read", "GET", "/api/v1/governance/usage/breakdown",
+              "governance.usage.read", False, 200),
+    RouteCase("privacy.requests.export_download", "GET",
+              "/api/v1/governance/privacy/requests/{request_id}/export",
+              "governance.privacy.manage", True, 409, prerequisite="privacy_request"),
+    RouteCase("consents.read", "GET", "/api/v1/governance/consents/{contact_id}",
+              "governance.consent.read", False, 200, prerequisite="contact"),
+    RouteCase("consents.record", "POST", "/api/v1/governance/consents/{contact_id}",
+              "governance.consent.manage", True, 201, prerequisite="contact",
+              body={"channel": "email", "purpose": "marketing", "status": "granted",
+                    "source": "manual_entry", "confirm": True}),
     RouteCase("governance.access", "GET", "/api/v1/governance/access",
               None, False, 200, tenant_only=True),
     RouteCase("provider_credentials.list", "GET", "/api/v1/provider-credentials",
@@ -280,6 +291,20 @@ def _app(mount: str, user) -> FastAPI:
 
 def _prepare(kind: str, owner, organization_id: uuid.UUID) -> dict[str, str]:
     """Create the prerequisite through the owner's canonical route, outside the measured call."""
+    if kind == "contact":
+        # The contacts router is not mounted on the governance test app, so the row is written directly.
+        from app.db.models.contact import Contact
+
+        with SessionLocal() as db:
+            contact = Contact(
+                organization_id=organization_id,
+                first_name="Parity",
+                email=f"parity-{uuid.uuid4().hex[:8]}@example.test",
+                is_active=True,
+            )
+            db.add(contact)
+            db.commit()
+            return {"contact_id": str(contact.id)}
     with TestClient(_app("canonical", owner)) as client:
         client.headers.update({ORGANIZATION_HEADER: str(organization_id)})
         if kind == "legal_hold":
@@ -355,8 +380,8 @@ def test_canonical_and_legacy_mounts_behave_identically(
     assert legacy == canonical
 
 
-def test_shared_handler_routers_define_all_nineteen_routes() -> None:
-    """The handler set itself must define exactly the 19 documented routes, under their prefixes."""
+def test_shared_handler_routers_define_all_documented_routes() -> None:
+    """The handler set itself must define exactly the documented routes, under their prefixes."""
     definitions = (
         ("/api/v1/governance", governance_routes),
         ("/api/v1/provider-credentials", provider_credential_routes),

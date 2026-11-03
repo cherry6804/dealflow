@@ -69,3 +69,34 @@ def attested_user_context(
         sibvo_session_id=None,
         sibvo_organization_id=sibvo_organization_id or organization_id,
     )
+
+
+def allow_organization_entitlements(monkeypatch) -> None:
+    """Stub the signed SIBVO snapshot check in the policy for gate tests.
+
+    Snapshot signing, refresh and revalidation are covered by ``tests/test_org_entitlement_snapshot.py``.
+    These tests exercise the consent, channel and approval gates, so the feature check is allowed here.
+    """
+    from app.governance.entitlement import EntitlementVerdict
+
+    def verdict(db, *, organization_id, feature_key, now=None):
+        return EntitlementVerdict(True, "allowed")
+
+    monkeypatch.setattr("app.governance.policy.organization_entitlement_verdict", verdict)
+
+
+def allow_actor_execution_permission(monkeypatch, permission_key: str) -> None:
+    """Make the actor check require ``permission_key`` for channel and AI capabilities that name no permission.
+
+    Develop's gate uses ``ai.execute`` by default, a key no role holds yet, so channel sends fail closed for every
+    actor. The product decision for the send permission is open. These tests pass a key the test user holds, so the
+    consent, channel and approval gates are the ones being exercised.
+    """
+    from app.governance import execution_gate
+
+    monkeypatch.setattr(execution_gate, "DEFAULT_AI_PERMISSION", permission_key)
+
+
+def allow_provider_readiness(monkeypatch) -> None:
+    """Treat a provider as ready for the policy gate. Provider readiness and verification have their own tests."""
+    monkeypatch.setattr("app.governance.policy.any_provider_ready", lambda db, *, organization_id, provider_keys: True)

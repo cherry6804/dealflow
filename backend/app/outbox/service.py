@@ -28,8 +28,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -95,6 +95,10 @@ class UnknownEventTypeError(PermanentHandlerError):
         super().__init__(message, reason_code=DEAD_LETTER_NO_HANDLER)
 
 
+class HandlerTimeoutError(Exception):
+    """A handler's database work exceeded the handler timeout. The database cancelled it (DFR1-013)."""
+
+
 @dataclass(frozen=True)
 class DispatchResult:
     """Counts for one dispatch cycle."""
@@ -105,6 +109,7 @@ class DispatchResult:
     dead_lettered: int = 0
     lease_lost: int = 0
     released: int = 0
+    timed_out: int = 0
 
 
 @dataclass(frozen=True)
@@ -316,7 +321,13 @@ def claim_due_events(
 
 
 def _describe_error(exc: BaseException) -> str:
-    """Return a bounded, single-line description. Never includes the traceback."""
+    """Return a bounded, single-line description. Never includes the traceback.
+
+    Database error messages echo the failing row, for example an email address in a unique-key
+    violation, so for database errors only the exception type is stored.
+    """
+    if isinstance(exc, SQLAlchemyError):
+        return f"{type(exc).__name__}: database error (details withheld)"
     message = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
     return message[:MAX_ERROR_LENGTH]
 
@@ -506,6 +517,24 @@ def _log_outcome(
     )
 
 
+def _is_statement_timeout(exc: BaseException) -> bool:
+    """True when PostgreSQL cancelled a statement because of statement_timeout."""
+    original = getattr(exc, "orig", None)
+    if type(original).__name__ == "QueryCanceled":
+        return True
+    return "statement timeout" in str(original or "").lower()
+
+
+def _apply_handler_timeout(db: Session, timeout_ms: int) -> None:
+    """Bound the database work of one handler. The setting is transaction-scoped (SET LOCAL).
+
+    Only PostgreSQL supports statement_timeout. Other dialects are not used for production.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        # timeout_ms is an integer from validated settings, so it is not user input.
+        db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+
+
 def _process_claim(
     db: Session,
     claim: _Claim,
@@ -514,7 +543,7 @@ def _process_claim(
     now: datetime,
     settings_values: Mapping[str, int],
     rng: random.Random | None,
-) -> str:
+) -> tuple[str, bool]:
     """Run one claimed event and record its outcome. Return the outcome name."""
     handler = _handlers.get(claim.event_type)
     try:
@@ -529,14 +558,20 @@ def _process_claim(
                 claim=claim,
                 outcome=OUTCOME_LEASE_LOST,
             )
-            return OUTCOME_LEASE_LOST
+            return OUTCOME_LEASE_LOST, False
 
         savepoint = db.begin_nested()
         try:
+            _apply_handler_timeout(db, settings_values["handler_timeout_ms"])
             handler(db, claim.event)
             savepoint.commit()
-        except Exception:
+        except Exception as handler_exc:
             savepoint.rollback()
+            if _is_statement_timeout(handler_exc):
+                raise HandlerTimeoutError(
+                    f"Handler exceeded {settings_values['handler_timeout_ms'] // 1000}s; "
+                    "database work was cancelled."
+                ) from None
             raise
 
         if not apply_claim_transition(
@@ -554,11 +589,11 @@ def _process_claim(
                 claim=claim,
                 outcome=OUTCOME_LEASE_LOST,
             )
-            return OUTCOME_LEASE_LOST
+            return OUTCOME_LEASE_LOST, False
         db.commit()
         _log_outcome(logging.INFO, "Outbox event delivered", worker_id=worker_id, claim=claim,
                      outcome=OUTCOME_DELIVERED)
-        return OUTCOME_DELIVERED
+        return OUTCOME_DELIVERED, False
     # A handler may raise any exception. The worker must record it and keep
     # dispatching other events, so this broad catch is intentional.
     except Exception as exc:  # noqa: BLE001
@@ -587,7 +622,7 @@ def _process_claim(
                 claim=claim,
                 outcome=OUTCOME_LEASE_LOST,
             )
-            return OUTCOME_LEASE_LOST
+            return OUTCOME_LEASE_LOST, False
         db.commit()
 
         reason = values.get("dead_letter_reason")
@@ -601,7 +636,7 @@ def _process_claim(
             dead_letter_reason=reason if isinstance(reason, str) else None,
             error_type=type(exc).__name__,
         )
-        return outcome
+        return outcome, isinstance(exc, HandlerTimeoutError)
 
 
 def dispatch_due_events(
@@ -620,12 +655,15 @@ def dispatch_due_events(
     started are released back to the queue without a failed attempt.
     """
     settings = get_settings()
+    if settings.outbox_handler_timeout_seconds >= settings.outbox_lease_seconds:
+        raise ValueError("outbox_handler_timeout_seconds must be shorter than outbox_lease_seconds.")
     cycle_now = now or utcnow()
     if rng is None and settings.outbox_jitter_enabled:
         rng = random.Random()
     settings_values = {
         "base_backoff_seconds": settings.outbox_base_backoff_seconds,
         "max_backoff_seconds": settings.outbox_max_backoff_seconds,
+        "handler_timeout_ms": settings.outbox_handler_timeout_seconds * 1000,
     }
 
     claimed = claim_due_events(
@@ -645,6 +683,7 @@ def dispatch_due_events(
         OUTCOME_LEASE_LOST: 0,
         OUTCOME_RELEASED: 0,
     }
+    timed_out = 0
     for index, claim in enumerate(claims):
         if should_stop is not None and should_stop():
             for remaining in claims[index:]:
@@ -658,7 +697,7 @@ def dispatch_due_events(
                 counts[OUTCOME_RELEASED] += 1
             db.commit()
             break
-        outcome = _process_claim(
+        outcome, claim_timed_out = _process_claim(
             db,
             claim,
             worker_id=worker_id,
@@ -667,6 +706,7 @@ def dispatch_due_events(
             rng=rng,
         )
         counts[outcome] += 1
+        timed_out += int(claim_timed_out)
 
     return DispatchResult(
         claimed=len(claims),
@@ -675,4 +715,5 @@ def dispatch_due_events(
         dead_lettered=counts[OUTCOME_DEAD_LETTERED],
         lease_lost=counts[OUTCOME_LEASE_LOST],
         released=counts[OUTCOME_RELEASED],
+        timed_out=timed_out,
     )

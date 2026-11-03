@@ -60,6 +60,10 @@ from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
 from app.db.models.organization_usage_alert_settings import OrganizationUsageAlertSettings
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest, RetentionPolicy
+from app.db.models.contact_consent import ContactConsentRecord
+from app.db.models.provider_connection import ProviderConnection
+from app.db.models.approval_request import ApprovalRequest
+from app.db.models.channel_policy import ChannelPolicy, ContactDoNotDisturb
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.db.models.execution_rate_limit_window import ExecutionRateLimitWindow
 from app.db.models.provider_credential import ProviderCredential
@@ -130,6 +134,11 @@ __all__ = [
     "AiUsageEvent",
     "LegalHold",
     "PrivacyDataRequest",
+    "ContactConsentRecord",
+    "ProviderConnection",
+    "ApprovalRequest",
+    "ChannelPolicy",
+    "ContactDoNotDisturb",
     "RetentionPolicy",
     "OrganizationCapabilitySetting",
     "ExecutionRateLimitWindow",

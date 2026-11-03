@@ -34,6 +34,9 @@ class DataCategory:
     retention: RetentionTreatment
     producer_exists: bool
     note: str = ""
+    # False when rows are not tied to one organization. Such rows cannot be exported or deleted
+    # for a single organization, so they are reported as not organization-owned instead.
+    organization_owned: bool = True
 
 
 CATEGORIES: tuple[DataCategory, ...] = (
@@ -50,7 +53,9 @@ CATEGORIES: tuple[DataCategory, ...] = (
     DataCategory("audit.events", "Audit events", Sensitivity.STANDARD, RetentionTreatment.MANDATORY_RECORD, True,
                  "Security and governance records. Never deleted by a customer request."),
     DataCategory("team.invitations", "Team invitations", Sensitivity.PERSONAL, RetentionTreatment.ORGANIZATION_CONFIGURABLE, True),
-    DataCategory("messaging.email_outbox", "Outbound email (encrypted payloads)", Sensitivity.SENSITIVE_CONTENT, RetentionTreatment.ORGANIZATION_CONFIGURABLE, True),
+    DataCategory("messaging.email_outbox", "Platform email outbox (encrypted payloads)", Sensitivity.SENSITIVE_CONTENT, RetentionTreatment.ORGANIZATION_CONFIGURABLE, True,
+                 "Platform authentication and invitation email. Rows carry no organization ID, so they are not exported or deleted per organization. Platform-level retention is a separate decision.",
+                 organization_owned=False),
     DataCategory("messaging.conversations", "Conversations and messages", Sensitivity.SENSITIVE_CONTENT, RetentionTreatment.ORGANIZATION_CONFIGURABLE, False,
                  "No conversation producer exists. Channel gateway is not built."),
     DataCategory("voice.call_records", "Voice call records", Sensitivity.SENSITIVE_CONTENT, RetentionTreatment.ORGANIZATION_CONFIGURABLE, False,

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   capabilityLabel,
+  describePrivacyExecution,
   formatUnitQuantity,
+  privacyReasonLabel,
   reasonLabel,
   requestStatusLabel,
   retentionLabel,
@@ -32,6 +34,12 @@ describe("governance labels", () => {
     expect(reasonLabel("something_new")).toBe("Unavailable");
   });
 
+  it("explains every execution gate reason the server can return", () => {
+    for (const code of ["entitlement_not_defined", "approval_not_available", "budget_reservation_required", "budget_exhausted", "actor_required", "membership_inactive", "resource_not_active"]) {
+      expect(reasonLabel(code)).not.toBe("Unavailable");
+    }
+  });
+
   it("shows token counts as plain numbers, never as currency", () => {
     expect(formatUnitQuantity("tokens_output", 1234567)).toBe((1234567).toLocaleString());
     expect(formatUnitQuantity("tokens_output", 10)).not.toContain("₹");
@@ -54,5 +62,24 @@ describe("governance labels", () => {
   it("states that a recorded deletion eligibility performs no deletion", () => {
     expect(requestStatusLabel("eligibility_recorded")).toContain("no deletion performed");
     expect(requestStatusLabel("awaiting_artifact_generation")).toBe("Awaiting export generation");
+    expect(requestStatusLabel("ready_partial")).toContain("incomplete");
+    expect(requestStatusLabel("partially_completed")).toContain("not deleted");
+  });
+
+  it("explains each category that an export or deletion did not cover", () => {
+    const lines = describePrivacyExecution({
+      not_exported: [{ category_key: "messaging.email_outbox", reason: "not_organization_owned" }],
+      "crm.contacts": { outcome: "anonymized_partial", count: 2 },
+      "crm.leads": { outcome: "not_executed", reasons: ["deletion_executor_not_built"] },
+    });
+    expect(lines).toContain(
+      "messaging.email_outbox: not exported (Platform data, not organization data)",
+    );
+    expect(lines).toContain("crm.contacts: Identity fields anonymized; linked records kept");
+    expect(lines).toContain("crm.leads: Not processed (Deletion not available yet)");
+  });
+
+  it("never shows an unknown privacy reason as an allowed action", () => {
+    expect(privacyReasonLabel("something_new")).toBe("Not available");
   });
 });

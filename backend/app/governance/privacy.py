@@ -26,7 +26,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.audit.attribution import user_attribution
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -49,6 +53,12 @@ STATUS_EXPIRED = "expired"
 STATUS_CANCELLED = "cancelled"
 STATUS_BLOCKED = "blocked"
 STATUS_ELIGIBILITY_RECORDED = "eligibility_recorded"
+REASON_NO_EXPORT_PRODUCER = "no_export_producer_yet"
+REASON_EXECUTOR_NOT_BUILT = "deletion_executor_not_built"
+REASON_NOT_ORGANIZATION_OWNED = "not_organization_owned"
+STATUS_READY_PARTIAL = "ready_partial"
+STATUS_COMPLETED = "completed"
+STATUS_PARTIALLY_COMPLETED = "partially_completed"
 
 
 class PrivacyError(Exception):
@@ -124,6 +134,73 @@ def _audit(
             event_metadata=json.dumps(metadata, sort_keys=True, default=str),
         )
     )
+
+
+PRIVACY_SYSTEM_ACTOR = register_system_actor("privacy_lifecycle")
+
+
+def record_requested_privacy_event(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID | None,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    metadata: dict,
+) -> AuditEvent:
+    """Commit the requested record in its own transaction, before the governed change (WP3).
+
+    The row survives a rollback of the business transaction, and if it cannot be written the change must not run.
+    Work with no user (processing, expiry, retention) is attributed to the registered privacy system actor, within
+    the bound organization. The request's own requester is kept in the metadata by the caller.
+    """
+    attribution = (
+        user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+        if actor_user_id is not None
+        else system_attribution(organization_id=organization_id, capability=PRIVACY_SYSTEM_ACTOR)
+    )
+    return persist_independent_audit_event(
+        db,
+        attribution=attribution,
+        event_type=PRIVACY_EVENT_TYPE,
+        action=action,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=None,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metadata=metadata,
+    )
+
+
+def record_completed_privacy_event(
+    db: Session,
+    *,
+    requested: AuditEvent,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    metadata: dict,
+) -> None:
+    """Record the outcome in the business transaction. It commits or rolls back with the change it describes."""
+    db.add(
+        AuditEvent(
+            user_id=requested.user_id,
+            organization_id=requested.organization_id,
+            event_type=PRIVACY_EVENT_TYPE,
+            action=action,
+            decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            permission_key=None,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            correlation_id=requested.correlation_id,
+            event_metadata=json.dumps(metadata, sort_keys=True, default=str),
+        )
+    )
+    db.flush()
 
 
 def _require_category(category_key: str) -> None:
@@ -304,6 +381,8 @@ def evaluate_deletion(db: Session, *, organization_id: UUID, category_key: str) 
         return DeletionDecision(category_key, False, (REASON_CATEGORY_UNKNOWN,))
 
     reasons: list[str] = []
+    if not category.organization_owned:
+        reasons.append(REASON_NOT_ORGANIZATION_OWNED)
     if not is_customer_deletable(category):
         reasons.append(REASON_NOT_CUSTOMER_DELETABLE)
     if _active_hold(db, organization_id=organization_id, category_key=category_key):

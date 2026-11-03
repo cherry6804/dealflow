@@ -50,11 +50,15 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.audit.attribution import user_attribution
+from app.audit.attribution import (
+    register_system_actor,
+    system_attribution,
+    user_attribution,
+)
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     OUTCOME_REQUESTED,
@@ -65,6 +69,7 @@ from app.db.models.ai_usage_event import (
     RELEASE_REASON_RELEASED,
     AiUsageEvent,
 )
+from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
 from app.governance.alert_thresholds import read_alert_thresholds
 from app.outbox.service import enqueue_event
@@ -78,6 +83,8 @@ THRESHOLD_EVENT_TYPE = "ai.usage.threshold_reached"
 # longer must settle within this window or be split. See docs/architecture/ai-usage-reservations.md.
 RESERVATION_TTL = timedelta(minutes=15)
 REAPER_BATCH_SIZE = 100
+UNATTRIBUTED = "unattributed"
+BREAKDOWN_GROUPS = ("capability", "unit", "provider")
 
 IDEMPOTENCY_CONSTRAINT = "uq_ai_usage_events_org_idempotency"
 
@@ -390,6 +397,7 @@ def reserve(
     execution_id: str | None = None,
     correlation_id: str | None = None,
     currency: str | None = None,
+    capability_key: str | None = None,
     now: datetime | None = None,
 ) -> AiUsageEvent:
     """Reserve quantity for billable work. Idempotent on ``idempotency_key``.
@@ -438,6 +446,7 @@ def reserve(
         status=AiUsageEvent.STATUS_RESERVED,
         provider=provider,
         model=model,
+        capability_key=capability_key,
         task_type=task_type,
         user_id=user_id,
         agent_id=agent_id,
@@ -615,6 +624,20 @@ def expire_stale_reservations(
         _free_reservation(budget, event)
         event.status = AiUsageEvent.STATUS_RELEASED
         event.released_reason = RELEASE_REASON_EXPIRED
+        # Auditable: the release is recorded with the unit and quantity, and no personal values.
+        db.add(
+            AuditEvent(
+                organization_id=organization_id,
+                user_id=None,
+                event_type="usage",
+                action="usage.reservation.expired",
+                decision="allowed",
+                permission_key=None,
+                resource_type="ai_usage_event",
+                resource_id=str(event.id),
+                event_metadata=json.dumps({"reserved_quantity": event.reserved_quantity, "unit": event.unit}, sort_keys=True),
+            )
+        )
         db.flush()
         expired += 1
 
@@ -638,6 +661,7 @@ def record(
     execution_id: str | None = None,
     correlation_id: str | None = None,
     currency: str | None = None,
+    capability_key: str | None = None,
 ) -> AiUsageEvent:
     """Store usage that was not reserved, for example delayed provider reporting.
 
@@ -681,6 +705,7 @@ def record(
         status=AiUsageEvent.STATUS_RECORDED,
         provider=provider,
         model=model,
+        capability_key=capability_key,
         task_type=task_type,
         user_id=user_id,
         agent_id=agent_id,
@@ -708,8 +733,22 @@ def record(
     return entry
 
 
-def reverse(db: Session, *, organization_id: UUID, idempotency_key: str) -> AiUsageEvent:
-    """RECORDED -> REVERSED. Returns the quantity to the budget. Repeating is a no-op."""
+USAGE_SYSTEM_ACTOR = register_system_actor("usage_ledger")
+USAGE_ADJUSTMENT_ACTION = "usage.entry.reversed"
+
+
+def reverse(
+    db: Session,
+    *,
+    organization_id: UUID,
+    idempotency_key: str,
+    actor_user_id: UUID | None = None,
+) -> AiUsageEvent:
+    """RECORDED -> REVERSED. Returns the quantity to the budget. Repeating is a no-op.
+
+    The adjustment is audited. The requested record is committed before the budget changes, and the completed
+    record is written in the same transaction. Without a user, the usage ledger's system actor is recorded.
+    """
     candidate = _existing(db, organization_id=organization_id, idempotency_key=idempotency_key)
     if candidate is None:
         raise InvalidUsageStateError("No usage entry exists for this key.")
@@ -729,8 +768,43 @@ def reverse(db: Session, *, organization_id: UUID, idempotency_key: str) -> AiUs
 
     if event.quantity is None or budget.consumed_quantity < event.quantity:
         raise UsageInvariantError("Budget consumed quantity is lower than the entry being reversed.")
+
+    attribution = (
+        user_attribution(organization_id=organization_id, actor_user_id=actor_user_id)
+        if actor_user_id is not None
+        else system_attribution(organization_id=organization_id, capability=USAGE_SYSTEM_ACTOR)
+    )
+    metadata = {"unit": event.unit, "quantity": event.quantity, "capability_key": event.capability_key}
+    requested = persist_independent_audit_event(
+        db,
+        attribution=attribution,
+        event_type="usage",
+        action=USAGE_ADJUSTMENT_ACTION,
+        decision="allowed",
+        outcome=OUTCOME_REQUESTED,
+        permission_key=None,
+        resource_type="ai_usage_event",
+        resource_id=str(event.id),
+        metadata=metadata,
+    )
     budget.consumed_quantity -= event.quantity
     event.status = AiUsageEvent.STATUS_REVERSED
+    db.add(
+        AuditEvent(
+            user_id=actor_user_id,
+            organization_id=organization_id,
+            event_type="usage",
+            action=USAGE_ADJUSTMENT_ACTION,
+            decision="allowed",
+            outcome=OUTCOME_COMPLETED,
+            causation_id=str(requested.id),
+            correlation_id=requested.correlation_id,
+            permission_key=None,
+            resource_type="ai_usage_event",
+            resource_id=str(event.id),
+            event_metadata=json.dumps(metadata, sort_keys=True, default=str),
+        )
+    )
     db.flush()
     return event
 
@@ -860,3 +934,74 @@ def change_budget(
     )
     db.flush()
     return budget
+
+
+def release_expired(db: Session, *, now: datetime, limit: int = REAPER_BATCH_SIZE) -> int:
+    """Release open reservations whose expiry has passed. Returns the number released. The caller commits."""
+    return expire_stale_reservations(db, now=now, batch_size=limit).expired
+
+
+@dataclass(frozen=True)
+class BreakdownRow:
+    group: str
+    unit: str
+    reserved_quantity: int
+    recorded_quantity: int
+    entries: int
+
+
+def usage_breakdown(
+    db: Session, *, organization_id: UUID, moment: datetime, group_by: str
+) -> list[BreakdownRow]:
+    """Totals for the UTC period containing ``moment``, grouped by capability, unit or provider.
+
+    Only live entries count: reservations not yet settled and recorded usage. Released, expired and
+    reversed entries are excluded. Units are never summed together, so provider cost and customer
+    credits stay separate.
+    """
+    if group_by not in BREAKDOWN_GROUPS:
+        raise ValueError("Breakdown must group by capability, unit or provider.")
+    period = budget_period_for(moment)
+    start = datetime(period.start.year, period.start.month, period.start.day, tzinfo=UTC)
+    end = datetime(period.end.year, period.end.month, period.end.day, tzinfo=UTC) + timedelta(days=1)
+
+    if group_by == "capability":
+        group_column = func.coalesce(AiUsageEvent.capability_key, UNATTRIBUTED)
+    elif group_by == "provider":
+        group_column = func.coalesce(AiUsageEvent.provider, UNATTRIBUTED)
+    else:
+        group_column = AiUsageEvent.unit
+
+    reserved_sum = func.sum(
+        case((AiUsageEvent.status == AiUsageEvent.STATUS_RESERVED, AiUsageEvent.reserved_quantity), else_=0)
+    )
+    recorded_sum = func.sum(
+        case((AiUsageEvent.status == AiUsageEvent.STATUS_RECORDED, AiUsageEvent.quantity), else_=0)
+    )
+    rows = db.execute(
+        select(
+            group_column.label("group"),
+            AiUsageEvent.unit,
+            reserved_sum.label("reserved"),
+            recorded_sum.label("recorded"),
+            func.count(AiUsageEvent.id).label("entries"),
+        )
+        .where(
+            AiUsageEvent.organization_id == organization_id,
+            AiUsageEvent.status.in_([AiUsageEvent.STATUS_RESERVED, AiUsageEvent.STATUS_RECORDED]),
+            AiUsageEvent.occurred_at >= start,
+            AiUsageEvent.occurred_at < end,
+        )
+        .group_by(group_column, AiUsageEvent.unit)
+        .order_by(group_column, AiUsageEvent.unit)
+    ).all()
+    return [
+        BreakdownRow(
+            group=str(row.group),
+            unit=row.unit,
+            reserved_quantity=int(row.reserved or 0),
+            recorded_quantity=int(row.recorded or 0),
+            entries=int(row.entries),
+        )
+        for row in rows
+    ]

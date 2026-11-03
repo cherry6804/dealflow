@@ -226,7 +226,7 @@ def _cleanup_stored_object(storage_key: str) -> None:
     try:
         get_object_storage().delete(storage_key)
     except Exception:
-        logger.exception(
+        logger.error(
             "Failed to clean up document storage object %s after a database failure.",
             storage_key,
         )
@@ -321,7 +321,7 @@ async def upload_document(
             storage.put(storage_key, staged_file)
 
         except StorageError:
-            logger.exception(
+            logger.error(
                 "Document storage failed for organization %s.",
                 organization_id,
             )
@@ -363,7 +363,7 @@ async def upload_document(
         db.rollback()
         _cleanup_stored_object(storage_key)
 
-        logger.exception(
+        logger.error(
             "Failed to persist document metadata for organization %s.",
             organization_id,
         )
@@ -412,7 +412,7 @@ def open_document_for_download(
     except ObjectNotFoundError:
         raise
     except StorageError:
-        logger.exception(
+        logger.error(
             "Document storage read failed for organization %s.",
             organization_id,
         )

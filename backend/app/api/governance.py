@@ -7,13 +7,20 @@ from datetime import UTC, date, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.authz.dependencies import permission_granted, require_permission
 from app.config import get_settings
+from app.db.models.contact import Contact
+from app.db.models.contact_consent import (
+    CONSENT_CHANNELS,
+    CONSENT_PURPOSES,
+    ContactConsentRecord,
+)
 from app.db.models.privacy_records import LegalHold, PrivacyDataRequest
 from app.db.session import get_db_session
 from app.governance.alert_threshold_service import update_alert_thresholds
@@ -22,6 +29,14 @@ from app.governance.alert_thresholds import (
     read_alert_thresholds,
 )
 from app.governance.capabilities import CapabilityCategory
+from app.governance.consent import (
+    CONSENT_POLICY_VERSION,
+    ContactNotFoundError,
+    InvalidConsentError,
+    consent_history,
+    current_consent,
+    record_consent,
+)
 from app.governance.data_classification import CATEGORIES
 from app.governance.org_entitlement import snapshot_diagnostics
 from app.governance.privacy import (
@@ -35,6 +50,11 @@ from app.governance.privacy import (
     release_legal_hold,
     set_retention_policy,
 )
+from app.governance.privacy_execution import (
+    ExportUnavailableError,
+    PrivacyRequestNotFoundError,
+    open_export,
+)
 from app.governance.service import (
     CapabilityState,
     UnknownCapabilityError,
@@ -46,7 +66,9 @@ from app.governance.usage_ledger import (
     budget_period_for,
     budget_status,
     change_budget,
+    usage_breakdown,
 )
+from app.storage import ObjectNotFoundError, get_object_storage
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
 # Handlers are defined once here and mounted under two prefixes (ADR-0031).
@@ -534,7 +556,16 @@ def cancel_privacy_request(
         not_found = "not found" in str(error)
         code = status.HTTP_404_NOT_FOUND if not_found else status.HTTP_409_CONFLICT
         raise HTTPException(status_code=code, detail=str(error)) from None
+    stored_key = row.artifact_reference
+    row.artifact_reference = None
     db.commit()
+    if stored_key:
+        # A cancelled export must not stay downloadable. The request is already committed as cancelled, so a
+        # failure here leaves an unreferenced object for the expiry job to report.
+        try:
+            get_object_storage().delete(stored_key)
+        except ObjectNotFoundError:
+            pass
     return _request_response(row)
 
 
@@ -615,6 +646,217 @@ def get_governance_access(
 
 
 # Canonical AI namespace (ADR-0031). Visible in OpenAPI.
+class UsageBreakdownRow(BaseModel):
+    group: str
+    unit: str
+    reserved_quantity: int
+    recorded_quantity: int
+    entries: int
+
+
+class UsageBreakdownResponse(BaseModel):
+    period_start: date
+    period_end: date
+    group_by: str
+    items: list[UsageBreakdownRow]
+
+
+@governance_routes.get("/usage/breakdown", response_model=UsageBreakdownResponse)
+def get_usage_breakdown(
+    group_by: str = Query(default="capability", pattern="^(capability|unit|provider)$"),
+    tenant: TenantContext = Depends(require_permission("governance.usage.read")),
+    db: Session = Depends(get_db_session),
+) -> UsageBreakdownResponse:
+    """Usage for the current UTC month, grouped by capability, unit or provider. Organization-scoped."""
+    moment = datetime.now(UTC)
+    period = budget_period_for(moment)
+    rows = usage_breakdown(
+        db,
+        organization_id=tenant.organization_id,
+        moment=moment,
+        group_by=group_by,
+    )
+    return UsageBreakdownResponse(
+        period_start=period.start,
+        period_end=period.end,
+        group_by=group_by,
+        items=[
+            UsageBreakdownRow(
+                group=row.group,
+                unit=row.unit,
+                reserved_quantity=row.reserved_quantity,
+                recorded_quantity=row.recorded_quantity,
+                entries=row.entries,
+            )
+            for row in rows
+        ],
+    )
+
+
+@governance_routes.get("/privacy/requests/{request_id}/export")
+def download_privacy_export(
+    request_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
+    db: Session = Depends(get_db_session),
+) -> StreamingResponse:
+    """Download a ready export. Organization-scoped, audited, and refused after expiry."""
+    try:
+        handle = open_export(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            request_id=request_id,
+            storage=get_object_storage(),
+            now=datetime.now(UTC),
+        )
+    except ExportUnavailableError as error:
+        detail = str(error)
+        if "expired" in detail:
+            # Keep the expiry and the deleted artifact; a refused download is not a rollback.
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail) from None
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
+    except PrivacyRequestNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Privacy request not found.") from None
+    db.commit()
+    return StreamingResponse(
+        handle,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="privacy-export-{request_id}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# Contact consent (DFR1-006, ADR-0029 gate 7)
+# ---------------------------------------------------------------------------
+
+
+class ConsentRecordCreate(BaseModel):
+    channel: Literal["whatsapp", "email", "sms", "voice"]
+    purpose: Literal["customer_service", "marketing", "automated_follow_up", "voice_outreach"]
+    status: Literal["granted", "revoked"]
+    source: str = Field(..., min_length=2, max_length=40, pattern=r"^[a-z][a-z_]{1,39}$")
+    evidence_note: str | None = Field(default=None, max_length=500)
+    expires_at: datetime | None = None
+    confirm: Literal[True] = Field(..., description="Must be true. Confirms the consequential change.")
+
+
+class ConsentRecordResponse(BaseModel):
+    id: UUID
+    contact_id: UUID
+    channel: str
+    purpose: str
+    status: str
+    policy_version: int
+    source: str
+    evidence_note: str | None
+    expires_at: datetime | None
+    recorded_by_user_id: UUID
+    recorded_at: datetime
+
+
+class ConsentCurrentResponse(BaseModel):
+    channel: str
+    purpose: str
+    effective: str
+
+
+class ConsentStateResponse(BaseModel):
+    contact_id: UUID
+    policy_version: int
+    current: list[ConsentCurrentResponse]
+    history: list[ConsentRecordResponse]
+
+
+def _consent_response(row: ContactConsentRecord) -> ConsentRecordResponse:
+    return ConsentRecordResponse(
+        id=row.id,
+        contact_id=row.contact_id,
+        channel=row.channel,
+        purpose=row.purpose,
+        status=row.status,
+        policy_version=row.policy_version,
+        source=row.source,
+        evidence_note=row.evidence_note,
+        expires_at=row.expires_at,
+        recorded_by_user_id=row.recorded_by_user_id,
+        recorded_at=row.recorded_at,
+    )
+
+
+@governance_routes.get("/consents/{contact_id}", response_model=ConsentStateResponse)
+def get_contact_consent(
+    contact_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.consent.read")),
+    db: Session = Depends(get_db_session),
+) -> ConsentStateResponse:
+    """Current effective consent and full history for one contact in this organization."""
+    contact = db.scalar(
+        select(Contact.id).where(Contact.id == contact_id, Contact.organization_id == tenant.organization_id)
+    )
+    if contact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found.")
+    now = datetime.now(UTC)
+    history = consent_history(db, organization_id=tenant.organization_id, contact_id=contact_id)
+    current = [
+        ConsentCurrentResponse(
+            channel=channel,
+            purpose=purpose,
+            effective=current_consent(
+                db,
+                organization_id=tenant.organization_id,
+                contact_id=contact_id,
+                channel=channel,
+                purpose=purpose,
+                now=now,
+            ).effective,
+        )
+        for channel in CONSENT_CHANNELS
+        for purpose in CONSENT_PURPOSES
+    ]
+    return ConsentStateResponse(
+        contact_id=contact_id,
+        policy_version=CONSENT_POLICY_VERSION,
+        current=current,
+        history=[_consent_response(row) for row in history],
+    )
+
+
+@governance_routes.post("/consents/{contact_id}", response_model=ConsentRecordResponse, status_code=status.HTTP_201_CREATED)
+def record_contact_consent(
+    contact_id: UUID,
+    payload: ConsentRecordCreate,
+    tenant: TenantContext = Depends(require_permission("governance.consent.manage")),
+    db: Session = Depends(get_db_session),
+) -> ConsentRecordResponse:
+    """Record a grant or revocation. Append-only, versioned and audited."""
+    try:
+        row = record_consent(
+            db,
+            organization_id=tenant.organization_id,
+            contact_id=contact_id,
+            channel=payload.channel,
+            purpose=payload.purpose,
+            status=payload.status,
+            source=payload.source,
+            actor_user_id=tenant.membership.user_id,
+            evidence_note=payload.evidence_note,
+            expires_at=payload.expires_at,
+        )
+    except ContactNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found.") from None
+    except InvalidConsentError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    db.commit()
+    return _consent_response(row)
+
+
 canonical_router = APIRouter(tags=["governance"])
 canonical_router.include_router(governance_routes, prefix="/api/v1/ai/governance")
 

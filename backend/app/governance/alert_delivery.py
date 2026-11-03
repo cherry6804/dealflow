@@ -38,6 +38,7 @@ from app.governance.alert_thresholds import (
     MIN_THRESHOLD,
     read_alert_thresholds,
 )
+from app.governance.privacy_execution import register_privacy_handlers
 from app.governance.usage_ledger import THRESHOLD_EVENT_TYPE
 from app.notifications.service import create_notification
 from app.outbox.service import PermanentHandlerError, register_handler
@@ -154,3 +155,4 @@ def deliver_usage_threshold_alert(db: Session, event) -> None:
 def register_governance_handlers() -> None:
     """Register every governance outbox handler. Safe to call more than once."""
     register_handler(THRESHOLD_EVENT_TYPE, deliver_usage_threshold_alert)
+    register_privacy_handlers()

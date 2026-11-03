@@ -21,6 +21,7 @@ from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
 from app.api.governance import canonical_router as ai_governance_router
 from app.api.governance import router as governance_router
+from app.api.governance_controls import router as governance_controls_router
 from app.api.imports import router as imports_router
 from app.api.invitation_signup import router as invitation_signup_router
 from app.api.leads import router as leads_router
@@ -118,6 +119,7 @@ def create_app() -> FastAPI:
     application.include_router(team_router)
     application.include_router(ai_governance_router)
     application.include_router(governance_router)
+    application.include_router(governance_controls_router)
     application.include_router(ai_provider_credentials_router)
     application.include_router(ai_provider_connections_router)
     application.include_router(provider_credentials_router)

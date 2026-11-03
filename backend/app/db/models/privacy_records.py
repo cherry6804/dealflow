@@ -86,6 +86,11 @@ class PrivacyDataRequest(Base):
     decisions: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     artifact_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Background processing state. Set only by the privacy outbox handler.
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Per-category outcome of the last processing run, as JSON. Never contains personal data values.
+    execution: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
     requested_by_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

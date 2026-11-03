@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { governanceApi, type BudgetList, type BudgetStatus } from "../../../services/governanceApi";
+import {
+  governanceApi,
+  type BudgetList,
+  type BudgetStatus,
+  type UsageBreakdown,
+} from "../../../services/governanceApi";
 import { formatUnitQuantity, unitLabel } from "../governanceLabels";
 import AlertThresholdsPanel from "./AlertThresholdsPanel";
 import ConfirmChangeDialog from "./ConfirmChangeDialog";
@@ -27,6 +32,7 @@ function errorText(error: unknown): string {
 
 export default function UsagePanel({ canManage }: UsagePanelProps) {
   const [data, setData] = useState<BudgetList | null>(null);
+  const [breakdown, setBreakdown] = useState<UsageBreakdown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ unit: string; current: number | null } | null>(null);
   const [draft, setDraft] = useState("");
@@ -35,7 +41,12 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
 
   const load = useCallback(async () => {
     try {
-      setData(await governanceApi.getBudgets());
+      const [budgets, usage] = await Promise.all([
+        governanceApi.getBudgets(),
+        governanceApi.getUsageBreakdown("capability"),
+      ]);
+      setData(budgets);
+      setBreakdown(usage);
       setLoadError(null);
     } catch (error) {
       setLoadError(errorText(error));
@@ -100,9 +111,9 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
         separately. Provider cost and customer credits never share a budget.
       </p>
       <p className="governance-muted">
-        No AI provider is connected yet, so no usage has been recorded. Figures below come only
-        from recorded usage. Breakdowns by provider, model, capability and agent appear once a
-        provider produces usage.
+        Figures come only from recorded usage. No AI provider is connected yet, so the breakdown
+        below is empty until a provider produces usage. Usage that is still reserved is shown
+        separately from recorded usage.
       </p>
       <table className="governance-table">
         <caption className="governance-sr-only">Budget status by unit</caption>
@@ -133,7 +144,11 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
                       : formatUnitQuantity(unit, budget.remaining_quantity)
                     : "—"}
                 </td>
-                <td>{budget ? `${budget.utilization_percent}% used` : "—"}</td>
+                <td>
+                  {budget
+                    ? `${budget.utilization_percent}% used.`
+                    : "—"}
+                </td>
                 {canManage ? (
                   <td>
                     <button type="button" onClick={() => openEditor(unit, budget)}>
@@ -147,6 +162,34 @@ export default function UsagePanel({ canManage }: UsagePanelProps) {
         </tbody>
       </table>
 
+      <h3>Usage by capability this month</h3>
+      {breakdown === null || breakdown.items.length === 0 ? (
+        <p className="governance-muted">No usage has been recorded this month.</p>
+      ) : (
+        <table className="governance-table">
+          <caption className="governance-sr-only">Usage by capability and unit</caption>
+          <thead>
+            <tr>
+              <th scope="col">Capability</th>
+              <th scope="col">Unit</th>
+              <th scope="col">Recorded</th>
+              <th scope="col">Reserved, not yet settled</th>
+              <th scope="col">Entries</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.items.map((row) => (
+              <tr key={`${row.group}-${row.unit}`}>
+                <th scope="row">{row.group}</th>
+                <td>{unitLabel(row.unit)}</td>
+                <td>{formatUnitQuantity(row.unit, row.recorded_quantity)}</td>
+                <td>{formatUnitQuantity(row.unit, row.reserved_quantity)}</td>
+                <td>{row.entries}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <AlertThresholdsPanel canManage={canManage} />
 
       {editing !== null ? (

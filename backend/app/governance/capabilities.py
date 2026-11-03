@@ -32,7 +32,11 @@ class CapabilityDefinition:
     parent_key: str | None
     requires_provider: bool = False
     requires_consent: bool = False
-    # SIBVO plan feature that must be enabled in the attested access snapshot.
+    # Human approval of the exact payload is required before execution. No approval model
+    # exists yet (DFR1-025), so a capability that sets this always denies.
+    requires_approval: bool = False
+    # SIBVO plan feature that must be enabled in the attested access snapshot. Every
+    # executable capability must declare one. A missing feature fails closed.
     entitlement_feature: str | None = None
 
     @property
@@ -119,3 +123,13 @@ def ancestry(definition: CapabilityDefinition) -> tuple[CapabilityDefinition, ..
             CAPABILITY_BY_KEY[current.parent_key] if current.parent_key else None
         )
     return tuple(reversed(chain))
+
+
+# Capabilities that act on customers or channels. They need an approval bound to the exact payload.
+APPROVAL_REQUIRED_CAPABILITIES: frozenset[str] = frozenset({
+    "ai.voice",
+    "channels.whatsapp",
+    "channels.email",
+    "channels.sms",
+    "channels.voice",
+})

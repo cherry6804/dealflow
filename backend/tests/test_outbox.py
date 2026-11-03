@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -442,3 +442,79 @@ def test_worker_cli_runs_one_cycle_and_exits_zero() -> None:
 def test_worker_cli_rejects_non_positive_poll_interval() -> None:
     with pytest.raises(SystemExit):
         worker_main(["--poll-interval", "0"])
+
+
+# Handler timeouts (DFR1-013) ---------------------------------------------------
+
+
+def test_a_handler_that_exceeds_its_timeout_is_cancelled_recorded_and_retried(
+    organization_id, handler_log, monkeypatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "outbox_handler_timeout_seconds", 1)
+
+    def slow_handler(db: Session, event: OutboxEvent) -> None:
+        # The database cancels this statement after the handler timeout.
+        db.execute(text("SELECT pg_sleep(5)"))
+
+    register_handler(TEST_EVENT_TYPE, slow_handler)
+    with SessionLocal() as db:
+        event = _enqueue(db, organization_id)
+        db.commit()
+        event_id = event.id
+
+    with SessionLocal() as db:
+        result = dispatch_due_events(db, worker_id="test-worker", now=NOW, batch_size=10)
+
+    assert result.timed_out == 1
+    assert result.retried == 1
+    assert result.delivered == 0
+    with SessionLocal() as db:
+        stored = db.get(OutboxEvent, event_id)
+        assert stored is not None
+        assert stored.status == OutboxEvent.STATUS_PENDING
+        assert stored.last_error is not None
+        assert stored.last_error.startswith("HandlerTimeoutError")
+
+
+def test_a_timed_out_event_recovers_on_a_later_attempt(
+    organization_id, handler_log, monkeypatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "outbox_handler_timeout_seconds", 1)
+
+    def slow_handler(db: Session, event: OutboxEvent) -> None:
+        db.execute(text("SELECT pg_sleep(5)"))
+
+    register_handler(TEST_EVENT_TYPE, slow_handler)
+    with SessionLocal() as db:
+        event = _enqueue(db, organization_id)
+        db.commit()
+        event_id = event.id
+    with SessionLocal() as db:
+        dispatch_due_events(db, worker_id="test-worker", now=NOW, batch_size=10)
+
+    # The provider recovers. The retry runs once the backoff has passed, and the event is delivered.
+    unregister_handler(TEST_EVENT_TYPE)
+    _register_success(handler_log)
+    later = NOW + timedelta(days=1)
+    with SessionLocal() as db:
+        result = dispatch_due_events(db, worker_id="test-worker", now=later, batch_size=10)
+
+    assert result.delivered == 1
+    assert result.timed_out == 0
+    with SessionLocal() as db:
+        stored = db.get(OutboxEvent, event_id)
+        assert stored is not None
+        assert stored.status == OutboxEvent.STATUS_DELIVERED
+
+
+def test_a_handler_timeout_that_reaches_the_lease_is_refused(
+    organization_id, handler_log, monkeypatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "outbox_lease_seconds", 10)
+    monkeypatch.setattr(get_settings(), "outbox_handler_timeout_seconds", 10)
+    with SessionLocal() as db:
+        _enqueue(db, organization_id)
+        db.commit()
+
+    with SessionLocal() as db, pytest.raises(ValueError):
+        dispatch_due_events(db, worker_id="test-worker", now=NOW, batch_size=10)

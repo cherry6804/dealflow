@@ -147,6 +147,9 @@ class Settings(BaseSettings):
     outbox_max_backoff_seconds: int = Field(default=3600, ge=1, le=86400)
     outbox_lease_seconds: int = Field(default=300, ge=10, le=3600)
     outbox_batch_size: int = Field(default=50, ge=1, le=500)
+    # Upper bound on the database work a single event handler may do (PostgreSQL statement timeout).
+    # Must be shorter than the claim lease, so an event is never reclaimed while its handler still runs.
+    outbox_handler_timeout_seconds: int = Field(default=30, ge=1, le=600)
     outbox_poll_seconds: float = Field(default=5.0, gt=0, le=300)
     # Full-jitter retry delays between 50% and 100% of the capped backoff.
     outbox_jitter_enabled: bool = True
@@ -214,6 +217,15 @@ class Settings(BaseSettings):
     )
     object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
+
+    # AI usage reservations (DFR1-017). A reservation not settled within this time is released by
+    # the cleanup job. The value is operational, not a retention period.
+    usage_reservation_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+
+    # Privacy exports (DFR1-050). The expiry is an operating choice, not a legal period.
+    privacy_export_ttl_days: int = Field(default=7, ge=1, le=90)
+    # Total stored-document bytes one export may include. Above this, documents are not exported.
+    privacy_export_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
