@@ -36,10 +36,14 @@ AUTOMATION_UPDATE = "automation.update"
 
 WORKFLOW_AUTOMATION_ENTITLEMENT = "workflow_automation"
 
+# leads.update is the permission of the CREATE_FOLLOW_UP action. Activating a rule needs it (WS6 WP5).
+LEADS_UPDATE = "leads.update"
+
 ALL_PERMISSIONS = (
     AUTOMATION_READ,
     AUTOMATION_CREATE,
     AUTOMATION_UPDATE,
+    LEADS_UPDATE,
 )
 
 

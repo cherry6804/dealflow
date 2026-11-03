@@ -18,9 +18,16 @@ from app.audit.attribution import (
 )
 from app.audit.independent import OUTCOME_DENIED, persist_independent_audit_event
 from app.auth.dependencies import CurrentUserContext
+from app.automation_rules.authority import (
+    PermissionChecker,
+    audit_action_decision,
+    audit_action_result,
+    authorize_action,
+)
 from app.db.models.automation_execution import AutomationExecution
 from app.db.models.automation_rule import AutomationRule
 from app.db.models.deal import Deal
+from app.db.models.membership import Membership
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
@@ -260,6 +267,20 @@ def _notify_automation_execution(
 
     title, outcome = details
 
+    # The creator may have left the organization since the rule was activated. Their notification is
+    # skipped, and the execution and the deal that triggered it are unaffected.
+    recipient_is_active = db.scalar(
+        select(Membership.id)
+        .where(
+            Membership.organization_id == organization_id,
+            Membership.user_id == rule.created_by_user_id,
+            Membership.is_active.is_(True),
+        )
+        .limit(1)
+    )
+    if recipient_is_active is None:
+        return
+
     create_notification(
         db,
         organization_id=organization_id,
@@ -379,6 +400,9 @@ def execute_deal_created_automations(
         return []
 
     executions: list[AutomationExecution] = []
+    # Authority is read from the database for this call. The deal creator does not authorize actions:
+    # the activator of the rule and the deal owner must both hold the permission of the action (WS6 WP5).
+    checker = PermissionChecker(db, organization_id)
 
     for rule in rules:
         try:
@@ -423,7 +447,40 @@ def execute_deal_created_automations(
                     else:
                         results: list[dict[str, Any]] = []
 
-                        for action in rule.actions or []:
+                        for index, action in enumerate(rule.actions or []):
+                            action_type = (
+                                action.get("type")
+                                if isinstance(action, dict)
+                                else None
+                            )
+                            authorization = authorize_action(
+                                checker,
+                                rule=rule,
+                                deal=deal,
+                                action_type=action_type,
+                            )
+                            # Recorded independently before the action runs, so a denial survives a
+                            # rollback. If it cannot be written, the error propagates and nothing runs.
+                            requested = audit_action_decision(
+                                db,
+                                initiator_user_id=user_context.user.id,
+                                rule=rule,
+                                deal=deal,
+                                index=index,
+                                action_type=action_type,
+                                authorization=authorization,
+                            )
+                            if not authorization.allowed:
+                                results.append(
+                                    {
+                                        "action_type": action_type,
+                                        "status": "FAILED",
+                                        "reason": "The action is not authorized.",
+                                        "reason_code": authorization.reason_code,
+                                    }
+                                )
+                                continue
+
                             try:
                                 result = _execute_action(
                                     db,
@@ -432,11 +489,6 @@ def execute_deal_created_automations(
                                     action=action,
                                 )
                             except ValueError as exc:
-                                action_type = (
-                                    action.get("type")
-                                    if isinstance(action, dict)
-                                    else None
-                                )
                                 result = {
                                     "action_type": action_type,
                                     "status": "FAILED",
@@ -444,6 +496,16 @@ def execute_deal_created_automations(
                                 }
 
                             results.append(result)
+                            audit_action_result(
+                                db,
+                                requested=requested,
+                                initiator_user_id=user_context.user.id,
+                                rule=rule,
+                                deal=deal,
+                                index=index,
+                                action_type=action_type,
+                                result_status=result["status"],
+                            )
 
                         execution.action_results = results
 
