@@ -331,3 +331,17 @@ Story status: unchanged. DFR1-006, DFR1-017 and DFR1-050 remain Partial; DFR1-05
 - The owners are recorded as roles in the sources. The repository names no individual, so no one is named in the plan.
 
 Story status: unchanged. DFR1-006, DFR1-017, DFR1-050 remain Partial; DFR1-053 remains Blocked; E13 is not Done.
+
+## 16. AI actor execution permission: proposal for approval (not approved)
+
+- Merge state checked: PR #152 is merged into `develop` as `22a4c54`, which includes `84d5d11`.
+- Proposal: `docs/architecture/e13-ai-actor-permission-proposal.md`. It records the current authorization behaviour, the
+  findings and conflicts, a candidate key (`governance.ai.execute`, a placeholder), the role grants, delegation and
+  attribution, default deny, the capability, entitlement, consent, readiness and budget interactions, revocation, audit,
+  tenant isolation, and the required tests.
+- Key findings: `ai.execute` is referenced by the gate but not catalogued, so every AI request is refused today. Deal-created
+  automation already reuses the target permission (`deals.create`), which conflicts with the readiness file's recommended
+  new key. The proposal keeps both gates, the target permission and the AI key.
+- **Not approved.** The approval needed is six answers from the release owner and the security owner, listed in section 10
+  of the proposal. No permission key has been added and no role grant has changed.
+- Story status: unchanged. DFR1-006 remains Partial; DFR1-017, DFR1-050 and DFR1-053 keep their status; E13 is not Done.
