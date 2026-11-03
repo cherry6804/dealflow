@@ -280,7 +280,7 @@ def test_deletion_anonymizes_contacts_and_removes_documents_and_their_objects(
     # Contacts are anonymized, not fully deleted, so the request cannot be complete.
     assert row.status == STATUS_PARTIALLY_COMPLETED
     execution = json.loads(row.execution)
-    assert execution["documents.files"] == {"outcome": "deleted", "count": 1}
+    assert execution["documents.files"] == {"outcome": "deleted", "count": 1, "verified": True}
     assert execution["crm.contacts"]["outcome"] == "anonymized_partial"
     assert "crm.leads" in execution["crm.contacts"]["not_changed"]
     assert not storage.exists(key)
@@ -830,6 +830,166 @@ def test_a_retry_after_a_failure_re_evaluates_dependencies(tenant, storage, monk
     with SessionLocal() as db:
         contact = db.get(Contact, contact_id)
         assert contact is not None and contact.first_name == REDACTED_NAME
+
+
+def test_every_artifact_lists_organization_data_that_is_not_covered(tenant, storage) -> None:
+    organization_id, user_id = tenant
+    _contact(organization_id)
+    request_id = _request(organization_id, user_id, "export", ["crm.contacts"])
+
+    _run(request_id, organization_id)
+
+    coverage = _archive_document(storage, _row(request_id).artifact_reference)["coverage"]
+    not_covered = {item["table"]: item for item in coverage["not_covered"]}
+    # Decision D3: billing and audit records are listed, not silently omitted.
+    assert "billing_reconciliation_records" in not_covered
+    assert "audit_events" in not_covered
+    # Decision D5: platform email is outside organization export.
+    assert "email_outbox_messages" in not_covered
+    # Decision D6: SIBVO-owned membership and subscriptions are referred to SIBVO.
+    assert not_covered["subscriptions"]["classification"] == "SIBVO-owned (decision D6)"
+    assert all(item["reason"] for item in coverage["not_covered"])
+
+
+def test_crm_sub_records_are_exported_under_their_parent_category(tenant, storage) -> None:
+    from app.db.models.activity import Activity
+    from app.db.models.customer_requirement import CustomerRequirement
+    from app.db.models.customer_requirement_location import CustomerRequirementLocation
+    from app.db.models.organization import Organization
+    from tests.test_deals_api import create_lead
+
+    organization_id, user_id = tenant
+    with SessionLocal() as db:
+        organization = db.get(Organization, organization_id)
+        user = db.get(User, user_id)
+        assert organization is not None and user is not None
+        lead = create_lead(db, organization=organization)
+        requirement = CustomerRequirement(
+            organization_id=organization_id,
+            status="ACTIVE",
+            is_active=True,
+            lead_id=lead.id,
+        )
+        db.add(requirement)
+        db.flush()
+        db.add(
+            CustomerRequirementLocation(
+                organization_id=organization_id,
+                customer_requirement_id=requirement.id,
+                city="Bengaluru",
+                locality="Whitefield",
+                is_active=True,
+            )
+        )
+        db.add(
+            Activity(
+                organization_id=organization_id,
+                lead_id=lead.id,
+                actor_id=user.id,
+                activity_type="NOTE",
+                title="Called about the flat",
+                description="Wants a south-facing unit",
+                details={"internal": "not exported"},
+                occurred_at=datetime.now(UTC),
+            )
+        )
+        db.commit()
+
+    request_id = _request(organization_id, user_id, "export", ["crm.requirements", "crm.follow_ups"])
+    _run(request_id, organization_id)
+
+    document = _archive_document(storage, _row(request_id).artifact_reference)
+    locations = document["categories"]["crm.requirements/requirement_locations"]
+    assert [item["city"] for item in locations] == ["Bengaluru"]
+    activities = document["categories"]["crm.follow_ups/activities"]
+    assert activities[0]["title"] == "Called about the flat"
+    # Actor identifiers and unreviewed JSON details are never exported.
+    serialized = json.dumps(document)
+    assert "not exported" not in serialized
+    assert str(user_id) not in serialized
+
+
+def test_a_property_that_owns_a_contact_defers_that_contact(tenant, storage) -> None:
+    from app.db.models.organization import Organization
+    from tests.test_deals_api import create_property
+
+    organization_id, user_id = tenant
+    contact_id = _contact(organization_id, email="owner@example.test")
+    with SessionLocal() as db:
+        organization = db.get(Organization, organization_id)
+        assert organization is not None
+        property_record = create_property(db, organization=organization)
+        property_record.owner_contact_id = contact_id
+        db.commit()
+    request_id = _request(organization_id, user_id, "deletion", ["crm.contacts"])
+
+    _run(request_id, organization_id)
+
+    assert json.loads(_row(request_id).execution)["crm.contacts"]["deferred_dependent"] == 1
+    with SessionLocal() as db:
+        contact = db.get(Contact, contact_id)
+        assert contact is not None and contact.email == "owner@example.test"
+
+
+def test_a_failed_post_deletion_check_rolls_back_and_never_completes(tenant, storage, monkeypatch) -> None:
+    organization_id, user_id = tenant
+    document_id, key = _document(organization_id, user_id, storage)
+    request_id = _request(organization_id, user_id, "deletion", ["documents.files"])
+    # The stored object is not actually removed, so the post-deletion check must fail.
+    monkeypatch.setattr(storage, "delete", lambda _key: None)
+
+    with pytest.raises(privacy_execution.PrivacyExecutionError):
+        _run(request_id, organization_id)
+
+    row = _row(request_id)
+    assert row.status == STATUS_ELIGIBILITY_RECORDED
+    with SessionLocal() as db:
+        assert db.get(Document, document_id) is not None
+    assert storage.exists(key)
+
+
+def test_a_legal_hold_blocks_deletion_but_not_export(tenant, storage) -> None:
+    organization_id, user_id = tenant
+    _document(organization_id, user_id, storage)
+    with SessionLocal() as db:
+        place_legal_hold(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            category_key="documents.files",
+            reason="Litigation hold",
+        )
+        db.commit()
+    export_id = _request(organization_id, user_id, "export", ["documents.files"])
+
+    _run(export_id, organization_id)
+
+    assert _row(export_id).status == STATUS_READY
+    with SessionLocal() as db:
+        from app.governance.privacy import evaluate_deletion
+
+        decision = evaluate_deletion(db, organization_id=organization_id, category_key="documents.files")
+    assert decision.eligible is False
+    assert "legal_hold_active" in decision.reasons
+
+
+def test_a_read_only_administrator_cannot_request_or_download_exports(tenant, storage) -> None:
+    organization_id, user_id = tenant
+    export_id = _request(organization_id, user_id, "export", ["crm.contacts"])
+    _run(export_id, organization_id)
+    read_only_user, read_only_org = create_manager(permissions=("governance.privacy.read",))
+    try:
+        with TestClient(_app_for(_actor_for(read_only_user.id))) as client:
+            client.headers.update({"X-Organization-ID": str(read_only_org.id)})
+            request = client.post(
+                f"{BASE}/privacy/requests",
+                json={"request_type": "export", "categories": ["crm.contacts"], "confirm": True},
+            )
+            download = client.get(f"{BASE}/privacy/requests/{export_id}/export")
+        assert request.status_code == 403
+        assert download.status_code in {403, 404}
+    finally:
+        _cleanup(read_only_org.id)
 
 
 # --- Customer profiles, requirements, deals and AI usage --------------------------------------

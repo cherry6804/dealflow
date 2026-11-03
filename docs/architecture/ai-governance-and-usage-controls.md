@@ -389,7 +389,7 @@ No legal retention period is set in code. Periods come only from each organizati
 
 The register in `data_classification.py` covers 19 categories. The database has 44 tables with an `organization_id`
 column. 17 are mapped to a category (payment milestones and deal commissions are exported as part of `crm.deals`).
-The 27 unmapped tables below are neither exported nor deleted by any request today. `email_outbox_messages` has no
+Eight of the 27 unmapped tables are now exported as CRM sub-records (section 5.8). The remaining 19 are neither exported nor deleted by any request, and every artifact lists them under `not_covered`. `email_outbox_messages` has no
 organization column and is covered by decision 5. Each needs a
 sensitivity and a retention treatment decided by product and legal before it is added. Until then it is not claimed
 as covered.
@@ -406,6 +406,25 @@ Unclassified, organization-owned tables (27): `activities`, `customer_requiremen
 belong to SIBVO and should be handled by SIBVO's own processes; this is decision 6 in 5.6.
 
 ### 5.6 Decisions required before further work (product or legal)
+
+Status after review (approved directions are recorded in the review, not implied by this list):
+
+| Decision | Status |
+|---|---|
+| D1 free-text clearing | Approved as a direction. Field scope in 5.9 awaits approval. **Nothing cleared.** |
+| D2 contact deferral | Approved. Extended to property owner and source contacts, and referrers. Rechecked at execution and on retry. |
+| D3 billing and audit exports | Approved to exclude both, listed as not covered. |
+| D4 retention periods | **Open.** No period set. |
+| D5 email outbox | Approved to exclude. Platform retention **open**. |
+| D6 SIBVO authority | Approved. Dealsflo does not delete or modify membership or subscriptions. Handoff in 5.10. |
+| D7 scheduler | **Open.** Not deployed, not operational. |
+| D8 tombstones | **Not verified** (5.10). Audit events are not yet shown to be immutable or readable by administrators. |
+| D9 classification | Proposal in 5.8, not authorized. Nothing enabled. |
+| D10 export approval | Met as decided (5.10). |
+| D11 encryption | **Not met** (5.10). Needs a managed-key choice. |
+| D12 holds | Met as decided. Holds block deletion, not export. |
+| D13 import attachments | Treated as document-like. Not deleted. |
+
 
 Each decision lists what it changes and what is left until it is answered. None has been assumed.
 
@@ -437,8 +456,112 @@ Each decision lists what it changes and what is left until it is answered. None 
 
 ### 5.7 Verification
 
-- `tests/test_privacy_execution.py`: 37 tests. Dependent contacts: a lead or a customer profile defers the contact (`deferred_dependent`); a dependency created after the request is respected at execution time; a retry after a failure re-evaluates dependencies; independent contacts are anonymized; a deferred contact never produces a complete status. They cover export coverage and ZIP contents; all-or-nothing document export (missing object, checksum mismatch, size limit); exclusions; invitation token omission; leads, follow-ups, customer profiles, requirements, deals with payment milestones and commissions, and AI usage export (organization-scoped, with a cross-organization check); deletion; holds at request and execution time; storage-failure rollback and retry; idempotency; download access and expiry; cross-tenant refusal; retention per organization and per category; legal-hold skip; the expiry job; cancellation; failure isolation between organizations; and absence of personal data from logs.
+- `tests/test_privacy_execution.py`: 43 tests. Review controls added in this checkpoint: the not-covered notice in every artifact, CRM sub-record exports with allowlisted fields and no actor identifiers, a deferral for contacts referenced by properties and referrals, a failed post-deletion check that rolls back and never completes, a legal hold that blocks deletion but not export, and a read-only administrator refused for export requests and downloads. `tests/test_outbox_error_redaction.py`: database error text is withheld from the outbox. Dependent contacts: a lead or a customer profile defers the contact (`deferred_dependent`); a dependency created after the request is respected at execution time; a retry after a failure re-evaluates dependencies; independent contacts are anonymized; a deferred contact never produces a complete status. They cover export coverage and ZIP contents; all-or-nothing document export (missing object, checksum mismatch, size limit); exclusions; invitation token omission; leads, follow-ups, customer profiles, requirements, deals with payment milestones and commissions, and AI usage export (organization-scoped, with a cross-organization check); deletion; holds at request and execution time; storage-failure rollback and retry; idempotency; download access and expiry; cross-tenant refusal; retention per organization and per category; legal-hold skip; the expiry job; cancellation; failure isolation between organizations; and absence of personal data from logs.
 - Migrations: `j1a6e3c9b4d2` verified upgrade, downgrade and upgrade on a fresh PostgreSQL database that ran the full chain from empty.
+
+### 5.8 Classification proposal for the 27 unclassified tables (for review, not authorization)
+
+This is a proposal. A classification never authorizes deletion or anonymization. Each row shows the owner and the source of
+authority, the personal data present, what export does today and what is proposed, the deletion position, the retention
+requirement (open under D4), legal-hold applicability (D12), the foreign-key restrictions that a deletion must respect, and the
+tests required. "Pending" means the decision is open and no behaviour is enabled.
+
+Tables marked **exported** are now covered by a read-only export under their parent category (applied in this checkpoint).
+
+| # | Table | Owner / authority | Personal or sensitive data | Export | Deletion / anonymization | Retention | Holds (D12) | Key FK restrictions (delete rule) | Tests required |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | activities | Dealsflo (CRM) | Lead interaction notes | **Exported** under `crm.follow_ups/activities` (title, description, type, lead, times). `details` JSON and actor excluded | Pending D1 (title, description). `details` needs review first | Pending D4 | Yes, via `crm.follow_ups` | lead CASCADE; actor → memberships RESTRICT | export allowlist; actor and details absent |
+| 2 | customer_requirement_history | Dealsflo | Snapshot of a customer's requirement | **Exported** under `crm.requirements/requirement_history` (snapshot included, actor excluded) | Pending D1 (snapshot content review) | Pending D4 | Yes, via `crm.requirements` | requirement NO ACTION; users RESTRICT | export; actor absent; snapshot review |
+| 3 | customer_requirement_locations | Dealsflo | Customer's preferred city and locality | **Exported** under `crm.requirements/requirement_locations` | Structural, keep (matching depends on it) | Pending D4 | Yes | requirement CASCADE | export |
+| 4 | customer_requirement_property_preferences | Dealsflo | Customer preference | **Exported** under `crm.requirements/requirement_property_preferences` | Structural, keep | Pending D4 | Yes | requirement CASCADE | export |
+| 5 | customer_requirement_possession_parking_preferences | Dealsflo | Customer preference | **Exported** under `crm.requirements/requirement_parking_preferences` | Structural, keep | Pending D4 | Yes | requirement CASCADE | export |
+| 6 | deal_negotiations | Dealsflo | Negotiation state for a deal | **Exported** under `crm.deals/negotiations` (state, times; `updated_by` excluded) | Pending D4 (financial relation) | Pending D4 | Yes, via `crm.deals` | deal CASCADE; `updated_by` → memberships RESTRICT | export; actor absent |
+| 7 | deal_negotiation_history | Dealsflo | Free-text note on a negotiation step | **Exported** under `crm.deals/negotiation_history` (note included, actor excluded) | Pending D1 (note) and D4 | Pending D4 | Yes | negotiation CASCADE; actor → memberships RESTRICT | export; actor absent |
+| 8 | deal_stage_history | Dealsflo | Free-text reason for a stage change | **Exported** under `crm.deals/stage_history` (reason included, actor excluded) | Pending D1 (reason) | Pending D4 | Yes | deal CASCADE; actor → users SET NULL | export; actor absent |
+| 9 | import_batches | Dealsflo | Uploaded source file; contacts loaded from it | Not exported (D13). Treated as document-like | Pending D13 (ownership, dependencies, retention) | Pending D4 | Yes, once classified | contacts → import_batches **RESTRICT** (a contact row blocks deletion of its batch); org CASCADE | not-covered notice; later: document-style export and deletion tests |
+| 10 | notifications | Dealsflo (per user) | Notification text may name customers | Not exported | Pending D9 | Pending D4 | Yes, once classified | users CASCADE | not-covered notice; export for the recipient only |
+| 11 | notification_preferences | Dealsflo (per user) | User preference | Not exported | Pending D9 | n/a | Yes, once classified | users CASCADE | not-covered notice |
+| 12 | organization_memberships | **SIBVO** (D6) | Member identity | Not exported. SIBVO answers | **Dealsflo must not delete or modify** (D6) | SIBVO | Not applicable to Dealsflo | users CASCADE; org CASCADE; referenced RESTRICT by deals, leads, follow-ups, activities, requirements and others | handoff notice; test that Dealsflo privacy paths never write it |
+| 13 | subscriptions | **SIBVO** (D6) | Plan and billing state | Not exported. SIBVO answers | **Dealsflo must not modify** (D6) | SIBVO | Not applicable to Dealsflo | plans RESTRICT; org CASCADE | handoff notice; test as above |
+| 14 | roles | Dealsflo configuration (role definitions) | No personal data | Not exported (configuration) | Not applicable | n/a | No | org CASCADE; membership_roles CASCADE | not-covered notice |
+| 15 | organization_capability_settings | Dealsflo configuration | Actor user recorded | Not exported (configuration) | Not applicable | Keep for the audit trail (D8) | No | users **RESTRICT** (a user row cannot be deleted while a change record refers to it) | not-covered notice |
+| 16 | organization_usage_budgets | Dealsflo configuration and billing | None (aggregate quantities) | Not exported | Not applicable (financial record) | Pending D4 | No | org RESTRICT | not-covered notice; keep out of deletion |
+| 17 | properties | Dealsflo (inventory) | Owner and source contacts; addresses may identify owners | Not exported | Pending D9. Owner and source references block contact anonymization (**deferred**, see 5.2) | Pending D4 | Yes, once classified | contacts NO ACTION (owner, source); deals, site visits and documents **RESTRICT**; shortlists CASCADE | not-covered notice; contact-deferral test (exists) |
+| 18 | referrals | Dealsflo | Referred person's name, phone and email (a third party) | Not exported | Pending D9 and legal review (third-party data) | Pending D4 | Yes, once classified | contacts, customer profiles and deals **RESTRICT**; users SET NULL | not-covered notice; contact-deferral test (exists) |
+| 19 | requirement_match_runs | Dealsflo (derived) | Matches made for a customer | Not exported | Pending D9 | Pending D4 | Yes, once classified | memberships **RESTRICT**; org CASCADE | not-covered notice |
+| 20 | requirement_match_run_results | Dealsflo (derived) | Matched property per run | Not exported | Pending D9 | Pending D4 | Yes, once classified | match runs CASCADE | not-covered notice |
+| 21 | requirement_property_shortlists | Dealsflo | Shortlisted properties for a customer | Not exported | Pending D9 | Pending D4 | Yes, once classified | requirements CASCADE; properties CASCADE; memberships **RESTRICT** | not-covered notice |
+| 22 | requirement_shortlist_events | Dealsflo | Shortlist actions by a member | Not exported | Pending D9 | Pending D4 | Yes, once classified | memberships **RESTRICT**; org CASCADE | not-covered notice |
+| 23 | site_visits | Dealsflo | Visit notes, outcome and feedback | Not exported | Pending D1 (notes, feedback, outcome) and D9 | Pending D4 | Yes, once classified | customer profiles, leads, memberships and properties **RESTRICT** | not-covered notice; deletion blocked by dependencies |
+| 24 | team_member_removals | Dealsflo | Removal reason (free text) and removed user | Not exported | Pending D9 | Pending D4 | Yes, once classified | users **RESTRICT** (both); org RESTRICT | not-covered notice |
+| 25 | automation_rules | Dealsflo configuration | Rule may name a creator (SET NULL) | Not exported | Not applicable (configuration) | n/a | No | users SET NULL; org CASCADE | not-covered notice |
+| 26 | automation_executions | Dealsflo (execution history) | References deals and actions | Not exported | Pending D4 (kept as the execution record) | Pending D4 | Yes, once classified | rules CASCADE; org CASCADE | not-covered notice |
+| 27 | auth_sessions | Dealsflo identity | Session credentials | **Never exported** | Session revocation only, not privacy deletion | Session lifetime (configuration, not a legal period) | No | users CASCADE; org CASCADE | test that exports never include credentials |
+
+Summary of the classification:
+- **SIBVO-owned (not changed by Dealsflo):** organization_memberships, subscriptions (D6).
+- **Configuration, not customer data:** roles, organization_capability_settings, organization_usage_budgets, automation_rules.
+- **Customer or personal data, exported in this checkpoint:** 8 tables (rows 1 to 8).
+- **Customer or personal data, not exported (pending classification):** rows 9 to 11, 17 to 24, 26.
+- **Never exported:** auth_sessions.
+
+Restrictions that a future deletion must respect (from the foreign-key query above):
+- `properties` is referenced by `deals`, `site_visits` and `documents` with RESTRICT. A property cannot be deleted while those rows exist.
+- `contacts` is referenced by `import_batches` with RESTRICT, so a batch cannot be removed while its contacts remain.
+- `referrals` references contacts, customer profiles and deals with RESTRICT.
+- Membership rows are referenced with RESTRICT by most CRM tables. A membership cannot be removed by a privacy request.
+
+### 5.9 Free-text field inventory for decision D1 (for approval; nothing is cleared yet)
+
+D1 approves selective clearing of approved personal free-text fields. The inventory below is the exact scope for your approval.
+No field has been cleared, and no destructive behaviour has been enabled.
+
+| Field | Table (category) | Personal content | Financial or legal record? | Dependencies | Proposal |
+|---|---|---|---|---|---|
+| customer_notes | customer_profiles (crm.customer_profiles) | Yes | No | Profile referenced by requirements, deals and site visits | Clear, pending approval |
+| interest, outcome, next_action | leads (crm.leads) | Yes | No | Deals, follow-ups and requirements reference the lead | Clear, pending approval |
+| title, description | follow_ups (crm.follow_ups) | Yes | No | Lead and site visit | Clear, pending approval |
+| title, description | activities (crm.follow_ups) | Yes | No | Lead | Clear, pending approval. Review `details` JSON first |
+| notes | deals (crm.deals) | Yes | Deal record | Payments, commissions, negotiations | **Hold for D4**. Financial relation |
+| notes | payment_milestones (crm.deals) | Possibly | **Yes, financial** | Deal | **Keep**. Financial retention pending |
+| terms | deal_commissions (crm.deals) | Possibly | **Yes, financial** | Deal | **Keep**. Financial retention pending |
+| note | deal_negotiation_history (crm.deals) | Possibly | Negotiation record | Negotiation | Pending D4 |
+| reason | deal_stage_history (crm.deals) | Possibly | Stage record | Deal | Clear, pending approval |
+| snapshot (JSON) | customer_requirement_history (crm.requirements) | Yes | No | Requirement | Review contents first |
+| notes, feedback, outcome | site_visits (unclassified) | Yes | No | Customer, lead, property | Pending D9 |
+| referral_name, referral_phone, referral_email, notes | referrals (unclassified) | **Third-party personal data** | No | Contacts, customer profiles, deals | Pending D9 and legal review |
+| reason | team_member_removals (unclassified) | Possibly | Governance record | Membership | Pending D9 |
+| title, message | notifications (unclassified) | Possibly | No | Recipient | Pending D9 |
+| description | documents (documents.files) | Possibly | No | Lead, property | Clear, pending approval |
+| first_name, last_name, email, phone | contacts (crm.contacts) | Yes | No | Leads, profiles, properties, referrals | Already anonymized where no dependency exists (D2) |
+
+Consequences of clearing: the row and its structure remain, so references, counts and history stay intact. The content is lost
+permanently. Search, matching and reports that read these fields change. Clearing `payment_milestones.notes` or
+`deal_commissions.terms` could remove records that financial rules require, which is why those rows are held.
+
+### 5.10 Evidence for the remaining approved decisions
+
+- **D8 (tombstones): not yet verified.** Audit events are written in the same transaction as the operation they record. Application
+  code never updates or deletes them, and no API reads them, so an administrator cannot inspect deletion evidence today. No database
+  trigger or constraint prevents change, so immutability is a convention, not a control. Deletion records are therefore not yet
+  verified for durability, completeness or access control. Recommended: a database trigger that refuses UPDATE and DELETE on
+  `audit_events`, and a read path for administrators. Both need approval, and the trigger changes how test cleanup works.
+- **D11 (encryption at rest): not met.** Export artifacts and stored documents are written as plain files to local storage
+  (`LocalObjectStorage`). The only encryption in the codebase is application-level Fernet for the email outbox, keyed from the
+  `EMAIL_OUTBOX_ENCRYPTION_KEY` environment variable, which is not managed key management. The storage factory lists an `s3`
+  backend, but no S3 implementation exists. Encryption cannot be claimed. A managed-key option needs your choice (cloud key service
+  with envelope encryption, or host-level encryption of the storage volume). Each choice has a different migration cost.
+- **D10 (export approval): met as decided.** The request and the download both require `governance.privacy.manage`. Both are
+  organization-scoped and audited (`privacy.export.requested`, `privacy.export.downloaded`). A test shows that a read-only
+  administrator is refused.
+- **D12 (holds block deletion, not export): met as decided.** A test shows that a hold blocks deletion and leaves export unchanged.
+- **D6 (SIBVO authority): documented.** Dealsflo privacy paths do not write membership or subscription tables. A handoff notice is
+  listed for each such table in every artifact. The cross-product request flow is: the requester contacts Dealsflo, Dealsflo
+  records the request and states the SIBVO-owned data it does not cover, and SIBVO answers for its own data. The SIBVO side of
+  this flow is not implemented here and needs SIBVO's agreement.
+- **D5 (email outbox): met as decided.** Platform email is listed as not covered and is outside organization export and deletion.
+  The platform retention period is open.
+- **D4 and D7: open.** No retention period is set. Privacy maintenance is not scheduled, so it is not operational.
 
 ## 6. Frontend
 

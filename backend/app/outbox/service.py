@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -225,7 +226,13 @@ def claim_due_events(
 
 
 def _describe_error(exc: BaseException) -> str:
-    """Return a bounded, single-line description. Never includes the traceback."""
+    """Return a bounded, single-line description. Never includes the traceback.
+
+    Database error messages echo the failing row (for example an email address in a unique-key
+    violation), so for database errors only the exception type is stored.
+    """
+    if isinstance(exc, SQLAlchemyError):
+        return f"{type(exc).__name__}: database error (details withheld)"
     message = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
     return message[:MAX_ERROR_LENGTH]
 
