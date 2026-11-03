@@ -214,34 +214,84 @@ No usage data has been fabricated.
 
 ## 5. Privacy, retention and requests (DFR1-050)
 
-### 5.1 What each operation actually does
+Status: **Partial.** Processing is real for two categories in each direction and is covered by tests.
+Most organization data is not yet exported or deleted, and that is recorded per request rather than
+hidden. The acceptance criteria also depend on voice (DFR1-027, DFR1-028), documents (DFR1-035) and
+organization AI settings (DFR1-036), which are not complete.
+
+### 5.1 Operations
 
 | Operation | Executes? | Detail |
 |---|---|---|
-| Data classification | Yes (static register) | `app/governance/data_classification.py`. Shows `producer_exists`. Seven categories have no producer today. |
-| Retention policy storage | Records only | Versioned days per category. |
-| Retention enforcement | **Not built** | Retention days are not used in any eligibility decision or purge. No purge job exists. |
-| Legal hold placement and release | Yes | Recorded and audited. |
-| Legal hold enforcement | Checked in eligibility only | Deletion eligibility returns `legal_hold_active`. No deletion path exists, so nothing can bypass the hold, because nothing deletes. |
-| Deletion eligibility evaluation | Yes | Reason codes: `not_customer_deletable`, `legal_hold_active`, `no_producer_yet`, `category_unknown`. |
-| Deletion request creation | Records only | Stores per-category decisions. Status `eligibility_recorded` (some eligible) or `blocked` (none). **No data is deleted.** `test_a_deletion_request_removes_no_data_and_an_export_creates_no_artifact`. |
-| Actual deletion or anonymization | **Not built** | No code path removes or anonymizes any category. |
-| External provider deletion confirmation | **Not built** | No provider exists to confirm against. |
-| Export request creation | Records only | Status `awaiting_artifact_generation`. |
-| Export artifact generation | **Not built** | No artifact producer. An export never becomes `ready` through the API. |
-| Export expiry | Yes, for attached artifacts | `expire_export_if_due`. Nothing is attached today, so nothing expires. |
-| Cancellation | Yes | Audited. Only for open requests. |
+| Data classification | Yes (static register) | `app/governance/data_classification.py`. Each category has `producer_exists` and `organization_owned`. |
+| Retention periods | Stored; enforced for two categories | Versioned days per category. Enforced for `documents.files` and `team.invitations` only (section 5.3). Periods are configured by the organization. None is set by default. |
+| Legal holds | Yes, at three points | Checked when the request is created, again when the deletion runs, and again on every retention run. A hold in place is never bypassed. Recorded and audited. |
+| Deletion eligibility | Yes | Reason codes: `not_customer_deletable`, `legal_hold_active`, `no_producer_yet`, `category_unknown`, `not_organization_owned`. |
+| Deletion request processing | Yes, in the background | Outbox handler. Retried on failure. A repeat run is a no-op. Storage removal is idempotent. |
+| Export request processing | Yes, in the background | Outbox handler. One ZIP artifact per request at a fixed key, so a retry replaces it and never orphans an object. |
+| Export download | Yes | `GET /governance/privacy/requests/{id}/export`. Requires `governance.privacy.manage`, is organization-scoped, audited (`privacy.export.downloaded`), and sent with `Cache-Control: no-store`. `409` before the artifact exists; `410` after expiry, and the stored object is removed. |
+| Export expiry | Yes, on access and by a scheduled job | `expire_request_export` removes the object. `app.governance.privacy_maintenance` expires due exports. **Nothing schedules it in this repository.** |
+| Cancellation | Yes | Audited. Removes the stored object of a ready export. |
+| External provider deletion | **Not applicable today** | No external provider holds organization data in this repository. Stored documents are in private local storage. Email outbox rows are platform data (see 5.2). |
 
-### 5.2 Decision recorded
+### 5.2 Category matrix
 
-Retention is stored and versioned, and the classification is shown to administrators. It is **not
-enforced**. A retention period does not cause any deletion and does not make data eligible for deletion.
+Each row is what the code does today. Anything not listed as done is **not** claimed.
 
-### 5.3 Blocked for DFR1-050
+| Category | Export | Deletion | Retention | Why |
+|---|---|---|---|---|
+| `crm.contacts` | Yes | Identity fields anonymized (`anonymized_partial`) | Not enforced | Linked leads, profiles, requirements, deals and follow-ups are not changed. Whether an old contact may be anonymized while deals reference it is a product and legal decision. |
+| `crm.leads` | Yes | Not processed (`deletion_executor_not_built`) | Not enforced | Free-text notes. Decision: anonymize or delete, and what happens to dependent follow-ups. |
+| `crm.follow_ups` | Yes | Not processed | Not enforced | Free-text titles and descriptions. Same decision as leads. |
+| `crm.customer_profiles`, `crm.requirements`, `crm.deals` | Not built (`no_export_producer_yet`) | Not processed | Not enforced | No exporter or executor yet. Deals hold financial and commission records that may have a retention obligation. |
+| `documents.files` | Yes, with the stored files. All or nothing: a missing object, a checksum mismatch, or a total over `PRIVACY_EXPORT_MAX_BYTES` excludes the whole category | Stored object, then metadata row (`deleted`) | Enforced by age (`created_at`) | None. |
+| `team.invitations` | Yes. The token hash is never exported | Email replaced by a non-deliverable placeholder; pending invitations revoked (`anonymized`) | Enforced by age | None. |
+| `messaging.email_outbox` | Excluded (`not_organization_owned`) | Excluded | Not applicable | Platform authentication and invitation mail carries no organization ID. It cannot be exported or deleted for one organization. Platform retention is a separate decision. |
+| `messaging.conversations`, `voice.call_records`, `voice.transcripts`, `ai.prompts_and_responses`, `ai.embeddings`, `ai.execution_traces` | No producer (`no_producer_yet`) | No producer | Not applicable | Channel, voice and AI execution are not built (DFR1-015, 019, 027, 028). Blocked, not covered. |
+| `ai.usage` | Not built | Not deleted | Not applicable | Financial record. Retained by design. |
+| `billing.records`, `audit.events` | Not built | Not deleted | Not applicable | Financial and security records. Never deleted by a customer request. Whether they must be exported on request is a decision. |
+| `security.credentials` | Never exported | Never deleted by a customer request | Not applicable | Secret references. No provider connection exists yet. |
 
-The acceptance criteria name messages, calls, transcripts, documents and AI data. Their producers are
-blocked: voice (DFR1-027, DFR1-028), documents (DFR1-035), organization AI settings (DFR1-036), and the
-channel gateway.
+### 5.3 Retention enforcement
+
+`app.governance.privacy_execution.enforce_retention` applies the organization's period to each enforced
+category, using the same executors as a deletion request. Each category is checked for legal holds
+first. A skipped category is audited (`privacy.retention.skipped`), and an enforced run is audited
+(`privacy.retention.enforced`) with its cutoff and count. Retention is per organization and never
+crosses tenants. A repeat run deletes nothing new.
+
+A category with a period but no enforcer is reported as `not_enforced`. It is never reported as applied.
+
+### 5.4 Scheduled work
+
+`python -m app.governance.privacy_maintenance` runs export expiry and retention for every organization
+with a period. Each export and each organization runs in its own transaction. A failure is rolled back,
+counted, and logged with the exception type only. The run continues, and it exits non-zero on any failure.
+
+Scheduling is not configured. Until a scheduler runs this command, retention does not run, and an expired
+export's object is removed only when it is downloaded or its request is cancelled.
+
+### 5.5 Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `PRIVACY_EXPORT_TTL_DAYS` | 7 (1–90) | Download window for a generated export. An operating choice, not a legal period. |
+| `PRIVACY_EXPORT_MAX_BYTES` | 50 MiB | Total stored-document bytes one export may include. Above this, documents are excluded, not truncated. |
+
+No legal retention period is set in code. Periods come only from each organization's retention policy.
+
+### 5.6 Decisions still needed (product or legal)
+
+1. Anonymize or delete leads, follow-ups, customer profiles, requirements and deals on deletion, and how to treat records that other records depend on.
+2. Whether contacts may be retention-enforced while deals or leads reference them.
+3. Whether billing and audit records must be included in an export on request.
+4. Whether a platform-level retention period applies to the email outbox, which sits outside any organization.
+5. Whether a separate record of deleted categories must be kept. Currently only the audit event and the request's execution record remain.
+
+### 5.7 Verification
+
+- `tests/test_privacy_execution.py`: 32 tests. They cover export coverage and ZIP contents; all-or-nothing document export (missing object, checksum mismatch, size limit); exclusions; invitation token omission; leads and follow-ups export; deletion; holds at request and execution time; storage-failure rollback and retry; idempotency; download access and expiry; cross-tenant refusal; retention per organization and per category; legal-hold skip; the expiry job; cancellation; failure isolation between organizations; and absence of personal data from logs.
+- Migrations: `j1a6e3c9b4d2` verified upgrade, downgrade and upgrade on a fresh PostgreSQL database that ran the full chain from empty.
 
 ## 6. Frontend
 
@@ -249,7 +299,7 @@ Route `/settings/governance`. Three sections, each shown only when the server re
 controls appear only when the server reports manage access, and the server still enforces every request.
 Confirmation is required for every consequential change.
 
-The page states that deletion requests perform no deletion, and that exports are awaiting generation.
+The page lists, for each request, what was exported or deleted and what was not. The request form labels deletion as deletion, and every incomplete category is shown with its reason.
 Tests: `governanceLabels.test.ts` and `pages/GovernancePage.test.tsx`.
 
 **Not verified in a browser.** The page needs the migrations applied to the shared dev database and a
@@ -263,6 +313,7 @@ backend restart. Neither was done.
 | `g4b8c0d2e5f6` | Creates `ai_usage_events` and `organization_usage_budgets`; usage permissions |
 | `h5c9d1e3f6a7` | Creates the privacy tables; privacy permissions |
 | `i7f2c9d4e1a8` | Adds `source`; removes the blanket automation rows. Grants nothing. Downgrade refuses after people have changed switches, and never re-enables anything. |
+| `j1a6e3c9b4d2` | Adds `attempt_count`, `processed_at` and `execution` to `privacy_data_requests`. Existing rows keep their status and get an empty execution record. Downgrade drops only these three columns. |
 
 Verified in a disposable schema inside `dealflow_test`: `upgrade head`, `downgrade base` (81 revisions),
 `upgrade head`, with exit code 0 at each step. `tests/test_migration_automation_default.py` (10 tests)
@@ -294,7 +345,7 @@ legal-hold bypass by external deletion.
   capabilities deny until they exist.
 - No production usage is recorded (section 4.6).
 - Threshold alerts are delivered only by a running outbox worker (section 4.4).
-- Retention is not enforced (section 5.2). Export artifacts and deletion execution are not built.
+- Retention is enforced for documents and team invitations only (section 5.3). Contacts, leads and other categories are reported as not enforced. Export and deletion are built for the categories in section 5.2 only.
 - The entitlement snapshot is bounded by the E12 revalidation interval (section 2.2).
 - Transactional account email is outside the capability model (section 11, entry 7).
 - Governance audit events are written to `audit_events` (event types `governance` and `privacy`). No UI
@@ -307,7 +358,7 @@ legal-hold bypass by external deletion.
 | DFR1-002 | **Not complete** | ADR-0025, ADR-0026, ADR-0027 still Proposed; diagrams and ownership map not recorded | Engineering and product | Approve the remaining ADRs and record the diagrams and ownership map |
 | DFR1-006 | Partial | DFR1-002 (open), ADR-0029 (Accepted), DFR1-005 (done) | Engineering and product | Consent and channel policy; provider health; publication and activation; actor permission on target; budget and rate gates; approval gate; AI runtime in-flight policy (DFR1-019); gates 3, 7, 8 and 9 for AI |
 | DFR1-017 | Partial | DFR1-015 (AI gateway), DFR1-005 (done) | AI platform (E06) | Gateway producers; running the outbox worker in production; dashboard breakdowns; SIBVO reconciliation (DFR1-053) |
-| DFR1-050 | Partial | DFR1-028, DFR1-035, DFR1-036 | Voice, documents, settings | Retention enforcement; deletion execution and anonymization; external deletion confirmation; export artifacts; coverage for messages, calls, transcripts and AI data |
+| DFR1-050 | Partial | DFR1-028, DFR1-035, DFR1-036 | Voice, documents, settings | Export and deletion for the CRM categories (leads, follow-ups, customer profiles, requirements, deals) and anonymization of linked records; export of conversations, calls, transcripts and AI data (no producers); a product decision on retention for contacts; scheduling of `privacy_maintenance`; decisions in section 5.6 |
 | DFR1-053 | Blocked | DFR1-017, DFR1-036, approved SIBVO ingestion contract | SIBVO and Dealsflo | Ingestion, reconciliation, lifecycle tests |
 
 ## 11. Enforcement matrix (every execution entry point)
@@ -343,7 +394,7 @@ ADR-0029 Amendment C.
 |---|---|---|
 | DFR1-006 | **Partial** | Foundation, entitlement enforcement and one entry point. DFR1-002 open. Consent, provider, approval and budget gates not implemented for any AI capability. |
 | DFR1-017 | **Partial** | Ledger and budgets verified by tests. Alert delivery to administrators implemented (in-app, outbox worker). No production producer. |
-| DFR1-050 | **Partial** | Classification, legal holds, eligibility and request records. No retention enforcement, deletion, anonymization, export artifacts or provider deletion. |
+| DFR1-050 | **Partial** | Background export (contacts, leads, follow-ups, invitations, documents with files), deletion (documents, invitations fully; contacts anonymized), retention for documents and invitations, expiry and cancellation with object removal, audited download, and failure-isolated maintenance. Not built: exporters and executors for most CRM categories, conversations, calls, transcripts and AI data; scheduling; provider deletion (none exists). Section 5 lists each category. |
 | DFR1-053 | **Blocked** | Dependencies not delivered. |
 
 No E13 story is complete. E13 is not Done.

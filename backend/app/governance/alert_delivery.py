@@ -28,6 +28,7 @@ from app.db.models.permission import Permission
 from app.db.models.role import Role
 from app.db.models.role_permission import RolePermission
 from app.db.models.user import User
+from app.governance.privacy_execution import register_privacy_handlers
 from app.governance.usage_ledger import THRESHOLD_EVENT_TYPE
 from app.notifications.service import create_notification
 from app.outbox.service import register_handler
@@ -102,3 +103,4 @@ def deliver_usage_threshold_alert(db: Session, event) -> None:
 def register_governance_handlers() -> None:
     """Register every governance outbox handler. Safe to call more than once."""
     register_handler(THRESHOLD_EVENT_TYPE, deliver_usage_threshold_alert)
+    register_privacy_handlers()

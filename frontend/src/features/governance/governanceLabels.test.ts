@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   capabilityLabel,
+  describePrivacyExecution,
   formatUnitQuantity,
+  privacyReasonLabel,
   reasonLabel,
   requestStatusLabel,
   retentionLabel,
@@ -42,5 +44,24 @@ describe("governance labels", () => {
   it("states that a recorded deletion eligibility performs no deletion", () => {
     expect(requestStatusLabel("eligibility_recorded")).toContain("no deletion performed");
     expect(requestStatusLabel("awaiting_artifact_generation")).toBe("Awaiting export generation");
+    expect(requestStatusLabel("ready_partial")).toContain("incomplete");
+    expect(requestStatusLabel("partially_completed")).toContain("not deleted");
+  });
+
+  it("explains each category that an export or deletion did not cover", () => {
+    const lines = describePrivacyExecution({
+      not_exported: [{ category_key: "messaging.email_outbox", reason: "not_organization_owned" }],
+      "crm.contacts": { outcome: "anonymized_partial", count: 2 },
+      "crm.leads": { outcome: "not_executed", reasons: ["deletion_executor_not_built"] },
+    });
+    expect(lines).toContain(
+      "messaging.email_outbox: not exported (Platform data, not organization data)",
+    );
+    expect(lines).toContain("crm.contacts: Identity fields anonymized; linked records kept");
+    expect(lines).toContain("crm.leads: Not processed (Deletion not available yet)");
+  });
+
+  it("never shows an unknown privacy reason as an allowed action", () => {
+    expect(privacyReasonLabel("something_new")).toBe("Not available");
   });
 });

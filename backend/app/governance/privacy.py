@@ -6,12 +6,9 @@ What this module does:
 - Deletion eligibility per category, with stable reason codes.
 - Export and deletion request records with audited status changes.
 
-What it does not do (documented as blocked in E13):
-- It does not generate export artifacts. An export stays "awaiting_artifact_generation"
-  until an artifact producer exists, and nothing is marked ready without one.
-- It does not delete or anonymize data. A deletion request records eligibility only.
-- It does not call external providers to delete their copies.
-- It does not run automatic retention purges.
+Request records do no work by themselves. The background processing that generates export
+artifacts and executes deletions lives in ``app.governance.privacy_execution`` and runs from the
+outbox worker. Nothing is reported complete until that processing has recorded it.
 
 Every write is audited with the actor and the decision.
 """
@@ -36,13 +33,19 @@ REASON_CATEGORY_UNKNOWN = "category_unknown"
 REASON_NOT_CUSTOMER_DELETABLE = "not_customer_deletable"
 REASON_LEGAL_HOLD = "legal_hold_active"
 REASON_NO_PRODUCER = "no_producer_yet"
+REASON_NO_EXPORT_PRODUCER = "no_export_producer_yet"
+REASON_EXECUTOR_NOT_BUILT = "deletion_executor_not_built"
+REASON_NOT_ORGANIZATION_OWNED = "not_organization_owned"
 
 STATUS_AWAITING_ARTIFACT = "awaiting_artifact_generation"
 STATUS_READY = "ready"
+STATUS_READY_PARTIAL = "ready_partial"
 STATUS_EXPIRED = "expired"
 STATUS_CANCELLED = "cancelled"
 STATUS_BLOCKED = "blocked"
 STATUS_ELIGIBILITY_RECORDED = "eligibility_recorded"
+STATUS_COMPLETED = "completed"
+STATUS_PARTIALLY_COMPLETED = "partially_completed"
 
 
 class PrivacyError(Exception):
@@ -64,11 +67,11 @@ class DeletionDecision:
     reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _audit(
+def audit_privacy_event(
     db: Session,
     *,
     organization_id: UUID,
-    actor_user_id: UUID,
+    actor_user_id: UUID | None,
     action: str,
     resource_type: str,
     resource_id: str,
@@ -134,7 +137,7 @@ def set_retention_policy(
     )
     db.add(policy)
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -171,7 +174,7 @@ def place_legal_hold(
     )
     db.add(hold)
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -204,7 +207,7 @@ def release_legal_hold(
     hold.released_at = datetime.now(UTC)
     hold.released_by_user_id = actor_user_id
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -237,6 +240,8 @@ def evaluate_deletion(db: Session, *, organization_id: UUID, category_key: str) 
         return DeletionDecision(category_key, False, (REASON_CATEGORY_UNKNOWN,))
 
     reasons: list[str] = []
+    if not category.organization_owned:
+        reasons.append(REASON_NOT_ORGANIZATION_OWNED)
     if not is_customer_deletable(category):
         reasons.append(REASON_NOT_CUSTOMER_DELETABLE)
     if _active_hold(db, organization_id=organization_id, category_key=category_key):
@@ -291,7 +296,7 @@ def create_privacy_request(
     )
     db.add(request)
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -337,7 +342,7 @@ def mark_export_ready(
     request.artifact_reference = artifact_reference.strip()[:500]
     request.expires_at = expires_at
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,
@@ -358,11 +363,16 @@ def cancel_request(
     request_id: UUID,
 ) -> PrivacyDataRequest:
     request = _request_for(db, organization_id=organization_id, request_id=request_id)
-    if request.status not in {STATUS_AWAITING_ARTIFACT, STATUS_ELIGIBILITY_RECORDED, STATUS_READY}:
+    if request.status not in {
+        STATUS_AWAITING_ARTIFACT,
+        STATUS_ELIGIBILITY_RECORDED,
+        STATUS_READY,
+        STATUS_READY_PARTIAL,
+    }:
         raise InvalidRequestStateError(f"Request is {request.status} and cannot be cancelled.")
     request.status = STATUS_CANCELLED
     db.flush()
-    _audit(
+    audit_privacy_event(
         db,
         organization_id=organization_id,
         actor_user_id=actor_user_id,

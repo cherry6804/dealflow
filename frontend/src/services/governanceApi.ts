@@ -69,6 +69,9 @@ export interface PrivacyRequest {
   artifact_reference: string | null;
   expires_at: string | null;
   created_at: string;
+  attempt_count: number;
+  processed_at: string | null;
+  execution: Record<string, unknown>;
 }
 
 export interface GovernanceAccess {
@@ -152,5 +155,12 @@ export const governanceApi = {
 
   cancelPrivacyRequest(requestId: string): Promise<PrivacyRequest> {
     return api.post<PrivacyRequest>(`/governance/privacy/requests/${requestId}/cancel`);
+  },
+
+  downloadPrivacyExport(requestId: string): Promise<void> {
+    return api.download(
+      `/governance/privacy/requests/${encodeURIComponent(requestId)}/export`,
+      `privacy-export-${requestId}.zip`,
+    );
   },
 };

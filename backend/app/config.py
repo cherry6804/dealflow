@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
 
+    # Privacy exports (DFR1-050). The expiry is an operating choice, not a legal period.
+    privacy_export_ttl_days: int = Field(default=7, ge=1, le=90)
+    # Total stored-document bytes one export may include. Above this, documents are not exported.
+    privacy_export_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",

@@ -8,6 +8,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,15 +19,23 @@ from app.db.session import get_db_session
 from app.governance.capabilities import CapabilityCategory
 from app.governance.data_classification import CATEGORIES
 from app.governance.privacy import (
+    STATUS_AWAITING_ARTIFACT,
+    STATUS_ELIGIBILITY_RECORDED,
     InvalidRequestStateError,
     UnknownCategoryError,
     cancel_request,
     create_privacy_request,
     current_retention,
-    expire_export_if_due,
     place_legal_hold,
     release_legal_hold,
     set_retention_policy,
+)
+from app.governance.privacy_execution import (
+    ExportUnavailableError,
+    PrivacyRequestNotFoundError,
+    enqueue_processing,
+    expire_request_export,
+    open_export,
 )
 from app.governance.service import (
     CapabilityState,
@@ -40,6 +49,7 @@ from app.governance.usage_ledger import (
     budget_status,
     change_budget,
 )
+from app.storage import ObjectNotFoundError, get_object_storage
 from app.tenant.dependencies import TenantContext, get_tenant_context
 
 router = APIRouter(prefix="/api/v1/governance", tags=["governance"])
@@ -273,6 +283,10 @@ class PrivacyRequestResponse(BaseModel):
     status: str
     categories: list[str]
     decisions: dict[str, object]
+    # What processing actually did, per category. Empty until the background run has happened.
+    execution: dict[str, object]
+    attempt_count: int
+    processed_at: datetime | None
     artifact_reference: str | None
     expires_at: datetime | None
     created_at: datetime
@@ -306,6 +320,9 @@ def _request_response(row) -> PrivacyRequestResponse:
         status=row.status,
         categories=json.loads(row.categories),
         decisions=json.loads(row.decisions),
+        execution=json.loads(row.execution or "{}"),
+        attempt_count=row.attempt_count,
+        processed_at=row.processed_at,
         artifact_reference=row.artifact_reference,
         expires_at=row.expires_at,
         created_at=row.created_at,
@@ -416,8 +433,9 @@ def list_privacy_requests(
         .order_by(PrivacyDataRequest.created_at.desc())
     ).all()
     now = datetime.now(UTC)
+    storage = get_object_storage()
     for row in rows:
-        expire_export_if_due(db, request=row, now=now)
+        expire_request_export(db, row, storage=storage, now=now)
     db.commit()
     return [_request_response(row) for row in rows]
 
@@ -442,8 +460,49 @@ def create_privacy_request_endpoint(
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    if row.status in {STATUS_AWAITING_ARTIFACT, STATUS_ELIGIBILITY_RECORDED}:
+        # Processing runs in the outbox worker, in the same commit as the request.
+        enqueue_processing(db, row)
     db.commit()
     return _request_response(row)
+
+
+@router.get("/privacy/requests/{request_id}/export")
+def download_privacy_export(
+    request_id: UUID,
+    tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
+    db: Session = Depends(get_db_session),
+) -> StreamingResponse:
+    """Download a ready export. Organization-scoped, audited, and refused after expiry."""
+    try:
+        handle = open_export(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            request_id=request_id,
+            storage=get_object_storage(),
+            now=datetime.now(UTC),
+        )
+    except ExportUnavailableError as error:
+        detail = str(error)
+        if "expired" in detail:
+            # Keep the expiry and the deleted artifact; a refused download is not a rollback.
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail) from None
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
+    except PrivacyRequestNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Privacy request not found.") from None
+    db.commit()
+    return StreamingResponse(
+        handle,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="privacy-export-{request_id}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/privacy/requests/{request_id}/cancel", response_model=PrivacyRequestResponse)
@@ -464,7 +523,16 @@ def cancel_privacy_request(
         not_found = "not found" in str(error)
         code = status.HTTP_404_NOT_FOUND if not_found else status.HTTP_409_CONFLICT
         raise HTTPException(status_code=code, detail=str(error)) from None
+    stored_key = row.artifact_reference
+    row.artifact_reference = None
     db.commit()
+    if stored_key:
+        # A cancelled export must not stay downloadable. The request is already committed as
+        # cancelled, so a failure here leaves an unreferenced object for the expiry job to report.
+        try:
+            get_object_storage().delete(stored_key)
+        except ObjectNotFoundError:
+            pass
     return _request_response(row)
 
 

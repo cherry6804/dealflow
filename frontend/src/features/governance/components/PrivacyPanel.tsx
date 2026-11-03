@@ -8,6 +8,7 @@ import {
   type RetentionPolicy,
 } from "../../../services/governanceApi";
 import {
+  describePrivacyExecution,
   requestStatusLabel,
   retentionLabel,
   sensitivityLabel,
@@ -119,8 +120,9 @@ export default function PrivacyPanel({ canManage }: PrivacyPanelProps) {
     <section aria-labelledby="privacy-heading">
       <h2 id="privacy-heading">Privacy, retention and requests</h2>
       <p className="governance-muted">
-        Export and deletion requests are recorded and audited. This build does not generate export
-        files or delete data; each request shows what is still outstanding.
+        Export and deletion requests are processed in the background and audited. Each request lists
+        what was exported or deleted and what was not, so an incomplete result is never shown as
+        complete. Records that must be kept, such as billing and audit history, are never deleted.
       </p>
       {actionError ? (
         <p role="alert" className="governance-error">
@@ -257,11 +259,31 @@ export default function PrivacyPanel({ canManage }: PrivacyPanelProps) {
               <tr key={request.id}>
                 <td>{request.request_type}</td>
                 <td>{request.categories.join(", ")}</td>
-                <td>{requestStatusLabel(request.status)}</td>
+                <td>
+                  {requestStatusLabel(request.status)}
+                  {describePrivacyExecution(request.execution).length > 0 ? (
+                    <ul className="governance-muted">
+                      {describePrivacyExecution(request.execution).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </td>
                 <td>{formatDate(request.created_at)}</td>
                 {canManage ? (
                   <td>
-                    {["awaiting_artifact_generation", "eligibility_recorded", "ready"].includes(request.status) ? (
+                    {["ready", "ready_partial"].includes(request.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => void run(() => governanceApi.downloadPrivacyExport(request.id))}
+                        disabled={submitting}
+                      >
+                        Download
+                      </button>
+                    ) : null}
+                    {["awaiting_artifact_generation", "eligibility_recorded", "ready", "ready_partial"].includes(
+                      request.status,
+                    ) ? (
                       <button
                         type="button"
                         onClick={() => void run(() => governanceApi.cancelPrivacyRequest(request.id))}
@@ -288,7 +310,7 @@ export default function PrivacyPanel({ canManage }: PrivacyPanelProps) {
             onChange={(event) => setRequestType(event.target.value as "export" | "deletion")}
           >
             <option value="export">Export</option>
-            <option value="deletion">Deletion (eligibility check only)</option>
+            <option value="deletion">Deletion</option>
           </select>
           <div role="group" aria-label="Categories">
             {data.categories.map((category) => (
