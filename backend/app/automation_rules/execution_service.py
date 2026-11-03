@@ -24,14 +24,12 @@ from app.db.models.deal import Deal
 from app.follow_ups.schemas import FollowUpCreateRequest
 from app.follow_ups.service import create_follow_up
 from app.governance.capabilities import AUTOMATION_DEAL_CREATED_RULES
-from app.governance.policy import evaluate_capability
+from app.governance.execution_gate import ExecutionRequest, evaluate_execution
 from app.notifications.service import create_notification
 from app.rate_limits.limiter import (
     REASON_RATE_LIMITED,
     RateLimitDecision,
-    consume_or_deny,
 )
-from app.rate_limits.policy import AUTOMATION_DEAL_CREATED_EXECUTION
 
 SUPPORTED_CONDITION_FIELDS = {
     "stage",
@@ -342,18 +340,6 @@ def execute_deal_created_automations(
             "The deal does not belong to the requested organization."
         )
 
-    # Governance gate (DFR1-006): deal-created automations are disabled by default.
-    # A denial creates no executions and leaves the deal untouched, so manual CRM
-    # work continues when automation is off.
-    decision = evaluate_capability(
-        db,
-        organization_id=organization_id,
-        capability_key=AUTOMATION_DEAL_CREATED_RULES,
-        user_context=user_context,
-    )
-    if not decision.allowed:
-        return []
-
     rules = list(
         db.scalars(
             select(AutomationRule)
@@ -368,24 +354,27 @@ def execute_deal_created_automations(
     if not rules:
         return []
 
-    # Rate-limit gate (E13 hardening). Runs after the policy gate, so a request denied by policy
-    # uses no rate budget. One attempt is consumed per deal event, for the organization and the
-    # acting user. A denial creates no executions and leaves the deal untouched.
-    actor_user_id = user_context.user.id if user_context is not None else None
-    rate = consume_or_deny(
+    # Shared execution gate (WS6 WP4). Reached only when there is an active rule to run, so a request with
+    # no rules attempts nothing and is not audited. A denial creates no executions and leaves the deal
+    # untouched, so manual CRM work continues when automation is off.
+    if user_context is None:
+        return []
+    decision = evaluate_execution(
         db,
-        organization_id=organization_id,
-        execution_type=AUTOMATION_DEAL_CREATED_EXECUTION,
-        actor_user_id=actor_user_id,
+        ExecutionRequest(
+            organization_id=organization_id,
+            capability_key=AUTOMATION_DEAL_CREATED_RULES,
+            user_context=user_context,
+        ),
     )
-    if not rate.allowed:
-        if rate.reason_code == REASON_RATE_LIMITED:
+    if not decision.allowed:
+        if decision.rate is not None and decision.rate.reason_code == REASON_RATE_LIMITED:
             _record_rate_limit_denial(
                 db,
                 organization_id=organization_id,
-                actor_user_id=actor_user_id,
+                actor_user_id=user_context.user.id,
                 deal=deal,
-                rate=rate,
+                rate=decision.rate,
             )
         return []
 

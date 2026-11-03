@@ -29,11 +29,15 @@ from app.db.models.provider_credential import ProviderCredential
 from app.db.session import SessionLocal
 from app.governance import org_entitlement
 from app.governance.ai_execution import (
-    AI_EXECUTION_EVENT_TYPE,
     AiExecutionDenied,
     require_ai_execution,
 )
 from app.governance.capabilities import AI_MASTER
+from app.governance.execution_gate import (
+    AI_EXECUTION_EVENT_TYPE,
+    GATE_ACTOR,
+    REASON_SYSTEM_ACTOR_NOT_PERMITTED,
+)
 from app.governance.policy import (
     REASON_ENTITLEMENT_DISABLED,
     REASON_EXECUTION_GATES_PENDING,
@@ -291,7 +295,9 @@ def test_background_execution_is_refused_and_audited(org, sibvo) -> None:
                                  user_context=None, correlation_id="corr-ws5")
         db.commit()
 
-    assert denied.value.decision.reason_code == REASON_EXECUTION_GATES_PENDING
+    # WP4: a system actor is refused at the actor gate, before the policy's pending gate. Still denied and audited.
+    assert denied.value.decision.gate == GATE_ACTOR
+    assert denied.value.decision.reason_code == REASON_SYSTEM_ACTOR_NOT_PERMITTED
     with SessionLocal() as db:
         audit = db.scalars(select(AuditEvent).where(
             AuditEvent.organization_id == org_id,
@@ -299,7 +305,9 @@ def test_background_execution_is_refused_and_audited(org, sibvo) -> None:
         )).all()
     assert len(audit) == 1
     assert audit[0].decision == "denied"
-    assert json.loads(audit[0].event_metadata) == {"reason_code": REASON_EXECUTION_GATES_PENDING}
+    metadata = json.loads(audit[0].event_metadata)
+    assert metadata["reason_code"] == REASON_SYSTEM_ACTOR_NOT_PERMITTED
+    assert metadata["gate"] == GATE_ACTOR
 
 
 def test_audit_metadata_carries_no_plan_or_secret_data(org, sibvo) -> None:
