@@ -224,6 +224,47 @@ def test_owner_seat_in_sibvo_is_reported_as_a_conflict(monkeypatch):
     assert member_state(data["membership_id"]) == (True, 0)
 
 
+def test_a_key_conflict_in_sibvo_is_reported_and_changes_nothing(monkeypatch):
+    data = seed_linked_member()
+    client = TestClient(build_app(attested_admin(data["admin_id"], data["sibvo_org"])))
+    stub_release(
+        monkeypatch,
+        error=SibvoRequestDenied(409, "idempotency_key_conflict"),
+    )
+
+    response = client.post(
+        f"{BASE_URL}/members/{data['membership_id']}/remove",
+        json={"reason": "Left the team"},
+        headers={"X-Organization-ID": str(data["organization_id"])},
+    )
+
+    assert response.status_code == 409
+    assert "earlier SIBVO release request" in response.json()["detail"]
+    assert member_state(data["membership_id"]) == (True, 0)
+
+
+def test_the_release_key_is_stable_per_membership_and_scoped_to_this_organization(monkeypatch):
+    first = seed_linked_member()
+    second = seed_linked_member()
+    client = TestClient(build_app(attested_admin(first["admin_id"], first["sibvo_org"])))
+    calls = stub_release(
+        monkeypatch,
+        result=SibvoSeatRelease(released=True, already_released=False, reason="released"),
+    )
+
+    response = client.post(
+        f"{BASE_URL}/members/{first['membership_id']}/remove",
+        json={"reason": "Left the team"},
+        headers={"X-Organization-ID": str(first["organization_id"])},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls[0]["idempotency_key"] == f"team-removal-{first['membership_id']}"
+    # Tenant isolation: the release is sent for this organization's SIBVO link, never another's.
+    assert calls[0]["organization_id"] == first["sibvo_org"]
+    assert calls[0]["organization_id"] != second["sibvo_org"]
+
+
 def test_retry_after_an_unconfirmed_attempt_completes_once(monkeypatch):
     data = seed_linked_member()
     client = TestClient(build_app(attested_admin(data["admin_id"], data["sibvo_org"])))

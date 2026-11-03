@@ -180,7 +180,7 @@ def test_diagnostic_reports_circuit_state_to_a_local_client(diagnostics_client) 
     assert not any(secret in response.text for secret in ("secret", "token", "password"))
 
 
-def test_release_is_a_single_attempt_so_a_mutation_is_never_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_release_is_retried_with_its_key_because_sibvo_enforces_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
     fresh, _ = make(threshold=50)
     monkeypatch.setattr(sibvo_client, "breaker", fresh)
     calls: list[int] = []
@@ -212,4 +212,5 @@ def test_release_is_a_single_attempt_so_a_mutation_is_never_retried(monkeypatch:
             reason="retry safety",
             idempotency_key="circuit-test-0001",
         )
-    assert calls == [1]
+    # Bounded retry: SIBVO enforces the key (WP-A1), so a repeat cannot release a second seat.
+    assert calls == [1, 1]
