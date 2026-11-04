@@ -122,6 +122,10 @@ class DealStageHistoryResponse(BaseModel):
     created_at: datetime
 
 
+class DealStageHistoryListResponse(BaseModel):
+    items: list[DealStageHistoryResponse]
+
+
 class DealResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

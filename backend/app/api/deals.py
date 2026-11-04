@@ -22,14 +22,19 @@ from app.deals.schemas import (
     DealListResponse,
     DealResponse,
     DealStage,
+    DealStageHistoryListResponse,
+    DealStageHistoryResponse,
     DealStageTransitionRequest,
     DealUpdateRequest,
 )
 from app.deals.service import (
     CLOSED_STAGES,
     DealClosedError,
+    DealClosureValidationError,
+    PropertyUnavailableError,
     create_deal,
     get_deal,
+    list_deal_stage_history,
     list_deals,
     transition_deal_stage,
     update_deal,
@@ -119,6 +124,12 @@ def create_deal_endpoint(
         db.refresh(deal)
         return DealResponse.model_validate(deal)
 
+    except PropertyUnavailableError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
@@ -190,6 +201,30 @@ def get_deal_endpoint(
         )
 
     return DealResponse.model_validate(deal)
+
+
+@router.get("/{deal_id}/stage-history", response_model=DealStageHistoryListResponse)
+def list_deal_stage_history_endpoint(
+    deal_id: UUID,
+    tenant_context: TenantContext = Depends(
+        require_permission("deals.read")
+    ),
+    db: Session = Depends(get_db_session),
+) -> DealStageHistoryListResponse:
+    """List the stage changes of a deal, oldest first. Only deals of the verified organization are visible."""
+    rows = list_deal_stage_history(
+        db,
+        organization_id=tenant_context.organization_id,
+        deal_id=deal_id,
+    )
+    if rows is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deal not found.",
+        )
+    return DealStageHistoryListResponse(
+        items=[DealStageHistoryResponse.model_validate(row) for row in rows],
+    )
 
 
 @router.patch(
@@ -315,6 +350,12 @@ def transition_deal_stage_endpoint(
         db.refresh(deal)
         return DealResponse.model_validate(deal)
 
+    except DealClosureValidationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(

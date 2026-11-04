@@ -139,11 +139,14 @@ def create_property(
     *,
     organization: Organization,
 ) -> Property:
+    # An explicitly available property with a known transaction type, which deal creation and closure require.
     property_record = Property(
         organization_id=organization.id,
         city="Chennai",
         state="Tamil Nadu",
         property_type="APARTMENT",
+        status=Property.STATUS_AVAILABLE,
+        transaction_type=Property.TRANSACTION_TYPE_SALE,
     )
     db.add(property_record)
     db.flush()
