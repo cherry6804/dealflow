@@ -456,3 +456,46 @@ Not done, and why this story stays open:
 - Production AI execution stays closed: the AI actor key, the AI resource store and an approved AI rate rule are open
   (see `e06-ai-execution-decision-proposal.md`).
 - DFR1-016 (knowledge ingestion) has not started.
+
+## 20. DFR1-015 resume record (not ready to merge)
+
+Status: **NOT READY TO MERGE.** Code complete for the parts that need no external input. Story stays open.
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. Commits: `17ce46a` (gateway core), `0d37fb0` (fallback and outcome audit).
+Base: `origin/develop` at `6eab89a`. No PR exists yet. Merge: not authorized.
+
+Exact items that prevent completion (external, not code):
+
+1. Product approval, AI actor key: `governance.ai.execute` (or a named alternative), grants, and owner-only status. Source:
+   `docs/architecture/e13-ai-actor-permission-proposal.md`, section 10.
+2. Product approval, AI rate rule values (requests per user, per organization, concurrency). Currently refused by design
+   (`rate_limit_not_configured`). Source: `docs/architecture/e06-ai-execution-decision-proposal.md`, section 3.
+3. AI resource store and publish state (DFR1-019). Without it the resource gate refuses every AI call. This is a dependency on
+   another story, not an approval.
+4. Provider data-use approval for OpenAI (E01 matrix, row 5). Blocks any call that carries customer data.
+5. Sandbox credential and a sandbox organization with a spend cap, then one recorded successful live verification, and
+   `PROVIDER_LIVE_ADAPTERS_ENABLED=true` in that sandbox only.
+6. First speech and multimodal provider choice, if those acceptance items stay in DFR1-015 (otherwise they move to a later story).
+
+Code-level items that remain: none for DFR1-015 beyond the above, provided the approvals are granted as proposed.
+When item 1 is granted, the code change is: add the key to the catalogue (migration to backfill existing roles), point
+`DEFAULT_AI_PERMISSION` at it, and remove the test seam `allow_actor_execution_permission` from the gateway tests only where the
+production path is tested.
+
+Resume checklist (next session):
+
+1. `git switch feature/DFR1-E06-ai-gateway-core` and confirm `0d37fb0` (or the newer commit recorded here).
+2. Confirm the decisions above in writing before changing any gate or configuration.
+3. Commands (from `backend/`, with the disposable server on port 5438 running, never port 5433):
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head` (then `downgrade -1`, `upgrade head`)
+   - `.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py`
+   - `cd frontend && npm run build && npm run lint && npx vitest run`
+4. Reusable components: `app/ai_gateway/` (service, routing, adapters, structured, contracts, tasks), the execution gate,
+   the usage ledger, `app/provider_secrets` (credential resolution), the independent audit writer, `tests/governance_helpers.py`
+   seams.
+5. Recovery note: if the disposable PostgreSQL on port 5438 is not running, restart it from its own data directory
+   (`C:/Users/amoun/AppData/Local/Temp/e13-pg-5438`) with `pg_ctl`. Do not use port 5433.
+6. Open PR text: `C:/Users/amoun/AppData/Local/Temp/` (regenerate from section 19 if missing). The PR must say "not ready to
+   merge" until items 1 to 5 are resolved.
