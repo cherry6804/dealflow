@@ -621,7 +621,174 @@ External approvals and dependencies still open (the code-level criteria are comp
 4. Production AI execution: the AI actor key, the AI resource store (DFR1-019), an approved AI rate rule, provider data-use
    approval, and a sandbox credential with a recorded verification. Until these exist, every embedding is refused by the gate.
 5. Document upload has no archive or delete endpoint of its own. Deletion runs through the privacy executor. Archive
-   status changes, if added later, must also call `remove_document_chunks`.
+   status changes, if added later, must also call `remove_document_chunks` and `remove_document_review`.
 
-Pull request: not created. The code-level work is complete except items 1 and 5, which need decisions. Creating the PR and
-merging it both wait for your instruction.
+## 23. DFR1-035 document and multimodal extraction MVP (E10)
+
+Branch: `feature/DFR1-E10-document-extraction-mvp`, cut from `origin/develop` at `eb21536` (DFR1-016 merged as PR #155).
+Dependencies DFR1-015 and DFR1-016 are on `develop`.
+
+Routes, chosen by what the stored file is. Every route runs under the same tenant, permission, eligibility and deletion rules.
+
+| Stored file | Route | Provider call | Stored when |
+|---|---|---|---|
+| PDF with a text layer | Labelled values copied from the text layer | None | Any page yields text |
+| Scanned PDF: no text, every page a JPEG drawn on the page, up to 5 pages | OCR adapter, page by page, then the same labelled-value rules on the transcript | One gateway multimodal call per page | Every page transcribed by the gateway |
+| PNG or JPEG, including floor plans | Gateway multimodal task with a structured output | One gateway call | The reply matches the schema |
+
+Built:
+
+- **Gateway** (`app/ai_gateway`): `TaskType.MULTIMODAL` is implemented. An `ImageInput` carries the bytes; its repr excludes them.
+  The gateway accepts one PNG or JPEG per request, at most 8 MB, whose bytes match the stated type. It requires a structured
+  output schema and an input estimate. Budget units reserved per call: output tokens, estimated input tokens and images. The
+  OpenAI adapter sends the image inline as a data URL and reports the image count, so the images reservation settles.
+  Nothing else changed in the gateway's existing text and embedding paths.
+- **Execution controls, unchanged and applied to every call:** entitlement and switches, provider readiness, actor permission,
+  rate, budget, route selection, credential resolution, timeout, bounded retries, and audit. An organization with no
+  `images` budget is refused with `budget_not_configured` before any provider call.
+- **OCR adapter** (`app/multimodal/ocr.py`): `OcrAdapter` is the provider-independent interface. `GatewayOcrAdapter` is the
+  only implementation, so no OCR engine is built and no text is produced unless the gateway answers.
+- **Scanned-page extraction** (`app/knowledge/extraction.py`, `extract_embedded_jpeg_pages`): reads each page's own image
+  resource and checks the JPEG signature. No rasteriser, no Pillow. Pages drawn any other way are refused with
+  `scanned_page_unavailable`. More than five pages are refused with `ocr_page_limit_exceeded`.
+- **Review** (`app/multimodal/review.py`): fields come from a fixed allowlist of keys. Model output is dropped unless every
+  part is present, the key is allowlisted, and the confidence level is one of high, medium or low. The model's evidence is
+  kept as a quote. Summaries from the model are stored as text and never change permissions.
+- **Traceability:** each field carries its page number, its evidence, its `evidence_basis` (`text_layer`, `ocr_transcript`, or
+  `model_quote`), its confidence (`verbatim_text_layer`, `ocr_transcription`, or `model_reported_<level>`), and the method,
+  provider and model. The response carries `untrusted_data: true` and a disclaimer.
+- **Storage** (`app/db/models/document_review.py`, migration `c1a5e7d9f3b4`, not yet on develop): one review per document,
+  now with `method`, `provider_key` and `model`. Re-review replaces the row under the document row lock. Refusals store nothing.
+- **Reuse:** `documents.read`, the classification rule (`PUBLIC` and `INTERNAL` only, a proposal), the document lifecycle,
+  privacy deletion (`remove_document_review`, called before the document row), the table inventory, and the gateway's audit
+  and usage records.
+
+Refusals, with the reason returned and nothing stored:
+
+| Condition | Reason | Provider call |
+|---|---|---|
+| No route for the multimodal task | `no_route_configured` | None |
+| No `images` budget | `budget_not_configured` | None |
+| Bytes do not match the stated type, or over 8 MB | `invalid_request` | None |
+| Two provider failures (5xx or 429) | `failed` with `provider_unavailable` | Two |
+| Reply does not match the schema | `failed` with `invalid_structured_output` | One |
+| Scanned page is not a directly drawn JPEG | `scanned_page_unavailable` | None |
+| More than five scanned pages | `ocr_page_limit_exceeded` | None |
+| A page's OCR fails after earlier pages worked | `failed` with `provider_unavailable`; no partial text stored | Earlier pages and the failed page |
+| `CONFIDENTIAL`, `RESTRICTED` | `classification_not_eligible` | None |
+| Another organization | `document_unavailable` | None |
+| Encrypted, malformed, text formats, legacy formats | `encrypted_document`, `content_unreadable`, `format_not_supported` | None |
+
+Acceptance criteria:
+
+| Criterion | Status |
+|---|---|
+| Process PDFs for text, metadata and structured fields | Met for PDFs with a text layer |
+| Process images and floor-plan images | Code-level complete through the gateway's vision-capable route, tested against a mock provider boundary. **Blocked in production** (see open items 1 and 2) |
+| Scanned-PDF detection and OCR through a provider-independent adapter | Detection and the adapter are complete and tested with a mock. **Blocked in production** by the same approvals. No other OCR path exists |
+| Structured information with source references, pages and confidence | Met. Model and OCR outputs are labelled with their basis and are not verified facts |
+| Image, floor-plan, scanned-PDF, malformed, unsupported, oversized and tenant-isolation validation | Met (tests listed below) |
+| Outputs traceable and treated as untrusted data | Met |
+| Reuse of lifecycle, deletion, audit and usage controls | Met |
+| Upload is scanned | **Not met.** No malware scanner exists in this repository. Upload validates file signatures only |
+
+Tests:
+
+- `tests/test_document_vision_ocr.py` (15 tests): floor-plan review through the vision route with quoted evidence and the
+  image's exact bytes sent; allowlist and completeness filtering, with injected summary text as data; schema mismatch refused;
+  provider outage stores nothing; no images budget sends nothing; mismatched and oversized image bytes never sent; another
+  organization cannot send an image; scanned-PDF transcription page by page with page numbers kept; OCR page limit; a failed
+  page stores nothing; non-JPEG scanned page refused; JPEG page order and repr; extractor refusals; gateway refusal without a
+  route.
+- `tests/test_document_review.py` (16 tests): PDF text-layer values, summaries and metadata, get after post, re-review,
+  scanned PDF without a JPEG page refused, images without a route refused, text formats, confidential and restricted,
+  encrypted and page-limit PDFs, invalid PDF refused at upload, documents.read on both routes, tenant isolation, hostile
+  text stays data, deletion removes the review.
+
+Verification (final code on `feature/DFR1-E10-document-extraction-mvp`):
+
+- Focused, `tests/test_document_vision_ocr.py` and `tests/test_document_review.py`: 31 passed.
+- Full backend suite: 2,287 passed, 14 skipped, 1 failed (exit 1, 378 s). The failure is `tests/test_provider_health.py::test_concurrent_sweeps_record_each_episode_once`, a real-thread race test on the provider health sweep. This branch does not change `app/providers/`. The same test failed in 2 of 4 isolated reruns and passed in 2, so it is intermittent. It is recorded as a known flaky test, not fixed here.
+- Migrations on a freshly created `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0;
+  re-upgrade exit 0; single head `c1a5e7d9f3b4`.
+- Ruff: clean on every new and changed backend file, including the test files.
+- Security: `pip-audit` on the exported locked dependency set: "No known vulnerabilities found", exit 0. No new dependency.
+- Frontend (no frontend file changed): `npm run build` exit 0 (includes the TypeScript build); `npm run lint` exit 0;
+  `npx vitest run` exit 0, 123 tests.
+
+Open items (external approvals or provider work; each one blocks a criterion named above, and none is marked done):
+
+1. Image and floor-plan review in production: the AI actor key for `ai.document_processing`, the AI resource store (DFR1-019),
+   an approved AI rate rule, provider data-use approval, a sandbox credential with a recorded verification, a vision-capable
+   model routed for the multimodal task, and an `images` budget per organization. Until these exist, the gate refuses every call.
+2. Scanned-PDF OCR in production: the same approvals as item 1, since OCR runs through the same gateway task.
+3. Upload malware scanning: no scanner is in this repository.
+4. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
+5. Mixed PDFs (some pages with text, some scanned) are read from the text layer only. Scanned pages are routed to OCR only
+   when the whole document has no text.
+6. No review UI. The API is the only surface.
+
+## 24. DFR1-035 completion pass: malware scanning and a provider-health concurrency defect
+
+Branch: `feature/DFR1-E10-document-extraction-mvp`, continuing from `21a3237`.
+
+### Concurrency defect (pre-existing on develop, not caused by DFR1-035)
+
+- Test: `tests/test_provider_health.py::test_concurrent_sweeps_record_each_episode_once`. Reproduced at 1 failure in 8 isolated
+  runs before the fix. A temporary probe showed the per-sweep counts as `[1,1,1,1]`, `[0,1,1,1]`, `[1,1,0,1]` and similar, with
+  one audit row in every run.
+- Root cause: `_record_stale` checked whether an episode was recorded, then inserted it. When two sweeps raced, the loser's
+  insert hit the idempotency key. `persist_independent_audit_event` then returned the stored row, and `_record_stale` treated
+  that as a successful write. Every racing sweep therefore counted an episode it did not record, so the reported count was
+  wrong. The stored data was correct: one row, guarded by the unique partial index.
+- The test's expectation `all(count == 1)` codified that over-count. It is corrected to `sorted(results) == [0, 0, 0, 1]`: exactly
+  one sweep writes the episode and the others count nothing. The correction is to the expectation, and the defect is fixed in
+  the code.
+- Fix: `persist_idempotent_audit_event` (in `app/audit/independent.py`) returns True only when the call wrote the row. The
+  internal writer is shared, so the audit trail's behaviour is unchanged. `_record_stale` uses it.
+- Regression: `test_a_sweep_that_loses_the_insert_race_counts_nothing` forces the race deterministically and asserts the count
+  is zero. The concurrency test passed 40 of 40 isolated repetitions after the fix. `tests/test_provider_health.py` passed 15 of
+  15 repeated runs.
+- Develop: `app/providers/` and `app/audit/` are unchanged on this branch compared with `origin/develop`, so the defect is present
+  on develop. A separate fix is not needed beyond this change.
+
+### Upload malware scanning (new)
+
+- Scanner interface: `app/malware_scanning/base.py` (`MalwareScanner`, `ScanStatus`, `ScanResult`). Only `clean` lets a file be
+  stored. `infected`, `too_large`, `unavailable` and `error` each refuse the upload.
+- ClamAV integration: `app/malware_scanning/clamav.py` speaks the clamd INSTREAM protocol with the standard library. No new
+  dependency. Replies are parsed strictly: anything that is not `stream: OK`, `stream: <name> FOUND`, or a size-limit
+  error is an error, never clean.
+- Configuration: `CLAMAV_HOST` (empty means no scanner, and every upload is refused), `CLAMAV_PORT`, `CLAMAV_TIMEOUT_SECONDS`.
+  A clamd daemon must run as its own service in each environment. The repository does not provide one, so production scanning
+  needs that deployment.
+- Order in the upload path: the size limit, then the signature check, then the scan, then storage. A file the signature check
+  rejects never reaches the scanner. The scan runs on the staged bytes before anything is stored.
+- Outcomes: infected returns 422 and stores nothing. The scanner's size limit returns 413. Unavailable, timed out, unreachable,
+  unanswered or a malformed reply returns 503 and stores nothing. A failure to write the scan audit record also returns 503.
+- Recording: every verdict is written to the independent audit trail (`document.malware_scan`) with its decision, status,
+  engine, detail, size and, for infected files, the finding name. Documents store `scan_status`, `scan_engine` and `scanned_at`.
+- Eligibility: AI ingestion and document review refuse any document whose `scan_status` is not `clean`, with
+  `not_malware_scanned`. Retrieval also filters on `clean`. Documents created before this migration are `not_scanned` and are
+  not eligible until a scan is recorded for them; no rescan job is built.
+- Migration: `d2b6f8a1c4e7` adds the three document columns (downgrade removes them).
+- Tests: `tests/test_malware_scanning.py` (14 tests) covers clean, large-file full scan, infected, unreachable, not configured,
+  silent scanner, malformed reply, scanner size limit, malformed file before scanning, oversized file before scanning,
+  unscanned documents refused for ingestion and review, clean documents past the gate, reply parsing, and that only clean
+  documents are stored. Tests use `tests/clamd_fake.py`, a stand-in daemon that speaks the real protocol and reports the EICAR
+  test string as a finding. It is not a malware engine, and the test environment does not bypass the scan.
+
+### Verification
+
+- Full backend suite on the final code (`pytest -q`, log `dfr1035-r3.log`): exit code 0; 2,303 passed, 14 skipped, 0 failed (398 s).
+  The skips are the live SIBVO contract check, which is not configured here, and existing skips. The run was on the code as it
+  stands now; the only later edit was this evidence record, which no test reads.
+- Concurrency stability: `test_concurrent_sweeps_record_each_episode_once` passed 40 of 40 isolated runs. `test_provider_health.py` passed 16 of 16 in repeated runs.
+- Migration chain, fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `d2b6f8a1c4e7`.
+- Ruff, on every file this story changed: clean for new code. Findings remaining in touched files (blind `except` in the upload path, an
+  import-order finding in `documents/service.py` and `models/document.py`, and a `datetime.UTC` finding) are present at HEAD on develop and were not introduced here.
+- Frontend (no frontend file changed): `npm run build` exit 0, which includes the TypeScript build; `npm run lint` exit 0; `npx vitest run` exit 0, 123 tests.
+- Security: `pip-audit` on the exported locked dependencies: "No known vulnerabilities found", exit 0. No dependency was added by this pass.
+- Upload paths: `upload_document` is the only path that creates a document row or stores an uploaded file. The privacy export archive is written by the
+  privacy executor, not from user input, so it is not a document upload. Every eligibility check that reads documents (`ingest_document`,
+  `retrieve`, `review_document`) requires `scan_status = clean`. Retrieval filters on it in the database query.

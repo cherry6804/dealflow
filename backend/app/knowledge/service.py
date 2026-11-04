@@ -61,6 +61,7 @@ REASON_UNCHANGED = "unchanged"
 REASON_PERMISSION_DENIED = "permission_denied"
 REASON_DOCUMENT_UNAVAILABLE = "document_unavailable"
 REASON_NOT_ELIGIBLE = "classification_not_eligible"
+REASON_NOT_SCANNED = "not_malware_scanned"
 REASON_UNSUPPORTED_CONTENT = "format_not_supported"
 REASON_TOO_LARGE = "content_too_large"
 REASON_NOT_TEXT = "content_not_utf8_text"
@@ -174,6 +175,8 @@ def ingest_document(
         return IngestResult(outcome="denied", reason_code=REASON_DOCUMENT_UNAVAILABLE)
     if document.access_classification not in ELIGIBLE_CLASSIFICATIONS:
         return IngestResult(outcome="denied", reason_code=REASON_NOT_ELIGIBLE)
+    if document.scan_status != Document.SCAN_CLEAN:
+        return IngestResult(outcome="denied", reason_code=REASON_NOT_SCANNED)
     if (document.content_type or "") not in SUPPORTED_TYPES:
         return IngestResult(outcome="denied", reason_code=REASON_UNSUPPORTED_CONTENT)
     if (document.file_size_bytes or 0) > MAX_DOCUMENT_BYTES:
@@ -282,6 +285,7 @@ def retrieve(
             KnowledgeChunk.organization_id == organization_id,
             Document.organization_id == organization_id,
             Document.status == Document.STATUS_AVAILABLE,
+            Document.scan_status == Document.SCAN_CLEAN,
             Document.access_classification.in_(sorted(ELIGIBLE_CLASSIFICATIONS)),
         )
     ).all()

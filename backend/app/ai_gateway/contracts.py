@@ -20,6 +20,12 @@ Outcome = Literal["succeeded", "denied", "failed"]
 MAX_INPUT_CHARACTERS = 32_000
 MAX_OUTPUT_TOKENS = 4_096
 MAX_EMBEDDING_INPUTS = 64
+# Images sent with one multimodal request. A page scan is one image, so this bounds the pages in one call.
+MAX_IMAGES_PER_REQUEST = 1
+MAX_IMAGE_BYTES = 8_000_000
+ALLOWED_IMAGE_TYPES: frozenset[str] = frozenset({"image/png", "image/jpeg"})
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 # Stable reason codes. Callers branch on these, never on message text.
 REASON_OK = "ok"
@@ -34,6 +40,23 @@ REASON_PROVIDER_REJECTED = "provider_rejected_credential"
 REASON_PROVIDER_RESPONSE = "unexpected_provider_response"
 REASON_INVALID_OUTPUT = "invalid_structured_output"
 REASON_USAGE_SETTLEMENT_FAILED = "usage_settlement_failed"
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """One image sent with a multimodal task. The bytes are never part of a repr, so they cannot reach a log by accident."""
+
+    mime_type: str
+    data: bytes = field(repr=False)
+
+
+def image_matches_type(mime_type: str, data: bytes) -> bool:
+    """True when the bytes start with the signature of the stated image type."""
+    if mime_type == "image/png":
+        return data.startswith(_PNG_SIGNATURE)
+    if mime_type == "image/jpeg":
+        return data.startswith(_JPEG_SIGNATURE)
+    return False
 
 
 @dataclass(frozen=True)
@@ -54,6 +77,7 @@ class GatewayRequest:
     input_token_estimate: int = 0
     output_schema: dict[str, str] | None = None
     resource_id: str | None = None
+    images: tuple[ImageInput, ...] = ()
 
 
 @dataclass(frozen=True)

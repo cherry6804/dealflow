@@ -187,7 +187,7 @@ def test_a_failed_audit_write_does_not_stop_the_sweep_for_other_organizations(ke
             _verify(organization.id)
             _make_stale(connection_id, _stale_at())
 
-        real_persist = health.persist_independent_audit_event
+        real_persist = health.persist_idempotent_audit_event
         calls: list[int] = []
 
         def fail_first(*args, **kwargs):
@@ -196,7 +196,7 @@ def test_a_failed_audit_write_does_not_stop_the_sweep_for_other_organizations(ke
                 raise AuditPersistenceError("The audit record could not be written.")
             return real_persist(*args, **kwargs)
 
-        monkeypatch.setattr(health, "persist_independent_audit_event", fail_first)
+        monkeypatch.setattr(health, "persist_idempotent_audit_event", fail_first)
         # Both episodes are attempted. The first write fails, so only the second is recorded.
         assert _sweep() == 1
         assert len(calls) == 2
@@ -323,7 +323,9 @@ def test_concurrent_sweeps_record_each_episode_once(org, monkeypatch) -> None:
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: sweep_together(), range(4)))
 
-    assert all(count == 1 for count in results)
+    # Exactly one sweep wrote the episode. Each other sweep either saw it already recorded or lost the insert race and
+    # counted nothing, so the sweeps together record one episode.
+    assert sorted(results) == [0, 0, 0, 1]
     assert len(_stale_rows(organization_id)) == 1
 
 
@@ -430,3 +432,20 @@ def test_a_backlog_larger_than_the_sweep_limit_is_worked_through_over_sweeps(key
         for _user, organization in organizations:
             _cleanup(organization.id)
 
+
+
+def test_a_sweep_that_loses_the_insert_race_counts_nothing(org, monkeypatch) -> None:
+    """Deterministic version of the race: the episode looks unrecorded when the sweep checks, but the insert conflicts.
+
+    The sweep must count zero for an episode it did not write.
+    """
+    organization_id, user_id = org
+    _use_adapter(monkeypatch, StubAdapter(_result(VerificationOutcome.SUCCEEDED)))
+    connection_id = _connect(organization_id, user_id)
+    _verify(organization_id)
+    _make_stale(connection_id, _stale_at())
+    assert _sweep() == 1
+
+    monkeypatch.setattr(health, "_already_recorded", lambda db, connection, verified_at: False)
+    assert _sweep() == 0
+    assert len(_stale_rows(organization_id)) == 1

@@ -142,6 +142,8 @@ def _document(organization_id, user_id, *, name="Handbook", content_type="text/p
             storage_key=f"{organization_id}/{document_id.hex}/{name}.txt",
             access_classification=classification,
             status=status,
+            # Documents reach the database only after a CLEAN scan verdict (see tests/test_malware_scanning.py).
+            scan_status=Document.SCAN_CLEAN,
             uploaded_by_user_id=user_id,
             created_by_user_id=user_id,
         ))

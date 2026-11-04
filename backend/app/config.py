@@ -222,6 +222,12 @@ class Settings(BaseSettings):
     object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
 
+    # Malware scanning of uploads through a ClamAV daemon (clamd, INSTREAM over TCP). An empty host means no scanner is
+    # configured, and every upload is then refused. Uploads never bypass the scan.
+    clamav_host: str = ""
+    clamav_port: int = Field(default=3310, gt=0, le=65535)
+    clamav_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+
     # AI usage reservations (DFR1-017). A reservation not settled within this time is released by
     # the cleanup job. The value is operational, not a retention period.
     usage_reservation_ttl_seconds: int = Field(default=900, ge=60, le=86400)

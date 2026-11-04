@@ -31,7 +31,10 @@ from app.ai_gateway.adapters import (
     adapter_for,
 )
 from app.ai_gateway.contracts import (
+    ALLOWED_IMAGE_TYPES,
     MAX_EMBEDDING_INPUTS,
+    MAX_IMAGE_BYTES,
+    MAX_IMAGES_PER_REQUEST,
     MAX_INPUT_CHARACTERS,
     MAX_OUTPUT_TOKENS,
     REASON_CREDENTIAL_UNAVAILABLE,
@@ -43,6 +46,7 @@ from app.ai_gateway.contracts import (
     REASON_USAGE_SETTLEMENT_FAILED,
     GatewayRequest,
     TaskResult,
+    image_matches_type,
 )
 from app.ai_gateway.routing import Route, resolve_route
 from app.ai_gateway.structured import parse_structured, validate_schema
@@ -215,7 +219,7 @@ def _final_result(
     if call.outcome is not CallOutcome.SUCCEEDED:
         return _failed(call.reason_code or REASON_INVALID_OUTPUT, route=None, attempts=attempts,
                        usage=call.usage, provider_key=provider_key, model=model)
-    if request.task is TaskType.TEXT and request.output_schema is not None:
+    if request.task in (TaskType.TEXT, TaskType.MULTIMODAL) and request.output_schema is not None:
         structured = parse_structured(call.text or "", request.output_schema)
         if structured is None:
             return _failed(REASON_INVALID_OUTPUT, route=None, attempts=attempts, usage=call.usage,
@@ -311,11 +315,15 @@ def _validate(request: GatewayRequest) -> str | None:
             return "The output token limit is out of range."
         if request.input_token_estimate < 0:
             return "The input token estimate must not be negative."
+        if request.images:
+            return "A text task takes no images."
         if request.output_schema is not None:
             return validate_schema(request.output_schema)
         return None
+    if request.task is TaskType.MULTIMODAL:
+        return _validate_multimodal(request)
     if request.task is TaskType.EMBEDDING:
-        if request.text is not None or request.output_schema is not None:
+        if request.text is not None or request.output_schema is not None or request.images:
             return "An embedding task takes inputs only."
         if not 1 <= len(request.texts) <= MAX_EMBEDDING_INPUTS:
             return "An embedding task needs between one and the maximum number of inputs."
@@ -327,11 +335,42 @@ def _validate(request: GatewayRequest) -> str | None:
     return "This task type is not supported."
 
 
+def _validate_multimodal(request: GatewayRequest) -> str | None:
+    """A multimodal task is one prompt, one to the maximum number of images, and a structured output. Image bytes must
+    match the stated type, so a file cannot be sent to a provider under a type it does not have."""
+    if request.texts or request.text is None or not request.text.strip():
+        return "A multimodal task needs one non-empty prompt."
+    if len(request.text) > MAX_INPUT_CHARACTERS:
+        return "The prompt is longer than the gateway accepts."
+    if not 1 <= request.max_output_tokens <= MAX_OUTPUT_TOKENS:
+        return "The output token limit is out of range."
+    if request.input_token_estimate < 1:
+        return "A multimodal task must declare its input token estimate."
+    if request.output_schema is None:
+        return "A multimodal task needs a structured output schema."
+    problem = validate_schema(request.output_schema)
+    if problem is not None:
+        return problem
+    if not 1 <= len(request.images) <= MAX_IMAGES_PER_REQUEST:
+        return "A multimodal task needs between one and the maximum number of images."
+    for image in request.images:
+        if image.mime_type not in ALLOWED_IMAGE_TYPES:
+            return "Only PNG and JPEG images are accepted."
+        if not image.data or len(image.data) > MAX_IMAGE_BYTES:
+            return "Each image must be non-empty and within the size limit."
+        if not image_matches_type(image.mime_type, image.data):
+            return "An image's bytes do not match its stated type."
+    return None
+
+
 def _budget_units(request: GatewayRequest) -> tuple[tuple[str, int], ...]:
     """The reservations taken before the call. The provider's reported usage replaces them when it settles."""
     units: list[tuple[str, int]] = []
     if request.task is TaskType.TEXT:
         units.append(("tokens_output", request.max_output_tokens))
+    if request.task is TaskType.MULTIMODAL:
+        units.append(("tokens_output", request.max_output_tokens))
+        units.append(("images", len(request.images)))
     if request.input_token_estimate > 0:
         units.append(("tokens_input", request.input_token_estimate))
     return tuple(units)
@@ -360,6 +399,14 @@ def _invoke(adapter: GatewayAdapter, request: GatewayRequest, model: str, api_ke
         return adapter.run_text(
             model=model,
             prompt=request.text or "",
+            max_output_tokens=request.max_output_tokens,
+            api_key=api_key,
+        )
+    if request.task is TaskType.MULTIMODAL:
+        return adapter.run_multimodal(
+            model=model,
+            prompt=request.text or "",
+            images=request.images,
             max_output_tokens=request.max_output_tokens,
             api_key=api_key,
         )

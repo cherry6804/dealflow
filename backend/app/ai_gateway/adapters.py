@@ -10,6 +10,7 @@ provider.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -22,6 +23,7 @@ from app.ai_gateway.contracts import (
     REASON_PROVIDER_RESPONSE,
     REASON_PROVIDER_TIMEOUT,
     REASON_PROVIDER_UNAVAILABLE,
+    ImageInput,
 )
 from app.ai_gateway.tasks import TaskType
 
@@ -58,6 +60,10 @@ class GatewayAdapter(Protocol):
 
     def run_embedding(self, *, model: str, inputs: tuple[str, ...], api_key: str) -> ProviderCall: ...
 
+    def run_multimodal(
+        self, *, model: str, prompt: str, images: tuple[ImageInput, ...], max_output_tokens: int, api_key: str
+    ) -> ProviderCall: ...
+
 
 class OpenAIGatewayAdapter:
     provider_key = OPENAI_PROVIDER_KEY
@@ -77,7 +83,41 @@ class OpenAIGatewayAdapter:
         self._transport = transport
 
     def supports(self, task: TaskType) -> bool:
-        return task in (TaskType.TEXT, TaskType.EMBEDDING)
+        return task in (TaskType.TEXT, TaskType.EMBEDDING, TaskType.MULTIMODAL)
+
+    def run_multimodal(
+        self, *, model: str, prompt: str, images: tuple[ImageInput, ...], max_output_tokens: int, api_key: str
+    ) -> ProviderCall:
+        """One chat call with the prompt and each image as an inline data URL. The image count is reported as usage."""
+        content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+        for image in images:
+            encoded = base64.b64encode(image.data).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:{image.mime_type};base64,{encoded}"}})
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_output_tokens,
+        }
+        decoded = self._post("/chat/completions", body, api_key)
+        if isinstance(decoded, ProviderCall):
+            return decoded
+        try:
+            text = decoded["choices"][0]["message"]["content"]
+            usage = decoded["usage"]
+            if not isinstance(text, str):
+                raise TypeError("content is not text")
+            return ProviderCall(
+                outcome=CallOutcome.SUCCEEDED,
+                text=text,
+                usage={
+                    "tokens_input": _count(usage, "prompt_tokens"),
+                    "tokens_output": _count(usage, "completion_tokens"),
+                    "images": len(images),
+                },
+                adapter_version=self.adapter_version,
+            )
+        except (KeyError, IndexError, TypeError, ValueError):
+            return self._unusable()
 
     def run_text(self, *, model: str, prompt: str, max_output_tokens: int, api_key: str) -> ProviderCall:
         body = {

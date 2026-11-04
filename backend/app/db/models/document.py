@@ -87,6 +87,11 @@ class Document(Base):
         STATUS_DELETED,
     )
 
+    # Malware scan verdict recorded at upload. Only ``clean`` lets AI ingestion and document review read the file. Rows that
+    # predate scanning stay ``not_scanned`` and are not eligible until they are scanned.
+    SCAN_NOT_SCANNED = "not_scanned"
+    SCAN_CLEAN = "clean"
+
     # Primary identity and tenant ownership.
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
@@ -175,6 +180,15 @@ class Document(Base):
         default=STATUS_PENDING,
         server_default=text("'PENDING'"),
     )
+
+    scan_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=SCAN_NOT_SCANNED,
+        server_default=text("'not_scanned'"),
+    )
+    scan_engine: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Flexible labels and non-sensitive application metadata.
     tags: Mapped[list[str] | None] = mapped_column(
