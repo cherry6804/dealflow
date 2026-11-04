@@ -18,8 +18,8 @@ class TaskType(StrEnum):
     MULTIMODAL = "multimodal"
 
 
-# Units metered for each task type. Speech and multimodal are declared here so routing can name them, but no adapter
-# implements them yet, so the gateway refuses them with ``task_not_supported``.
+# Units metered for each task type. Speech is declared so routing can name it, but no adapter implements it, so the gateway
+# refuses it with ``task_not_supported``. Multimodal is served for images with a structured output (DFR1-035).
 TASK_UNITS: dict[TaskType, tuple[UsageUnit, ...]] = {
     TaskType.TEXT: (UsageUnit.TOKENS_INPUT, UsageUnit.TOKENS_OUTPUT),
     TaskType.EMBEDDING: (UsageUnit.TOKENS_INPUT,),
@@ -28,4 +28,4 @@ TASK_UNITS: dict[TaskType, tuple[UsageUnit, ...]] = {
 }
 
 # Task types an adapter in this release can serve.
-IMPLEMENTED_TASKS: frozenset[TaskType] = frozenset({TaskType.TEXT, TaskType.EMBEDDING})
+IMPLEMENTED_TASKS: frozenset[TaskType] = frozenset({TaskType.TEXT, TaskType.EMBEDDING, TaskType.MULTIMODAL})

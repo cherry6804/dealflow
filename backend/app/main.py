@@ -18,6 +18,7 @@ from app.api.deal_commissions import router as deal_commissions_router
 from app.api.deal_negotiations import router as deal_negotiations_router
 from app.api.deals import router as deals_router
 from app.api.diagnostics import router as diagnostics_router
+from app.api.document_review import router as document_review_router
 from app.api.documents import router as documents_router
 from app.api.follow_ups import router as follow_ups_router
 from app.api.governance import canonical_router as ai_governance_router
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
     application.include_router(billing_audit_router)
     application.include_router(ai_gateway_router)
     application.include_router(knowledge_router)
+    application.include_router(document_review_router)
     application.include_router(team_router)
     application.include_router(ai_governance_router)
     application.include_router(governance_router)
