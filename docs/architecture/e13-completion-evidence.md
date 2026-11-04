@@ -536,7 +536,7 @@ Verification:
   and too many chunks, failed embedding leaving prior chunks untouched, production refusal, ranking with citations, exclusion of
   archived, restricted and foreign documents, permission refusal for retrieval, invalid queries, data-only handling of hostile
   text, chunk removal, and metering through the gateway.
-- Full backend suite on the final code: exit code 0; 2,227 passed, 14 skipped, 0 failed (595 s), fresh `dealflow_test` on port 5438.
+- Full backend suite (DFR1-016 first commit): exit code 0; 2,227 passed, 14 skipped, 0 failed (595 s).
 - Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0;
   single head `b9e4f2a7c1d3`.
 - Ruff: the new and changed files pass. `app/db/models/__init__.py` keeps four findings that exist on `develop` (an unsorted
@@ -563,3 +563,60 @@ Pending work reported in Phase 1 of this story (nothing discarded, nothing merge
 - `docs/E13-post-merge-audit`: two commits, no PR (documentation).
 - `docs/E13-post-merge-verification-2`: two commits, no PR (documentation).
 - `main` is four commits ahead of `develop` (revert and CI commits). Not touched.
+
+## 22. DFR1-016 completion pass: HTTP APIs, upload lifecycle, extraction, deletion, and untrusted content
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`. Builds on the first commit `57e9e2a`.
+
+Built in this pass (reusing the existing gateway, document service, outbox, privacy executor and tenant/permission stack):
+
+- **HTTP APIs** (`app/api/knowledge.py`): `POST /api/v1/knowledge/documents/{id}/ingest` (repeat-safe) and
+  `GET /api/v1/knowledge/search` (query 1 to 200,000 characters, top 1 to 10). Both require `documents.read` in the verified
+  organization and the current user. Search hits carry `untrusted_data: true`.
+- **Upload lifecycle:** the upload commit also enqueues `knowledge.ingest_requested` in the same transaction
+  (`app/documents/service.py`). The outbox handler (`app/knowledge/handlers.py`) runs in both worker entry points. A transient
+  provider failure raises and is retried by the outbox. A refusal (AI off, ineligible document) is recorded and not retried.
+- **Extraction** (`app/knowledge/extraction.py`): plain text, Markdown and CSV (strict UTF-8); XLSX through openpyxl, which the
+  project already declares; DOCX through the standard library (ZIP and `word/document.xml` only). Limits: 10 MB XML, 500 ZIP
+  members, 20 MB uncompressed, 10 sheets, 5,000 rows, 50 columns, 200,000 characters. DOCTYPE and ENTITY declarations are refused.
+  PDF and legacy or presentation formats are refused with `format_not_supported`.
+- **Deletion:** the privacy document executor (`app/governance/privacy_execution.py`) removes a document's chunks before the
+  document row. Without this, the RESTRICT foreign key would have made every ingested document undeletable (a defect found
+  here and fixed).
+- **Concurrency:** ingestion locks the document row, so concurrent requests for one document serialize.
+- **Gateway fix** (from the first commit): each gateway call has its own budget-reservation key.
+
+Requirement mapping:
+
+| Requirement | Status |
+|---|---|
+| Authenticated, tenant-scoped APIs | Met (tests: 403 without `documents.read`, cross-tenant search returns nothing, cross-tenant ingest returns `document_unavailable`) |
+| Upload lifecycle integration | Met (event in the upload transaction; handler indexes the stored file; tests use real local storage) |
+| Safe extraction for supported formats | Met for TXT, MD, CSV, XLSX, DOCX. **PDF not supported** (needs an approved parser dependency) |
+| Prompt injection and untrusted retrieved content | Met as data handling (hostile text returned verbatim in `untrusted_data`, response shape fixed, no permission change). A model-level evaluation needs a reachable model |
+| Retrieval with available infrastructure | Met (application-side cosine over org-scoped rows; no extension required) |
+| Deletion, reprocessing, duplicate ingestion, authorization, tenant isolation, failure recovery | Met (tests in `tests/test_knowledge_lifecycle.py` and `tests/test_knowledge.py`) |
+| Gate, usage ledger, budget and audit for every embedding | Met through the gateway (each embedding is gated, metered and audited) |
+
+Verification (final code, `feature/DFR1-E06-knowledge-ingestion`):
+
+- Focused: `tests/test_knowledge.py`, `tests/test_knowledge_lifecycle.py`, `tests/test_ai_gateway.py`: 107 passed.
+- Full backend suite, fresh `dealflow_test` on port 5438: exit code 0; 2,248 passed, 14 skipped, 0 failed (516 s).
+- Migration, fresh `dealflow` on port 5438: upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head
+  `b9e4f2a7c1d3`.
+- Ruff: clean on the new and changed files. Pre-existing findings are unchanged and not introduced here: four in
+  `app/db/models/__init__.py`, and one blind `except` in `app/documents/service.py` (present on `develop`).
+- Frontend: build exit 0; lint exit 0 (two existing warnings); `vitest run` exit 0 with 123 tests. No frontend file changed.
+
+External approvals and dependencies still open (the code-level criteria are complete except where they need these):
+
+1. PDF extraction: approval of a PDF parser dependency (for example `pypdf`) and its licence and security review.
+2. `vector` extension: not needed for the current implementation. Only a later index optimization would need it.
+3. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
+4. Production AI execution: the AI actor key, the AI resource store (DFR1-019), an approved AI rate rule, provider data-use
+   approval, and a sandbox credential with a recorded verification. Until these exist, every embedding is refused by the gate.
+5. Document upload has no archive or delete endpoint of its own. Deletion runs through the privacy executor. Archive
+   status changes, if added later, must also call `remove_document_chunks`.
+
+Pull request: not created. The code-level work is complete except items 1 and 5, which need decisions. Creating the PR and
+merging it both wait for your instruction.

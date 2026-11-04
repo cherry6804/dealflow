@@ -43,11 +43,11 @@ from app.documents.service import (
     open_document_for_download,
 )
 from app.governance.execution_gate import actor_permission_granted
+from app.knowledge.extraction import SUPPORTED_TYPES, ExtractionError, extract_text
 
 # Classifications eligible for AI ingestion. PROPOSAL: confidential and restricted documents are excluded until product
 # approves otherwise. This is a product decision, recorded in the evidence document, not a settled rule.
 ELIGIBLE_CLASSIFICATIONS: frozenset[str] = frozenset({Document.CLASSIFICATION_PUBLIC, Document.CLASSIFICATION_INTERNAL})
-TEXT_CONTENT_TYPES: frozenset[str] = frozenset({"text/plain", "text/markdown", "text/csv"})
 
 CHUNK_CHARACTERS = 1_000
 CHUNK_OVERLAP = 100
@@ -61,7 +61,7 @@ REASON_UNCHANGED = "unchanged"
 REASON_PERMISSION_DENIED = "permission_denied"
 REASON_DOCUMENT_UNAVAILABLE = "document_unavailable"
 REASON_NOT_ELIGIBLE = "classification_not_eligible"
-REASON_UNSUPPORTED_CONTENT = "unsupported_content"
+REASON_UNSUPPORTED_CONTENT = "format_not_supported"
 REASON_TOO_LARGE = "content_too_large"
 REASON_NOT_TEXT = "content_not_utf8_text"
 REASON_EMPTY = "content_empty"
@@ -164,16 +164,17 @@ def ingest_document(
                                        permission_key="documents.read"):
         return IngestResult(outcome="denied", reason_code=REASON_PERMISSION_DENIED)
 
+    # The row lock serializes concurrent ingestion of one document, so two requests cannot both write its chunks.
     document = db.scalar(select(Document).where(
         Document.id == document_id,
         Document.organization_id == organization_id,
         Document.status == Document.STATUS_AVAILABLE,
-    ))
+    ).with_for_update())
     if document is None:
         return IngestResult(outcome="denied", reason_code=REASON_DOCUMENT_UNAVAILABLE)
     if document.access_classification not in ELIGIBLE_CLASSIFICATIONS:
         return IngestResult(outcome="denied", reason_code=REASON_NOT_ELIGIBLE)
-    if (document.content_type or "") not in TEXT_CONTENT_TYPES:
+    if (document.content_type or "") not in SUPPORTED_TYPES:
         return IngestResult(outcome="denied", reason_code=REASON_UNSUPPORTED_CONTENT)
     if (document.file_size_bytes or 0) > MAX_DOCUMENT_BYTES:
         return IngestResult(outcome="denied", reason_code=REASON_TOO_LARGE)
@@ -189,9 +190,9 @@ def ingest_document(
     if len(raw) > MAX_DOCUMENT_BYTES:
         return IngestResult(outcome="denied", reason_code=REASON_TOO_LARGE)
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return IngestResult(outcome="denied", reason_code=REASON_NOT_TEXT)
+        text = extract_text(document.content_type or "", raw)
+    except ExtractionError as exc:
+        return IngestResult(outcome="denied", reason_code=exc.reason)
 
     pieces = chunk_text(text)
     if not pieces:
