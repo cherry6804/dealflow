@@ -792,3 +792,98 @@ Branch: `feature/DFR1-E10-document-extraction-mvp`, continuing from `21a3237`.
 - Upload paths: `upload_document` is the only path that creates a document row or stores an uploaded file. The privacy export archive is written by the
   privacy executor, not from user input, so it is not a document upload. Every eligibility check that reads documents (`ingest_document`,
   `retrieve`, `review_document`) requires `scan_status = clean`. Retrieval filters on it in the database query.
+
+
+## 25. DFR1-008 audit and close critical CRM vertical-slice gaps (E02)
+
+Branch: `feature/DFR1-E02-crm-vertical-slice`, cut from `origin/develop` at `a606a67` (DFR1-035 merged as PR #156).
+Baseline: `develop` fast-forwarded from `eb21536` to `a606a67`; no local-only commits; the working tree was clean; no migration was added
+(head `d2b6f8a1c4e7`). The Dealsflo repository had only the untracked `.claude/` directory; the SIBVO repository was clean on `develop`.
+
+### What already existed and was reused
+
+- Contacts, customer profiles, leads, customer requirements (with locations, property preferences, possession and parking, association,
+  shortlist and match runs), properties and inventory search, follow-ups, site visits, deals with stage history, deal commissions, lead
+  activities and requirement history. Their models, migrations, schemas, services, routers, tenant scoping and permission checks were reused
+  unchanged.
+- The matching service, which offers only properties whose status is explicitly `AVAILABLE`.
+- The deal stage-transition rules (NEW to QUALIFICATION to NEGOTIATION to BOOKING, then CLOSED_WON or CLOSED_LOST with a reason), and the
+  commission amount calculation.
+- The frontend CRM pages and service modules, which already call the backend paths that exist.
+
+### Journey verification (through the real API, with tenant and permission checks)
+
+Covered by `tests/test_crm_vertical_slice.py::test_the_real_estate_journey_runs_end_to_end`:
+
+1. Contact created. 2. Lead registered with a next action, then moved CONTACTED, QUALIFIED, MATCHING, VISIT. 3. Requirement captured
+(location and preference) and linked to the lead. 4. A real property matched the requirement. 5. A follow-up was scheduled, rescheduled and
+completed. 6. A site visit was scheduled and its attendance recorded. 7. Customer profile and deal created, progressed to BOOKING and closed as
+won with a reason. 8. A 2 percent commission on 9,500,000 INR was calculated to 190,000.00. 9. The won property became SOLD and left the matches.
+10. The deal's stage history is returned oldest first, and the lead's activity timeline and the requirement history are present.
+
+### Gaps found and why they mattered
+
+| Gap | Why it mattered | Fix |
+|---|---|---|
+| A deal could be created on a RESERVED, SOLD, RENTED, LEASED or UNAVAILABLE property. | Inventory integrity: the same property could be put under a second deal. | `create_deal` locks the property row and refuses a status that is not sellable (`PropertyUnavailableError`, HTTP 409). |
+| Closing a deal as won left the property AVAILABLE. | After one sale the property was still offered and could be sold again. | Closing as won locks the property, refuses it unless it is sellable, and sets SOLD, RENTED or LEASED from its transaction type (`transaction type unset` is treated as a sale). Two open deals on one property cannot both close as won. |
+| Deal stage history was written but could not be read. | Journey step 10 (deal history) had no API. | `GET /api/v1/deals/{deal_id}/stage-history` (`deals.read`, organization-scoped, 404 for another organization). |
+
+### Already correct and now covered by tests
+
+Cross-tenant references are refused for lead contacts, customer profiles, deals (property, lead, customer), requirement association, site
+visits, commissions, stage transitions and follow-ups. Permission denials are enforced for lead creation (`leads.create`), deal closure
+(`deals.close`), and history reads (`deals.read`). Invalid transitions (lead NEW to VISIT, deal skipping a stage, closing a closed deal) and
+duplicate operations (completing a follow-up twice) return 4xx without changing state.
+
+### Decisions the approver should confirm
+
+- A property whose status is not set is still dealable, as before. Matching still requires an explicit `AVAILABLE`, so unset properties are
+  not offered to requirements. Changing this would break existing data.
+- A property with no transaction type is marked SOLD when a deal closes as won on it.
+
+### Known limitations (recorded, not fixed here)
+
+- `get_deal` takes a row lock on reads. It is harmless within a request but unnecessary.
+- No CRM frontend tests exist, so the pages are verified by build, lint and type checks only, not by UI tests.
+- The lead activity timeline records lead status, owner and next-action changes. Follow-up and site-visit events appear in their own lists,
+  not in the lead timeline.
+- Commission calculation uses the deal's expected value at read time; closing a deal does not freeze the amount.
+
+### Files changed
+
+- `backend/app/deals/service.py`: property lock and availability check on create; settlement of the property on won closure; stage-history query.
+- `backend/app/deals/schemas.py`: `DealStageHistoryListResponse`.
+- `backend/app/api/deals.py`: 409 mapping for an unavailable property on create; the stage-history route.
+- `backend/tests/test_crm_vertical_slice.py` (new, 15 tests): the journey, sold-property rules, rental and lost-deal inventory, cross-tenant refusal
+  (including site visits, commissions and transitions), permissions, invalid transitions and duplicates, stage-history isolation, an unset
+  property status, a missing transaction type, a competing sale, and four concurrent closures on one property.
+- `backend/tests/test_deals_api.py`: the shared property fixture is now explicitly AVAILABLE with a SALE transaction type.
+
+No migration was added. No frontend file changed.
+
+### Verification
+
+- Focused CRM and deal tests (`pytest` on deals, closure, commissions, negotiations, updates, schemas, automations, properties, matching, leads,
+  site visits, follow-ups, requirements and the new journey file): 419 passed, 0 failed.
+- Full backend suite on the final code (`pytest -q`, log `dfr1008-final.log`): exit code 0; 2,314 passed, 14 skipped, 0 failed (378 s).
+- Migrations: no migration was added. The head is `d2b6f8a1c4e7`, unchanged.
+- Ruff: no new findings in the changed files. Two import-order findings (`app/deals/service.py` and `tests/test_deals_api.py`) already exist at HEAD.
+- Frontend (no frontend file changed): `npm run build` exit 0; `npm run lint` exit 0; `npx tsc -b --noEmit` exit 0; `npx vitest run` exit 0, 123 tests.
+
+### Remaining limitations
+
+- No CRM frontend tests exist, so the CRM pages are covered by build, lint and type checks only.
+- The new stage-history endpoint has no frontend consumer yet.
+- A property moved to a non-AVAILABLE status while a deal on it is open cannot close as won. This is deliberate and consistent with creation.
+- `get_deal` takes a row lock on reads. It is harmless within a request but unnecessary.
+- The lead timeline records lead status, owner and next-action changes. Follow-up and site-visit events appear in their own lists, not the lead timeline.
+- Commission amounts are calculated from the deal's expected value at read time, not frozen at closure.
+
+### Unblocks
+
+- DFR1-018 (typed AI tool registry) depends on DFR1-008 and DFR1-015. The CRM record and inventory rules it needs are now enforced; it becomes
+  dependency-ready when this PR is merged.
+- DFR1-020 (lead qualification scoring) depends on DFR1-008 and DFR1-015. It becomes dependency-ready on merge.
+- DFR1-022 (property matching and next-best-action) depends on DFR1-008 and DFR1-020. Matching exists; next-best-action is not built and
+  depends on DFR1-020.
