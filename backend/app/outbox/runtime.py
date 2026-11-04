@@ -316,6 +316,7 @@ def serve(
     host = probe_host or settings.outbox_worker_probe_host
     port = settings.outbox_worker_probe_port if probe_port is None else probe_port
 
+    from app.agents.handlers import register_agent_handlers
     from app.governance.alert_delivery import register_governance_handlers
     from app.knowledge.handlers import register_knowledge_handlers
     from app.providers.verification import register_provider_handlers
@@ -323,6 +324,7 @@ def serve(
     register_governance_handlers()
     register_provider_handlers()
     register_knowledge_handlers()
+    register_agent_handlers()
     configure_worker_logging()
 
     stop = stop_event or threading.Event()

@@ -174,6 +174,8 @@ class Settings(BaseSettings):
     ai_gateway_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     # Attempts per provider call, including the first. Only transient failures are retried.
     ai_gateway_max_attempts: int = Field(default=2, ge=1, le=3)
+    # Agent executions across one organization per hour (DFR1-019). Per-agent limits live in the agent's configuration.
+    agent_org_executions_per_hour: int = Field(default=200, ge=1, le=100_000)
     provider_verification_failure_threshold: int = Field(default=3, ge=1, le=20)
     provider_verification_interval_hours: int = Field(default=12, ge=1, le=720)
     provider_verification_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
