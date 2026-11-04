@@ -91,6 +91,8 @@ from app.governance.privacy import (
     record_completed_privacy_event,
     record_requested_privacy_event,
 )
+from app.knowledge.service import remove_document_chunks
+from app.multimodal.review import remove_document_review
 from app.outbox.service import enqueue_event, register_handler
 from app.storage import ObjectNotFoundError, ObjectStorage, get_object_storage
 
@@ -809,6 +811,8 @@ def _delete_documents(
             except ObjectNotFoundError:
                 # Removed by an earlier attempt. The row removal below still completes.
                 pass
+        remove_document_chunks(db, organization_id=organization_id, document_id=document.id)
+        remove_document_review(db, organization_id=organization_id, document_id=document.id)
         db.delete(document)
     db.flush()
     return len(documents), keys

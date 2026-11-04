@@ -398,3 +398,545 @@ Not met, so DFR1-018 is not Done:
 - Write tools are refused by design. A write tool needs its own approval flow (ADR-0029 gate 9).
 - No HTTP endpoint exposes tool invocation. Agents will call the service, so the API surface stays closed.
 - Retries: none, by design (see the service docstring). Idempotency: all tools are read-only, so repetition changes nothing.
+
+## 17. DFR1-015 AI gateway core (E06) and DFR1-016 status
+
+Branch: `feature/DFR1-E06-ai-gateway-core`, cut from `origin/develop` at `6eab89a`. This is an E06 unit, recorded here
+because the E13 governance gates it depends on are documented in this file.
+
+What exists (code and tests):
+
+- Organization task routes: `ai_task_routes` (migration `f7c3a9d1e5b2`, one row per organization and task, no credential
+  stored). Owner-only write through `governance.capabilities.manage`; read through `governance.capabilities.read`.
+  Provider keys must be LLM providers in the registry, and model names are validated.
+- Adapter boundary: an OpenAI text and embedding adapter. It makes no network call while live access is disabled. Tests use
+  an httpx mock transport. The adapter classifies responses as success, transient, timed out or permanent, and never reads
+  or logs a response body beyond the output it returns.
+- Execution path (`app/ai_gateway/service.py`): task support, route, the shared execution gate (entitlement, switches,
+  provider readiness, actor, resource, consent, rate, budget), credential resolution for the organization only, bounded
+  attempts (retries only transient failures), settlement of actual usage against the gate's reservation, and
+  schema-checked structured output.
+- Failure handling: a failed call with no usage releases the reservation. A provider answer whose usage cannot be settled
+  is withheld (`usage_settlement_failed`), so no unmetered output is returned.
+
+Verification (final code):
+
+- `tests/test_ai_gateway.py`: 52 tests, all passing on the isolated database (port 5438). They cover adapter HTTP
+  mapping, structured-output acceptance and refusal, the execution path, retries and timeouts, credential and live-access
+  failures, budget and gate denials, tenant isolation of routes and credentials, secret absence from results and audit
+  metadata, route validation and audit, and owner-only route writes over HTTP.
+- Migration on an empty database `dealflow`: upgrade head, downgrade one step, re-upgrade. Single head
+  `f7c3a9d1e5b2`.
+- Ruff `check` on the new and changed backend files: passed.
+- Full backend suite on the final code: exit code 0; 2,193 passed, 14 skipped, 0 failed (900 s), on the isolated database (port 5438), recreated before the run. Port 5433 was not touched.
+
+Test-only seams (documented in the test module): readiness (no verified connection can be created without a live
+provider), the AI actor key (pending approval), the AI resource gate (no AI resource store exists), and the AI rate decision
+(no rate rule is approved). Each is patched for tests only. The production denial order is asserted by
+`test_production_layers_deny_in_order_and_never_reach_the_provider`: actor, then resource, then rate.
+
+What is not met, and why DFR1-015 is not Done:
+
+- No live sandbox verification. No provider credential or sandbox account exists in this environment, and no fabricated
+  provider result is recorded.
+- Production AI execution remains denied. No approved AI actor key, no AI resource store (agents and workflows arrive
+  with DFR1-018 and DFR1-019), and no approved AI rate rule exist. Each is a decision or a dependency, not something this
+  unit may invent.
+- Fallback provider: the acceptance criterion names it; none is implemented.
+- Speech, multimodal, audio, image and page usage: declared in the task model, with no adapter.
+- Outcome audit: execution outcomes are visible through the usage ledger (settled and released entries) and the gate's
+  decision audit. A requested and completed outcome audit (the WP3 pattern) is not yet added to the gateway.
+- Frontend: no UI for routes. Not required for the backend criterion; the route API is ready for one.
+- Lint debt: `app/db/models/__init__.py` already had four Ruff findings on `develop`. They are unchanged here. This change
+  adds two lines to that file and no new finding.
+
+DFR1-016 (knowledge ingestion and retrieval): not started. It depends on DFR1-015 and on the same production gates.
+
+## 19. DFR1-015 completion pass (E06): gaps, classification and verification
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. This pass adds the two code-level gaps and classifies the rest.
+
+Acceptance criteria, classified:
+
+| Criterion | State | Classification |
+|---|---|---|
+| Route text, embedding, speech and multimodal tasks through adapters | Text and embedding implemented; speech and multimodal refused with `task_not_supported` | Provider dependency (no speech or multimodal provider chosen) |
+| Timeout | Implemented, bounded (`ai_gateway_timeout_seconds`) | Met |
+| Retry | Implemented, transient failures only, bounded (`ai_gateway_max_attempts`) | Met |
+| Fallback | **Implemented in this pass.** Optional second route per task, tried only after a transient failure. Permanent failures stop the task. | Code gap, closed |
+| Structured outputs | Implemented for text (exact key set and JSON types) | Met for text; embeddings return vectors |
+| Provider and model configurable by task | Implemented (owner-only routes, primary and fallback) | Met |
+| Secrets protected | Credentials resolved per organization at call time, never stored in routes, never in results or audit | Met |
+| Token usage captured | Implemented (input and output tokens, settled to actual) | Met |
+| Audio, image and page usage captured | Units exist; no provider reports them | Provider dependency |
+| Provider failure handled safely | Implemented (classified failures, released reservations, withheld unmetered answers) | Met |
+| Outcome audit for model calls | **Implemented in this pass.** Requested record committed before any provider call; completed record linked to it, holding codes and numbers only | Code gap, closed |
+| Live sandbox verification | Not performed. Needs a credential and approved data-use terms | External approval and credential |
+
+Decisions made in this pass (implementation-level, not product decisions):
+
+- A fallback is tried only after a transient failure or a missing credential. A permanent failure stops the task, because
+  another provider would hit the same fault, or would answer a request the first provider refused.
+- The requested audit record is written after the gate allows the call and before the credential is resolved. If it cannot
+  be written, the call is not made.
+- The completed audit record holds the task, provider, model, outcome, reason code, attempt count and usage numbers. It never
+  holds the prompt, the output or the credential.
+
+Verification on the final code (`feature/DFR1-E06-ai-gateway-core`):
+
+- Backend, focused: `tests/test_ai_gateway.py`: 62 passed.
+- Backend, full suite (fresh `dealflow_test` on port 5438): exit code 0; 2,203 passed, 14 skipped, 0 failed (386 s).
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0.
+  Single head `f7c3a9d1e5b2`. The fallback columns and the pair constraint are present.
+- Ruff `check` on the changed backend files: passed.
+- Frontend (`frontend/`): `npm run build` (tsc -b and vite build) exit 0; `npm run lint` exit 0 with two existing warnings in
+  `RequirementsPage.tsx` and `DealsPage.tsx`, neither touched here; `npx vitest run` exit 0, 123 passed. No frontend file changed.
+
+Commands used (reproducible on the disposable server):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head   (then downgrade -1, upgrade head)
+.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py
+cd frontend && npm run build && npm run lint && npx vitest run
+```
+
+Not done, and why this story stays open:
+
+- No live provider verification (external: credential and data-use approval).
+- Speech and multimodal adapters, and audio, image and page usage (provider choice required).
+- Production AI execution stays closed: the AI actor key, the AI resource store and an approved AI rate rule are open
+  (see `e06-ai-execution-decision-proposal.md`).
+- DFR1-016 (knowledge ingestion) has not started.
+
+## 20. DFR1-015 resume record (not ready to merge)
+
+Status: **NOT READY TO MERGE.** Code complete for the parts that need no external input. Story stays open.
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. Commits: `17ce46a` (gateway core), `0d37fb0` (fallback and outcome audit).
+Base: `origin/develop` at `6eab89a`. No PR exists yet. Merge: not authorized.
+
+Exact items that prevent completion (external, not code):
+
+1. Product approval, AI actor key: `governance.ai.execute` (or a named alternative), grants, and owner-only status. Source:
+   `docs/architecture/e13-ai-actor-permission-proposal.md`, section 10.
+2. Product approval, AI rate rule values (requests per user, per organization, concurrency). Currently refused by design
+   (`rate_limit_not_configured`). Source: `docs/architecture/e06-ai-execution-decision-proposal.md`, section 3.
+3. AI resource store and publish state (DFR1-019). Without it the resource gate refuses every AI call. This is a dependency on
+   another story, not an approval.
+4. Provider data-use approval for OpenAI (E01 matrix, row 5). Blocks any call that carries customer data.
+5. Sandbox credential and a sandbox organization with a spend cap, then one recorded successful live verification, and
+   `PROVIDER_LIVE_ADAPTERS_ENABLED=true` in that sandbox only.
+6. First speech and multimodal provider choice, if those acceptance items stay in DFR1-015 (otherwise they move to a later story).
+
+Code-level items that remain: none for DFR1-015 beyond the above, provided the approvals are granted as proposed.
+When item 1 is granted, the code change is: add the key to the catalogue (migration to backfill existing roles), point
+`DEFAULT_AI_PERMISSION` at it, and remove the test seam `allow_actor_execution_permission` from the gateway tests only where the
+production path is tested.
+
+Resume checklist (next session):
+
+1. `git switch feature/DFR1-E06-ai-gateway-core` and confirm `0d37fb0` (or the newer commit recorded here).
+2. Confirm the decisions above in writing before changing any gate or configuration.
+3. Commands (from `backend/`, with the disposable server on port 5438 running, never port 5433):
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head` (then `downgrade -1`, `upgrade head`)
+   - `.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py`
+   - `cd frontend && npm run build && npm run lint && npx vitest run`
+4. Reusable components: `app/ai_gateway/` (service, routing, adapters, structured, contracts, tasks), the execution gate,
+   the usage ledger, `app/provider_secrets` (credential resolution), the independent audit writer, `tests/governance_helpers.py`
+   seams.
+5. Recovery note: if the disposable PostgreSQL on port 5438 is not running, restart it from its own data directory
+   (`C:/Users/amoun/AppData/Local/Temp/e13-pg-5438`) with `pg_ctl`. Do not use port 5433.
+6. Open PR text: `C:/Users/amoun/AppData/Local/Temp/` (regenerate from section 19 if missing). The PR must say "not ready to
+   merge" until items 1 to 5 are resolved.
+
+## 21. DFR1-016 tenant-scoped knowledge ingestion and retrieval (E06)
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`, cut from `origin/develop` at `da28b6b` (DFR1-015 merged as PR #154).
+Dependency DFR1-015: merged. Story is not Done; see the open items.
+
+Built:
+
+- Chunking: bounded windows (1,000 characters, 100 overlap), at most 200 chunks per document, documents up to 1 MB.
+- Ingestion (`app/knowledge/service.py`, `ingest_document`), in order: `documents.read` checked in the database; the document is
+  available and in the organization; its classification is eligible; its content type is plain text; the bytes decode as strict
+  UTF-8. Embeddings go through the AI gateway (`ai.document_processing`, embedding task). Chunks are written only after every
+  embedding succeeds. Re-ingesting unchanged content makes no provider call.
+- Retrieval, in order: `documents.read`; query bounds; one gateway embedding; chunks of available, eligible documents of the
+  organization only; best `top_k` by cosine similarity, with citations (document id, display name, chunk index). Results carry
+  `untrusted=True`; the module never places retrieved text into a prompt.
+- Derived data: `knowledge_chunks` (migration `b9e4f2a7c1d3`, downgrade drops it). Chunks are removed by
+  `remove_document_chunks`. Retrieval also filters on the document's current status, so a stale chunk is never returned.
+- Privacy inventory: `knowledge_chunks` is `not_covered`, with the reason that it is derived and removed with its source.
+
+Gaps fixed while building this story:
+
+- **Gateway reservation key (defect, DFR1-015 code).** The gate's reservation key came from the correlation id and capability.
+  Two calls for the same capability with no correlation id shared a key, so the second call was refused as
+  `usage_key_conflict`. Every gateway call now carries its own idempotency key. Covered by the retrieval and ingestion tests,
+  which make several calls in one test.
+
+Eligibility (proposal, not approved): only `PUBLIC` and `INTERNAL` documents are ingested. `CONFIDENTIAL` and `RESTRICTED` are
+excluded until product approves otherwise.
+
+Verification:
+
+- `tests/test_knowledge.py`: 24 tests passing. Covers chunk bounds, storage with embeddings, unchanged re-ingestion, permission
+  refusal, classification refusal, content-type and encoding refusal, unavailable and foreign documents, oversized documents
+  and too many chunks, failed embedding leaving prior chunks untouched, production refusal, ranking with citations, exclusion of
+  archived, restricted and foreign documents, permission refusal for retrieval, invalid queries, data-only handling of hostile
+  text, chunk removal, and metering through the gateway.
+- Full backend suite (DFR1-016 first commit): exit code 0; 2,227 passed, 14 skipped, 0 failed (595 s).
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0;
+  single head `b9e4f2a7c1d3`.
+- Ruff: the new and changed files pass. `app/db/models/__init__.py` keeps four findings that exist on `develop` (an unsorted
+  import block, a duplicate import, an unsorted `__all__`, and a duplicate `__all__` entry); this change adds two lines to that
+  file and no new finding.
+- Frontend: `npm run build` exit 0, `npm run lint` exit 0 (two existing warnings), `npx vitest run` exit 0 with 123 tests. No
+  frontend file changed.
+
+Open items (external or product, not code):
+
+1. The AI actor key, the AI resource store (DFR1-019) and an approved AI rate rule. Until then every embedding is refused by
+   the production gate, so ingestion and retrieval cannot run in production.
+2. Live embeddings need provider data-use approval and a recorded sandbox verification (E01 matrix, row 5).
+3. Eligible classifications: product approval (the proposal above).
+4. Similarity search is application-side. A pgvector index needs the `vector` extension, which is not installed on the test
+   server. Installing it, or accepting application-side search at this scale, is a decision.
+5. Not built: an HTTP route, a hook from document upload, text extraction for PDF and office formats, and a prompt-injection
+   evaluation against a real model (no model is reachable in tests).
+
+Pending work reported in Phase 1 of this story (nothing discarded, nothing merged):
+
+- `feature/DFR1-E07-typed-tool-registry` (DFR1-018): one commit `6937172`, no PR. Depends on DFR1-008, which is open.
+- `docs/E06-ai-execution-decisions`: one commit `1c2e397`, no PR (documentation).
+- `docs/E13-post-merge-audit`: two commits, no PR (documentation).
+- `docs/E13-post-merge-verification-2`: two commits, no PR (documentation).
+- `main` is four commits ahead of `develop` (revert and CI commits). Not touched.
+
+## 22. DFR1-016 completion pass: HTTP APIs, upload lifecycle, extraction, deletion, and untrusted content
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`. Builds on the first commit `57e9e2a`.
+
+Built in this pass (reusing the existing gateway, document service, outbox, privacy executor and tenant/permission stack):
+
+- **HTTP APIs** (`app/api/knowledge.py`): `POST /api/v1/knowledge/documents/{id}/ingest` (repeat-safe) and
+  `GET /api/v1/knowledge/search` (query 1 to 200,000 characters, top 1 to 10). Both require `documents.read` in the verified
+  organization and the current user. Search hits carry `untrusted_data: true`.
+- **Upload lifecycle:** the upload commit also enqueues `knowledge.ingest_requested` in the same transaction
+  (`app/documents/service.py`). The outbox handler (`app/knowledge/handlers.py`) runs in both worker entry points. A transient
+  provider failure raises and is retried by the outbox. A refusal (AI off, ineligible document) is recorded and not retried.
+- **Extraction** (`app/knowledge/extraction.py`): plain text, Markdown and CSV (strict UTF-8); XLSX through openpyxl, which the
+  project already declares; DOCX through the standard library (ZIP and `word/document.xml` only). Limits: 10 MB XML, 500 ZIP
+  members, 20 MB uncompressed, 10 sheets, 5,000 rows, 50 columns, 200,000 characters. DOCTYPE and ENTITY declarations are refused.
+  PDF through `pypdf` 6.21.4 (text only; encrypted files, malformed files, zero-page files and files over 100 pages are refused;
+  200,000 characters maximum; recovery and cross-reference limits set). Legacy or presentation formats are refused with
+  `format_not_supported`. Dependency record: `docs/development/python-dependency-register.md`.
+- **Deletion:** the privacy document executor (`app/governance/privacy_execution.py`) removes a document's chunks before the
+  document row. Without this, the RESTRICT foreign key would have made every ingested document undeletable (a defect found
+  here and fixed).
+- **Concurrency:** ingestion locks the document row, so concurrent requests for one document serialize.
+- **Gateway fix** (from the first commit): each gateway call has its own budget-reservation key.
+
+Requirement mapping:
+
+| Requirement | Status |
+|---|---|
+| Authenticated, tenant-scoped APIs | Met (tests: 403 without `documents.read`, cross-tenant search returns nothing, cross-tenant ingest returns `document_unavailable`) |
+| Upload lifecycle integration | Met (event in the upload transaction; handler indexes the stored file; tests use real local storage) |
+| Safe extraction for supported formats | Met for TXT, MD, CSV, XLSX, DOCX and PDF (pypdf, approved for this story). Malformed, encrypted, oversized and page-limit PDFs are tested and refused |
+| Prompt injection and untrusted retrieved content | Met as data handling (hostile text returned verbatim in `untrusted_data`, response shape fixed, no permission change). A model-level evaluation needs a reachable model |
+| Retrieval with available infrastructure | Met (application-side cosine over org-scoped rows; no extension required) |
+| Deletion, reprocessing, duplicate ingestion, authorization, tenant isolation, failure recovery | Met (tests in `tests/test_knowledge_lifecycle.py` and `tests/test_knowledge.py`) |
+| Gate, usage ledger, budget and audit for every embedding | Met through the gateway (each embedding is gated, metered and audited) |
+
+Verification (final code, `feature/DFR1-E06-knowledge-ingestion`):
+
+- Focused: `tests/test_knowledge.py`, `tests/test_knowledge_lifecycle.py`, `tests/test_ai_gateway.py`: 116 passed on the final
+  code (after the docstring change, on a freshly created `dealflow_test`). The earlier 107 figure was before the PDF tests.
+- Full backend suite, after the PDF pass (`d016c-full.log`, pytest exit code 0): 2,257 passed, 14 skipped, 0 failed (397 s).
+  Earlier run on the pre-PDF code: 2,248 passed, 14 skipped, 0 failed (516 s).
+- Migration, fresh `dealflow` on port 5438: upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head
+  `b9e4f2a7c1d3`.
+- Ruff: clean on the new and changed files. Pre-existing findings are unchanged and not introduced here: four in
+  `app/db/models/__init__.py`, and one blind `except` in `app/documents/service.py` (present on `develop`).
+- Frontend: build exit 0; lint exit 0 (two existing warnings); `vitest run` exit 0 with 123 tests. No frontend file changed.
+
+External approvals and dependencies still open (the code-level criteria are complete except where they need these):
+
+1. PDF extraction: resolved. `pypdf` 6.21.4 is pinned; the advisory scan reports no known vulnerabilities; the licence file is
+   BSD-style. The approver should still confirm the full licence text in the dependency register.
+2. `vector` extension: not needed for the current implementation. Only a later index optimization would need it.
+3. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
+4. Production AI execution: the AI actor key, the AI resource store (DFR1-019), an approved AI rate rule, provider data-use
+   approval, and a sandbox credential with a recorded verification. Until these exist, every embedding is refused by the gate.
+5. Document upload has no archive or delete endpoint of its own. Deletion runs through the privacy executor. Archive
+   status changes, if added later, must also call `remove_document_chunks` and `remove_document_review`.
+
+## 23. DFR1-035 document and multimodal extraction MVP (E10)
+
+Branch: `feature/DFR1-E10-document-extraction-mvp`, cut from `origin/develop` at `eb21536` (DFR1-016 merged as PR #155).
+Dependencies DFR1-015 and DFR1-016 are on `develop`.
+
+Routes, chosen by what the stored file is. Every route runs under the same tenant, permission, eligibility and deletion rules.
+
+| Stored file | Route | Provider call | Stored when |
+|---|---|---|---|
+| PDF with a text layer | Labelled values copied from the text layer | None | Any page yields text |
+| Scanned PDF: no text, every page a JPEG drawn on the page, up to 5 pages | OCR adapter, page by page, then the same labelled-value rules on the transcript | One gateway multimodal call per page | Every page transcribed by the gateway |
+| PNG or JPEG, including floor plans | Gateway multimodal task with a structured output | One gateway call | The reply matches the schema |
+
+Built:
+
+- **Gateway** (`app/ai_gateway`): `TaskType.MULTIMODAL` is implemented. An `ImageInput` carries the bytes; its repr excludes them.
+  The gateway accepts one PNG or JPEG per request, at most 8 MB, whose bytes match the stated type. It requires a structured
+  output schema and an input estimate. Budget units reserved per call: output tokens, estimated input tokens and images. The
+  OpenAI adapter sends the image inline as a data URL and reports the image count, so the images reservation settles.
+  Nothing else changed in the gateway's existing text and embedding paths.
+- **Execution controls, unchanged and applied to every call:** entitlement and switches, provider readiness, actor permission,
+  rate, budget, route selection, credential resolution, timeout, bounded retries, and audit. An organization with no
+  `images` budget is refused with `budget_not_configured` before any provider call.
+- **OCR adapter** (`app/multimodal/ocr.py`): `OcrAdapter` is the provider-independent interface. `GatewayOcrAdapter` is the
+  only implementation, so no OCR engine is built and no text is produced unless the gateway answers.
+- **Scanned-page extraction** (`app/knowledge/extraction.py`, `extract_embedded_jpeg_pages`): reads each page's own image
+  resource and checks the JPEG signature. No rasteriser, no Pillow. Pages drawn any other way are refused with
+  `scanned_page_unavailable`. More than five pages are refused with `ocr_page_limit_exceeded`.
+- **Review** (`app/multimodal/review.py`): fields come from a fixed allowlist of keys. Model output is dropped unless every
+  part is present, the key is allowlisted, and the confidence level is one of high, medium or low. The model's evidence is
+  kept as a quote. Summaries from the model are stored as text and never change permissions.
+- **Traceability:** each field carries its page number, its evidence, its `evidence_basis` (`text_layer`, `ocr_transcript`, or
+  `model_quote`), its confidence (`verbatim_text_layer`, `ocr_transcription`, or `model_reported_<level>`), and the method,
+  provider and model. The response carries `untrusted_data: true` and a disclaimer.
+- **Storage** (`app/db/models/document_review.py`, migration `c1a5e7d9f3b4`, not yet on develop): one review per document,
+  now with `method`, `provider_key` and `model`. Re-review replaces the row under the document row lock. Refusals store nothing.
+- **Reuse:** `documents.read`, the classification rule (`PUBLIC` and `INTERNAL` only, a proposal), the document lifecycle,
+  privacy deletion (`remove_document_review`, called before the document row), the table inventory, and the gateway's audit
+  and usage records.
+
+Refusals, with the reason returned and nothing stored:
+
+| Condition | Reason | Provider call |
+|---|---|---|
+| No route for the multimodal task | `no_route_configured` | None |
+| No `images` budget | `budget_not_configured` | None |
+| Bytes do not match the stated type, or over 8 MB | `invalid_request` | None |
+| Two provider failures (5xx or 429) | `failed` with `provider_unavailable` | Two |
+| Reply does not match the schema | `failed` with `invalid_structured_output` | One |
+| Scanned page is not a directly drawn JPEG | `scanned_page_unavailable` | None |
+| More than five scanned pages | `ocr_page_limit_exceeded` | None |
+| A page's OCR fails after earlier pages worked | `failed` with `provider_unavailable`; no partial text stored | Earlier pages and the failed page |
+| `CONFIDENTIAL`, `RESTRICTED` | `classification_not_eligible` | None |
+| Another organization | `document_unavailable` | None |
+| Encrypted, malformed, text formats, legacy formats | `encrypted_document`, `content_unreadable`, `format_not_supported` | None |
+
+Acceptance criteria:
+
+| Criterion | Status |
+|---|---|
+| Process PDFs for text, metadata and structured fields | Met for PDFs with a text layer |
+| Process images and floor-plan images | Code-level complete through the gateway's vision-capable route, tested against a mock provider boundary. **Blocked in production** (see open items 1 and 2) |
+| Scanned-PDF detection and OCR through a provider-independent adapter | Detection and the adapter are complete and tested with a mock. **Blocked in production** by the same approvals. No other OCR path exists |
+| Structured information with source references, pages and confidence | Met. Model and OCR outputs are labelled with their basis and are not verified facts |
+| Image, floor-plan, scanned-PDF, malformed, unsupported, oversized and tenant-isolation validation | Met (tests listed below) |
+| Outputs traceable and treated as untrusted data | Met |
+| Reuse of lifecycle, deletion, audit and usage controls | Met |
+| Upload is scanned | **Not met.** No malware scanner exists in this repository. Upload validates file signatures only |
+
+Tests:
+
+- `tests/test_document_vision_ocr.py` (15 tests): floor-plan review through the vision route with quoted evidence and the
+  image's exact bytes sent; allowlist and completeness filtering, with injected summary text as data; schema mismatch refused;
+  provider outage stores nothing; no images budget sends nothing; mismatched and oversized image bytes never sent; another
+  organization cannot send an image; scanned-PDF transcription page by page with page numbers kept; OCR page limit; a failed
+  page stores nothing; non-JPEG scanned page refused; JPEG page order and repr; extractor refusals; gateway refusal without a
+  route.
+- `tests/test_document_review.py` (16 tests): PDF text-layer values, summaries and metadata, get after post, re-review,
+  scanned PDF without a JPEG page refused, images without a route refused, text formats, confidential and restricted,
+  encrypted and page-limit PDFs, invalid PDF refused at upload, documents.read on both routes, tenant isolation, hostile
+  text stays data, deletion removes the review.
+
+Verification (final code on `feature/DFR1-E10-document-extraction-mvp`):
+
+- Focused, `tests/test_document_vision_ocr.py` and `tests/test_document_review.py`: 31 passed.
+- Full backend suite: 2,287 passed, 14 skipped, 1 failed (exit 1, 378 s). The failure is `tests/test_provider_health.py::test_concurrent_sweeps_record_each_episode_once`, a real-thread race test on the provider health sweep. This branch does not change `app/providers/`. The same test failed in 2 of 4 isolated reruns and passed in 2, so it is intermittent. It is recorded as a known flaky test, not fixed here.
+- Migrations on a freshly created `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0;
+  re-upgrade exit 0; single head `c1a5e7d9f3b4`.
+- Ruff: clean on every new and changed backend file, including the test files.
+- Security: `pip-audit` on the exported locked dependency set: "No known vulnerabilities found", exit 0. No new dependency.
+- Frontend (no frontend file changed): `npm run build` exit 0 (includes the TypeScript build); `npm run lint` exit 0;
+  `npx vitest run` exit 0, 123 tests.
+
+Open items (external approvals or provider work; each one blocks a criterion named above, and none is marked done):
+
+1. Image and floor-plan review in production: the AI actor key for `ai.document_processing`, the AI resource store (DFR1-019),
+   an approved AI rate rule, provider data-use approval, a sandbox credential with a recorded verification, a vision-capable
+   model routed for the multimodal task, and an `images` budget per organization. Until these exist, the gate refuses every call.
+2. Scanned-PDF OCR in production: the same approvals as item 1, since OCR runs through the same gateway task.
+3. Upload malware scanning: no scanner is in this repository.
+4. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
+5. Mixed PDFs (some pages with text, some scanned) are read from the text layer only. Scanned pages are routed to OCR only
+   when the whole document has no text.
+6. No review UI. The API is the only surface.
+
+## 24. DFR1-035 completion pass: malware scanning and a provider-health concurrency defect
+
+Branch: `feature/DFR1-E10-document-extraction-mvp`, continuing from `21a3237`.
+
+### Concurrency defect (pre-existing on develop, not caused by DFR1-035)
+
+- Test: `tests/test_provider_health.py::test_concurrent_sweeps_record_each_episode_once`. Reproduced at 1 failure in 8 isolated
+  runs before the fix. A temporary probe showed the per-sweep counts as `[1,1,1,1]`, `[0,1,1,1]`, `[1,1,0,1]` and similar, with
+  one audit row in every run.
+- Root cause: `_record_stale` checked whether an episode was recorded, then inserted it. When two sweeps raced, the loser's
+  insert hit the idempotency key. `persist_independent_audit_event` then returned the stored row, and `_record_stale` treated
+  that as a successful write. Every racing sweep therefore counted an episode it did not record, so the reported count was
+  wrong. The stored data was correct: one row, guarded by the unique partial index.
+- The test's expectation `all(count == 1)` codified that over-count. It is corrected to `sorted(results) == [0, 0, 0, 1]`: exactly
+  one sweep writes the episode and the others count nothing. The correction is to the expectation, and the defect is fixed in
+  the code.
+- Fix: `persist_idempotent_audit_event` (in `app/audit/independent.py`) returns True only when the call wrote the row. The
+  internal writer is shared, so the audit trail's behaviour is unchanged. `_record_stale` uses it.
+- Regression: `test_a_sweep_that_loses_the_insert_race_counts_nothing` forces the race deterministically and asserts the count
+  is zero. The concurrency test passed 40 of 40 isolated repetitions after the fix. `tests/test_provider_health.py` passed 15 of
+  15 repeated runs.
+- Develop: `app/providers/` and `app/audit/` are unchanged on this branch compared with `origin/develop`, so the defect is present
+  on develop. A separate fix is not needed beyond this change.
+
+### Upload malware scanning (new)
+
+- Scanner interface: `app/malware_scanning/base.py` (`MalwareScanner`, `ScanStatus`, `ScanResult`). Only `clean` lets a file be
+  stored. `infected`, `too_large`, `unavailable` and `error` each refuse the upload.
+- ClamAV integration: `app/malware_scanning/clamav.py` speaks the clamd INSTREAM protocol with the standard library. No new
+  dependency. Replies are parsed strictly: anything that is not `stream: OK`, `stream: <name> FOUND`, or a size-limit
+  error is an error, never clean.
+- Configuration: `CLAMAV_HOST` (empty means no scanner, and every upload is refused), `CLAMAV_PORT`, `CLAMAV_TIMEOUT_SECONDS`.
+  A clamd daemon must run as its own service in each environment. The repository does not provide one, so production scanning
+  needs that deployment.
+- Order in the upload path: the size limit, then the signature check, then the scan, then storage. A file the signature check
+  rejects never reaches the scanner. The scan runs on the staged bytes before anything is stored.
+- Outcomes: infected returns 422 and stores nothing. The scanner's size limit returns 413. Unavailable, timed out, unreachable,
+  unanswered or a malformed reply returns 503 and stores nothing. A failure to write the scan audit record also returns 503.
+- Recording: every verdict is written to the independent audit trail (`document.malware_scan`) with its decision, status,
+  engine, detail, size and, for infected files, the finding name. Documents store `scan_status`, `scan_engine` and `scanned_at`.
+- Eligibility: AI ingestion and document review refuse any document whose `scan_status` is not `clean`, with
+  `not_malware_scanned`. Retrieval also filters on `clean`. Documents created before this migration are `not_scanned` and are
+  not eligible until a scan is recorded for them; no rescan job is built.
+- Migration: `d2b6f8a1c4e7` adds the three document columns (downgrade removes them).
+- Tests: `tests/test_malware_scanning.py` (14 tests) covers clean, large-file full scan, infected, unreachable, not configured,
+  silent scanner, malformed reply, scanner size limit, malformed file before scanning, oversized file before scanning,
+  unscanned documents refused for ingestion and review, clean documents past the gate, reply parsing, and that only clean
+  documents are stored. Tests use `tests/clamd_fake.py`, a stand-in daemon that speaks the real protocol and reports the EICAR
+  test string as a finding. It is not a malware engine, and the test environment does not bypass the scan.
+
+### Verification
+
+- Full backend suite on the final code (`pytest -q`, log `dfr1035-r3.log`): exit code 0; 2,303 passed, 14 skipped, 0 failed (398 s).
+  The skips are the live SIBVO contract check, which is not configured here, and existing skips. The run was on the code as it
+  stands now; the only later edit was this evidence record, which no test reads.
+- Concurrency stability: `test_concurrent_sweeps_record_each_episode_once` passed 40 of 40 isolated runs. `test_provider_health.py` passed 16 of 16 in repeated runs.
+- Migration chain, fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `d2b6f8a1c4e7`.
+- Ruff, on every file this story changed: clean for new code. Findings remaining in touched files (blind `except` in the upload path, an
+  import-order finding in `documents/service.py` and `models/document.py`, and a `datetime.UTC` finding) are present at HEAD on develop and were not introduced here.
+- Frontend (no frontend file changed): `npm run build` exit 0, which includes the TypeScript build; `npm run lint` exit 0; `npx vitest run` exit 0, 123 tests.
+- Security: `pip-audit` on the exported locked dependencies: "No known vulnerabilities found", exit 0. No dependency was added by this pass.
+- Upload paths: `upload_document` is the only path that creates a document row or stores an uploaded file. The privacy export archive is written by the
+  privacy executor, not from user input, so it is not a document upload. Every eligibility check that reads documents (`ingest_document`,
+  `retrieve`, `review_document`) requires `scan_status = clean`. Retrieval filters on it in the database query.
+
+
+## 25. DFR1-008 audit and close critical CRM vertical-slice gaps (E02)
+
+Branch: `feature/DFR1-E02-crm-vertical-slice`, cut from `origin/develop` at `a606a67` (DFR1-035 merged as PR #156).
+Baseline: `develop` fast-forwarded from `eb21536` to `a606a67`; no local-only commits; the working tree was clean; no migration was added
+(head `d2b6f8a1c4e7`). The Dealsflo repository had only the untracked `.claude/` directory; the SIBVO repository was clean on `develop`.
+
+### What already existed and was reused
+
+- Contacts, customer profiles, leads, customer requirements (with locations, property preferences, possession and parking, association,
+  shortlist and match runs), properties and inventory search, follow-ups, site visits, deals with stage history, deal commissions, lead
+  activities and requirement history. Their models, migrations, schemas, services, routers, tenant scoping and permission checks were reused
+  unchanged.
+- The matching service, which offers only properties whose status is explicitly `AVAILABLE`.
+- The deal stage-transition rules (NEW to QUALIFICATION to NEGOTIATION to BOOKING, then CLOSED_WON or CLOSED_LOST with a reason), and the
+  commission amount calculation.
+- The frontend CRM pages and service modules, which already call the backend paths that exist.
+
+### Journey verification (through the real API, with tenant and permission checks)
+
+Covered by `tests/test_crm_vertical_slice.py::test_the_real_estate_journey_runs_end_to_end`:
+
+1. Contact created. 2. Lead registered with a next action, then moved CONTACTED, QUALIFIED, MATCHING, VISIT. 3. Requirement captured
+(location and preference) and linked to the lead. 4. A real property matched the requirement. 5. A follow-up was scheduled, rescheduled and
+completed. 6. A site visit was scheduled and its attendance recorded. 7. Customer profile and deal created, progressed to BOOKING and closed as
+won with a reason. 8. A 2 percent commission on 9,500,000 INR was calculated to 190,000.00. 9. The won property became SOLD and left the matches.
+10. The deal's stage history is returned oldest first, and the lead's activity timeline and the requirement history are present.
+
+### Gaps found and why they mattered
+
+| Gap | Why it mattered | Fix |
+|---|---|---|
+| A deal could be created on a RESERVED, SOLD, RENTED, LEASED or UNAVAILABLE property. | Inventory integrity: the same property could be put under a second deal. | `create_deal` locks the property row and refuses a status that is not sellable (`PropertyUnavailableError`, HTTP 409). |
+| Closing a deal as won left the property AVAILABLE. | After one sale the property was still offered and could be sold again. | Closing as won locks the property, refuses it unless it is sellable, and sets SOLD, RENTED or LEASED from its transaction type (`transaction type unset` is treated as a sale). Two open deals on one property cannot both close as won. |
+| Deal stage history was written but could not be read. | Journey step 10 (deal history) had no API. | `GET /api/v1/deals/{deal_id}/stage-history` (`deals.read`, organization-scoped, 404 for another organization). |
+
+### Already correct and now covered by tests
+
+Cross-tenant references are refused for lead contacts, customer profiles, deals (property, lead, customer), requirement association, site
+visits, commissions, stage transitions and follow-ups. Permission denials are enforced for lead creation (`leads.create`), deal closure
+(`deals.close`), and history reads (`deals.read`). Invalid transitions (lead NEW to VISIT, deal skipping a stage, closing a closed deal) and
+duplicate operations (completing a follow-up twice) return 4xx without changing state.
+
+### Decisions the approver should confirm
+
+- A property whose status is not set is still dealable, as before. Matching still requires an explicit `AVAILABLE`, so unset properties are
+  not offered to requirements. Changing this would break existing data.
+- A property with no transaction type is marked SOLD when a deal closes as won on it.
+
+### Known limitations (recorded, not fixed here)
+
+- `get_deal` takes a row lock on reads. It is harmless within a request but unnecessary.
+- No CRM frontend tests exist, so the pages are verified by build, lint and type checks only, not by UI tests.
+- The lead activity timeline records lead status, owner and next-action changes. Follow-up and site-visit events appear in their own lists,
+  not in the lead timeline.
+- Commission calculation uses the deal's expected value at read time; closing a deal does not freeze the amount.
+
+### Files changed
+
+- `backend/app/deals/service.py`: property lock and availability check on create; settlement of the property on won closure; stage-history query.
+- `backend/app/deals/schemas.py`: `DealStageHistoryListResponse`.
+- `backend/app/api/deals.py`: 409 mapping for an unavailable property on create; the stage-history route.
+- `backend/tests/test_crm_vertical_slice.py` (new, 15 tests): the journey, sold-property rules, rental and lost-deal inventory, cross-tenant refusal
+  (including site visits, commissions and transitions), permissions, invalid transitions and duplicates, stage-history isolation, an unset
+  property status, a missing transaction type, a competing sale, and four concurrent closures on one property.
+- `backend/tests/test_deals_api.py`: the shared property fixture is now explicitly AVAILABLE with a SALE transaction type.
+
+No migration was added. No frontend file changed.
+
+### Verification
+
+- Focused CRM and deal tests (`pytest` on deals, closure, commissions, negotiations, updates, schemas, automations, properties, matching, leads,
+  site visits, follow-ups, requirements and the new journey file): 419 passed, 0 failed.
+- Full backend suite on the final code (`pytest -q`, log `dfr1008-final.log`): exit code 0; 2,314 passed, 14 skipped, 0 failed (378 s).
+- Migrations: no migration was added. The head is `d2b6f8a1c4e7`, unchanged.
+- Ruff: no new findings in the changed files. Two import-order findings (`app/deals/service.py` and `tests/test_deals_api.py`) already exist at HEAD.
+- Frontend (no frontend file changed): `npm run build` exit 0; `npm run lint` exit 0; `npx tsc -b --noEmit` exit 0; `npx vitest run` exit 0, 123 tests.
+
+### Remaining limitations
+
+- No CRM frontend tests exist, so the CRM pages are covered by build, lint and type checks only.
+- The new stage-history endpoint has no frontend consumer yet.
+- A property moved to a non-AVAILABLE status while a deal on it is open cannot close as won. This is deliberate and consistent with creation.
+- `get_deal` takes a row lock on reads. It is harmless within a request but unnecessary.
+- The lead timeline records lead status, owner and next-action changes. Follow-up and site-visit events appear in their own lists, not the lead timeline.
+- Commission amounts are calculated from the deal's expected value at read time, not frozen at closure.
+
+### Unblocks
+
+- DFR1-018 (typed AI tool registry) depends on DFR1-008 and DFR1-015. The CRM record and inventory rules it needs are now enforced; it becomes
+  dependency-ready when this PR is merged.
+- DFR1-020 (lead qualification scoring) depends on DFR1-008 and DFR1-015. It becomes dependency-ready on merge.
+- DFR1-022 (property matching and next-best-action) depends on DFR1-008 and DFR1-020. Matching exists; next-best-action is not built and
+  depends on DFR1-020.

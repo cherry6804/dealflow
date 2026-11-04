@@ -35,6 +35,8 @@ from app.documents.schemas import (
 )
 from app.documents.service import (
     DocumentDownloadUnavailableError,
+    DocumentMalwareDetectedError,
+    DocumentScanUnavailableError,
     DocumentUploadError,
     DocumentUploadTooLargeError,
     DocumentUploadValidationError,
@@ -143,6 +145,16 @@ async def upload_document_endpoint(
     except DocumentUploadValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except DocumentMalwareDetectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except DocumentScanUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
     except DocumentUploadError as exc:

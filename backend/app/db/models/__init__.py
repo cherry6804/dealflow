@@ -1,6 +1,8 @@
 """DealFlow database models."""
 
 from app.db.models.activity import Activity
+from app.db.models.knowledge_chunk import KnowledgeChunk
+from app.db.models.ai_task_route import AiTaskRoute
 from app.db.models.audit_event import AuditEvent
 from app.db.models.auth_login_rate_limit import AuthLoginRateLimit
 from app.db.models.auth_session import AuthSession
@@ -29,6 +31,7 @@ from app.db.models.deal_negotiation import (
 )
 from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.document import Document
+from app.db.models.document_review import DocumentReview
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.models.email_verification_token import EmailVerificationToken
 from app.db.models.follow_up import FollowUp
@@ -87,6 +90,8 @@ __all__ = [
     "ProviderVerificationAttempt",
     "Activity",
     "AuditEvent",
+    "KnowledgeChunk",
+    "AiTaskRoute",
     "AuthLoginRateLimit",
     "AuthSession",
     "AutomationExecution",
@@ -106,6 +111,7 @@ __all__ = [
     "DealNegotiationHistory",
     "DealStageHistory",
     "Document",
+    "DocumentReview",
     "EmailOutboxMessage",
     "EmailVerificationToken",
     "FollowUp",

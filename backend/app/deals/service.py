@@ -28,6 +28,77 @@ CLOSED_STAGES = {
     DealStage.CLOSED_LOST.value,
 }
 
+# The property status a won deal leaves behind, by the property's explicit transaction type.
+WON_PROPERTY_STATUS: dict[str, str] = {
+    Property.TRANSACTION_TYPE_SALE: Property.STATUS_SOLD,
+    Property.TRANSACTION_TYPE_RENT: Property.STATUS_RENTED,
+    Property.TRANSACTION_TYPE_LEASE: Property.STATUS_LEASED,
+}
+
+
+class DealClosureValidationError(ValueError):
+    """The deal cannot be closed as won because its data is incomplete. The deal keeps its current stage."""
+
+
+class PropertyUnavailableError(ValueError):
+    """The property is not available in inventory, so a deal cannot use it or close on it as won.
+
+    Raised under a row lock on the property, so two deals cannot both close on the same available property.
+    """
+
+
+def _is_sellable(status: str | None) -> bool:
+    """A property takes a deal only when its status is explicitly AVAILABLE.
+
+    An unset status is not evidence of availability, so it is refused. Existing rows are not rewritten. Matching uses the same rule.
+    """
+    return status == Property.STATUS_AVAILABLE
+
+
+def _lock_property(db: Session, *, organization_id: UUID, property_id: UUID) -> Property | None:
+    return db.scalar(
+        select(Property)
+        .where(
+            Property.id == property_id,
+            Property.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+
+def _settle_property_for_won_deal(db: Session, *, organization_id: UUID, deal: Deal) -> None:
+    """Close a deal as won on its property, inside the caller's transaction.
+
+    The property row is locked first, so concurrent closures of deals on one property serialize. Under the lock the property must
+    still be explicitly AVAILABLE, and no other deal on it may already be won. The property then moves to the status for its
+    transaction type. A missing or unknown transaction type is refused, not inferred.
+    """
+    property_record = _lock_property(db, organization_id=organization_id, property_id=deal.property_id)
+    if property_record is None:
+        raise PropertyUnavailableError("The property was not found in this organization.")
+    if not _is_sellable(property_record.status):
+        raise PropertyUnavailableError(
+            "The property is no longer available, so this deal cannot be closed as won."
+        )
+    competing_won = db.scalar(
+        select(Deal.id).where(
+            Deal.organization_id == organization_id,
+            Deal.property_id == deal.property_id,
+            Deal.stage == DealStage.CLOSED_WON.value,
+            Deal.id != deal.id,
+        )
+    )
+    if competing_won is not None:
+        raise PropertyUnavailableError(
+            "Another deal on this property is already closed as won."
+        )
+    won_status = WON_PROPERTY_STATUS.get(property_record.transaction_type or "")
+    if won_status is None:
+        raise DealClosureValidationError(
+            "The property's transaction type must be SALE, RENT or LEASE before a deal on it can close as won."
+        )
+    property_record.status = won_status
+
 
 def create_deal(
     db: Session,
@@ -48,14 +119,12 @@ def create_deal(
     if customer is None:
         return None
 
-    property_record = db.scalar(
-        select(Property.id).where(
-            Property.id == payload.property_id,
-            Property.organization_id == organization_id,
-        )
-    )
+    property_record = _lock_property(db, organization_id=organization_id, property_id=payload.property_id)
     if property_record is None:
         return None
+    # Only inventory that is available can be put under a new deal, so a sold or let property cannot be sold again.
+    if not _is_sellable(property_record.status):
+        raise PropertyUnavailableError("The property is not available, so a deal cannot be created on it.")
 
     if payload.lead_id is not None:
         lead = db.scalar(
@@ -234,6 +303,9 @@ def transition_deal_stage(
                 f"{expected_next_stage}."
             )
 
+    if requested_stage == DealStage.CLOSED_WON.value:
+        _settle_property_for_won_deal(db, organization_id=organization_id, deal=deal)
+
     history = DealStageHistory(
         organization_id=organization_id,
         deal_id=deal.id,
@@ -316,3 +388,30 @@ def update_deal(
     db.flush()
     db.refresh(deal)
     return deal
+
+
+def list_deal_stage_history(
+    db: Session,
+    *,
+    organization_id: UUID,
+    deal_id: UUID,
+) -> list[DealStageHistory] | None:
+    """Return the stage history of a deal in the verified organization, oldest first. None when the deal is not visible."""
+    deal_exists = db.scalar(
+        select(Deal.id).where(
+            Deal.id == deal_id,
+            Deal.organization_id == organization_id,
+        )
+    )
+    if deal_exists is None:
+        return None
+    return list(
+        db.scalars(
+            select(DealStageHistory)
+            .where(
+                DealStageHistory.deal_id == deal_id,
+                DealStageHistory.organization_id == organization_id,
+            )
+            .order_by(DealStageHistory.created_at, DealStageHistory.id)
+        ).all()
+    )

@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     # Provider connections (ADR-0032). Live adapters are off by default and never enabled in CI.
     provider_live_adapters_enabled: bool = False
     provider_verification_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # Per-call timeout for AI gateway provider calls (DFR1-015). Bounded so a slow provider cannot hold a request open.
+    ai_gateway_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    # Attempts per provider call, including the first. Only transient failures are retried.
+    ai_gateway_max_attempts: int = Field(default=2, ge=1, le=3)
     provider_verification_failure_threshold: int = Field(default=3, ge=1, le=20)
     provider_verification_interval_hours: int = Field(default=12, ge=1, le=720)
     provider_verification_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
@@ -217,6 +221,12 @@ class Settings(BaseSettings):
     )
     object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: Path = BASE_DIR / "var" / "private_objects"
+
+    # Malware scanning of uploads through a ClamAV daemon (clamd, INSTREAM over TCP). An empty host means no scanner is
+    # configured, and every upload is then refused. Uploads never bypass the scan.
+    clamav_host: str = ""
+    clamav_port: int = Field(default=3310, gt=0, le=65535)
+    clamav_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
 
     # AI usage reservations (DFR1-017). A reservation not settled within this time is released by
     # the cleanup job. The value is operational, not a retention period.
