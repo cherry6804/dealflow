@@ -118,6 +118,8 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
             capability_key=request.capability_key,
             user_context=request.user_context,
             resource_id=request.resource_id,
+            # Each call reserves under its own key. A shared key would make every later call for the same capability conflict.
+            idempotency_key=str(uuid.uuid4()),
             budget_units=_budget_units(request),
         ),
     )

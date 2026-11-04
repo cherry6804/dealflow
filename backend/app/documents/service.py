@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models.document import Document
+from app.knowledge.events import INGEST_REQUESTED_EVENT
+from app.outbox.service import enqueue_event
 from app.storage import StorageError, get_object_storage
 
 logger = logging.getLogger(__name__)
@@ -357,6 +359,15 @@ async def upload_document(
         db.add(document)
         db.flush()
         db.refresh(document)
+        enqueue_event(
+            db,
+            organization_id=organization_id,
+            event_type=INGEST_REQUESTED_EVENT,
+            aggregate_type="document",
+            aggregate_id=str(document.id),
+            idempotency_key=f"knowledge-ingest:{document.id}",
+            payload={"document_id": str(document.id), "user_id": str(user_id)},
+        )
         db.commit()
 
     except SQLAlchemyError:

@@ -499,3 +499,129 @@ Resume checklist (next session):
    (`C:/Users/amoun/AppData/Local/Temp/e13-pg-5438`) with `pg_ctl`. Do not use port 5433.
 6. Open PR text: `C:/Users/amoun/AppData/Local/Temp/` (regenerate from section 19 if missing). The PR must say "not ready to
    merge" until items 1 to 5 are resolved.
+
+## 21. DFR1-016 tenant-scoped knowledge ingestion and retrieval (E06)
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`, cut from `origin/develop` at `da28b6b` (DFR1-015 merged as PR #154).
+Dependency DFR1-015: merged. Story is not Done; see the open items.
+
+Built:
+
+- Chunking: bounded windows (1,000 characters, 100 overlap), at most 200 chunks per document, documents up to 1 MB.
+- Ingestion (`app/knowledge/service.py`, `ingest_document`), in order: `documents.read` checked in the database; the document is
+  available and in the organization; its classification is eligible; its content type is plain text; the bytes decode as strict
+  UTF-8. Embeddings go through the AI gateway (`ai.document_processing`, embedding task). Chunks are written only after every
+  embedding succeeds. Re-ingesting unchanged content makes no provider call.
+- Retrieval, in order: `documents.read`; query bounds; one gateway embedding; chunks of available, eligible documents of the
+  organization only; best `top_k` by cosine similarity, with citations (document id, display name, chunk index). Results carry
+  `untrusted=True`; the module never places retrieved text into a prompt.
+- Derived data: `knowledge_chunks` (migration `b9e4f2a7c1d3`, downgrade drops it). Chunks are removed by
+  `remove_document_chunks`. Retrieval also filters on the document's current status, so a stale chunk is never returned.
+- Privacy inventory: `knowledge_chunks` is `not_covered`, with the reason that it is derived and removed with its source.
+
+Gaps fixed while building this story:
+
+- **Gateway reservation key (defect, DFR1-015 code).** The gate's reservation key came from the correlation id and capability.
+  Two calls for the same capability with no correlation id shared a key, so the second call was refused as
+  `usage_key_conflict`. Every gateway call now carries its own idempotency key. Covered by the retrieval and ingestion tests,
+  which make several calls in one test.
+
+Eligibility (proposal, not approved): only `PUBLIC` and `INTERNAL` documents are ingested. `CONFIDENTIAL` and `RESTRICTED` are
+excluded until product approves otherwise.
+
+Verification:
+
+- `tests/test_knowledge.py`: 24 tests passing. Covers chunk bounds, storage with embeddings, unchanged re-ingestion, permission
+  refusal, classification refusal, content-type and encoding refusal, unavailable and foreign documents, oversized documents
+  and too many chunks, failed embedding leaving prior chunks untouched, production refusal, ranking with citations, exclusion of
+  archived, restricted and foreign documents, permission refusal for retrieval, invalid queries, data-only handling of hostile
+  text, chunk removal, and metering through the gateway.
+- Full backend suite (DFR1-016 first commit): exit code 0; 2,227 passed, 14 skipped, 0 failed (595 s).
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0;
+  single head `b9e4f2a7c1d3`.
+- Ruff: the new and changed files pass. `app/db/models/__init__.py` keeps four findings that exist on `develop` (an unsorted
+  import block, a duplicate import, an unsorted `__all__`, and a duplicate `__all__` entry); this change adds two lines to that
+  file and no new finding.
+- Frontend: `npm run build` exit 0, `npm run lint` exit 0 (two existing warnings), `npx vitest run` exit 0 with 123 tests. No
+  frontend file changed.
+
+Open items (external or product, not code):
+
+1. The AI actor key, the AI resource store (DFR1-019) and an approved AI rate rule. Until then every embedding is refused by
+   the production gate, so ingestion and retrieval cannot run in production.
+2. Live embeddings need provider data-use approval and a recorded sandbox verification (E01 matrix, row 5).
+3. Eligible classifications: product approval (the proposal above).
+4. Similarity search is application-side. A pgvector index needs the `vector` extension, which is not installed on the test
+   server. Installing it, or accepting application-side search at this scale, is a decision.
+5. Not built: an HTTP route, a hook from document upload, text extraction for PDF and office formats, and a prompt-injection
+   evaluation against a real model (no model is reachable in tests).
+
+Pending work reported in Phase 1 of this story (nothing discarded, nothing merged):
+
+- `feature/DFR1-E07-typed-tool-registry` (DFR1-018): one commit `6937172`, no PR. Depends on DFR1-008, which is open.
+- `docs/E06-ai-execution-decisions`: one commit `1c2e397`, no PR (documentation).
+- `docs/E13-post-merge-audit`: two commits, no PR (documentation).
+- `docs/E13-post-merge-verification-2`: two commits, no PR (documentation).
+- `main` is four commits ahead of `develop` (revert and CI commits). Not touched.
+
+## 22. DFR1-016 completion pass: HTTP APIs, upload lifecycle, extraction, deletion, and untrusted content
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`. Builds on the first commit `57e9e2a`.
+
+Built in this pass (reusing the existing gateway, document service, outbox, privacy executor and tenant/permission stack):
+
+- **HTTP APIs** (`app/api/knowledge.py`): `POST /api/v1/knowledge/documents/{id}/ingest` (repeat-safe) and
+  `GET /api/v1/knowledge/search` (query 1 to 200,000 characters, top 1 to 10). Both require `documents.read` in the verified
+  organization and the current user. Search hits carry `untrusted_data: true`.
+- **Upload lifecycle:** the upload commit also enqueues `knowledge.ingest_requested` in the same transaction
+  (`app/documents/service.py`). The outbox handler (`app/knowledge/handlers.py`) runs in both worker entry points. A transient
+  provider failure raises and is retried by the outbox. A refusal (AI off, ineligible document) is recorded and not retried.
+- **Extraction** (`app/knowledge/extraction.py`): plain text, Markdown and CSV (strict UTF-8); XLSX through openpyxl, which the
+  project already declares; DOCX through the standard library (ZIP and `word/document.xml` only). Limits: 10 MB XML, 500 ZIP
+  members, 20 MB uncompressed, 10 sheets, 5,000 rows, 50 columns, 200,000 characters. DOCTYPE and ENTITY declarations are refused.
+  PDF through `pypdf` 6.21.4 (text only; encrypted files, malformed files, zero-page files and files over 100 pages are refused;
+  200,000 characters maximum; recovery and cross-reference limits set). Legacy or presentation formats are refused with
+  `format_not_supported`. Dependency record: `docs/development/python-dependency-register.md`.
+- **Deletion:** the privacy document executor (`app/governance/privacy_execution.py`) removes a document's chunks before the
+  document row. Without this, the RESTRICT foreign key would have made every ingested document undeletable (a defect found
+  here and fixed).
+- **Concurrency:** ingestion locks the document row, so concurrent requests for one document serialize.
+- **Gateway fix** (from the first commit): each gateway call has its own budget-reservation key.
+
+Requirement mapping:
+
+| Requirement | Status |
+|---|---|
+| Authenticated, tenant-scoped APIs | Met (tests: 403 without `documents.read`, cross-tenant search returns nothing, cross-tenant ingest returns `document_unavailable`) |
+| Upload lifecycle integration | Met (event in the upload transaction; handler indexes the stored file; tests use real local storage) |
+| Safe extraction for supported formats | Met for TXT, MD, CSV, XLSX, DOCX and PDF (pypdf, approved for this story). Malformed, encrypted, oversized and page-limit PDFs are tested and refused |
+| Prompt injection and untrusted retrieved content | Met as data handling (hostile text returned verbatim in `untrusted_data`, response shape fixed, no permission change). A model-level evaluation needs a reachable model |
+| Retrieval with available infrastructure | Met (application-side cosine over org-scoped rows; no extension required) |
+| Deletion, reprocessing, duplicate ingestion, authorization, tenant isolation, failure recovery | Met (tests in `tests/test_knowledge_lifecycle.py` and `tests/test_knowledge.py`) |
+| Gate, usage ledger, budget and audit for every embedding | Met through the gateway (each embedding is gated, metered and audited) |
+
+Verification (final code, `feature/DFR1-E06-knowledge-ingestion`):
+
+- Focused: `tests/test_knowledge.py`, `tests/test_knowledge_lifecycle.py`, `tests/test_ai_gateway.py`: 116 passed on the final
+  code (after the docstring change, on a freshly created `dealflow_test`). The earlier 107 figure was before the PDF tests.
+- Full backend suite, after the PDF pass (`d016c-full.log`, pytest exit code 0): 2,257 passed, 14 skipped, 0 failed (397 s).
+  Earlier run on the pre-PDF code: 2,248 passed, 14 skipped, 0 failed (516 s).
+- Migration, fresh `dealflow` on port 5438: upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head
+  `b9e4f2a7c1d3`.
+- Ruff: clean on the new and changed files. Pre-existing findings are unchanged and not introduced here: four in
+  `app/db/models/__init__.py`, and one blind `except` in `app/documents/service.py` (present on `develop`).
+- Frontend: build exit 0; lint exit 0 (two existing warnings); `vitest run` exit 0 with 123 tests. No frontend file changed.
+
+External approvals and dependencies still open (the code-level criteria are complete except where they need these):
+
+1. PDF extraction: resolved. `pypdf` 6.21.4 is pinned; the advisory scan reports no known vulnerabilities; the licence file is
+   BSD-style. The approver should still confirm the full licence text in the dependency register.
+2. `vector` extension: not needed for the current implementation. Only a later index optimization would need it.
+3. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
+4. Production AI execution: the AI actor key, the AI resource store (DFR1-019), an approved AI rate rule, provider data-use
+   approval, and a sandbox credential with a recorded verification. Until these exist, every embedding is refused by the gate.
+5. Document upload has no archive or delete endpoint of its own. Deletion runs through the privacy executor. Archive
+   status changes, if added later, must also call `remove_document_chunks`.
+
+Pull request: not created. The code-level work is complete except items 1 and 5, which need decisions. Creating the PR and
+merging it both wait for your instruction.
