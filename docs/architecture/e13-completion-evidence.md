@@ -345,3 +345,157 @@ Story status: unchanged. DFR1-006, DFR1-017, DFR1-050 remain Partial; DFR1-053 r
 - **Not approved.** The approval needed is six answers from the release owner and the security owner, listed in section 10
   of the proposal. No permission key has been added and no role grant has changed.
 - Story status: unchanged. DFR1-006 remains Partial; DFR1-017, DFR1-050 and DFR1-053 keep their status; E13 is not Done.
+
+## 17. DFR1-015 AI gateway core (E06) and DFR1-016 status
+
+Branch: `feature/DFR1-E06-ai-gateway-core`, cut from `origin/develop` at `6eab89a`. This is an E06 unit, recorded here
+because the E13 governance gates it depends on are documented in this file.
+
+What exists (code and tests):
+
+- Organization task routes: `ai_task_routes` (migration `f7c3a9d1e5b2`, one row per organization and task, no credential
+  stored). Owner-only write through `governance.capabilities.manage`; read through `governance.capabilities.read`.
+  Provider keys must be LLM providers in the registry, and model names are validated.
+- Adapter boundary: an OpenAI text and embedding adapter. It makes no network call while live access is disabled. Tests use
+  an httpx mock transport. The adapter classifies responses as success, transient, timed out or permanent, and never reads
+  or logs a response body beyond the output it returns.
+- Execution path (`app/ai_gateway/service.py`): task support, route, the shared execution gate (entitlement, switches,
+  provider readiness, actor, resource, consent, rate, budget), credential resolution for the organization only, bounded
+  attempts (retries only transient failures), settlement of actual usage against the gate's reservation, and
+  schema-checked structured output.
+- Failure handling: a failed call with no usage releases the reservation. A provider answer whose usage cannot be settled
+  is withheld (`usage_settlement_failed`), so no unmetered output is returned.
+
+Verification (final code):
+
+- `tests/test_ai_gateway.py`: 52 tests, all passing on the isolated database (port 5438). They cover adapter HTTP
+  mapping, structured-output acceptance and refusal, the execution path, retries and timeouts, credential and live-access
+  failures, budget and gate denials, tenant isolation of routes and credentials, secret absence from results and audit
+  metadata, route validation and audit, and owner-only route writes over HTTP.
+- Migration on an empty database `dealflow`: upgrade head, downgrade one step, re-upgrade. Single head
+  `f7c3a9d1e5b2`.
+- Ruff `check` on the new and changed backend files: passed.
+- Full backend suite on the final code: exit code 0; 2,193 passed, 14 skipped, 0 failed (900 s), on the isolated database (port 5438), recreated before the run. Port 5433 was not touched.
+
+Test-only seams (documented in the test module): readiness (no verified connection can be created without a live
+provider), the AI actor key (pending approval), the AI resource gate (no AI resource store exists), and the AI rate decision
+(no rate rule is approved). Each is patched for tests only. The production denial order is asserted by
+`test_production_layers_deny_in_order_and_never_reach_the_provider`: actor, then resource, then rate.
+
+What is not met, and why DFR1-015 is not Done:
+
+- No live sandbox verification. No provider credential or sandbox account exists in this environment, and no fabricated
+  provider result is recorded.
+- Production AI execution remains denied. No approved AI actor key, no AI resource store (agents and workflows arrive
+  with DFR1-018 and DFR1-019), and no approved AI rate rule exist. Each is a decision or a dependency, not something this
+  unit may invent.
+- Fallback provider: the acceptance criterion names it; none is implemented.
+- Speech, multimodal, audio, image and page usage: declared in the task model, with no adapter.
+- Outcome audit: execution outcomes are visible through the usage ledger (settled and released entries) and the gate's
+  decision audit. A requested and completed outcome audit (the WP3 pattern) is not yet added to the gateway.
+- Frontend: no UI for routes. Not required for the backend criterion; the route API is ready for one.
+- Lint debt: `app/db/models/__init__.py` already had four Ruff findings on `develop`. They are unchanged here. This change
+  adds two lines to that file and no new finding.
+
+DFR1-016 (knowledge ingestion and retrieval): not started. It depends on DFR1-015 and on the same production gates.
+
+## 19. DFR1-015 completion pass (E06): gaps, classification and verification
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. This pass adds the two code-level gaps and classifies the rest.
+
+Acceptance criteria, classified:
+
+| Criterion | State | Classification |
+|---|---|---|
+| Route text, embedding, speech and multimodal tasks through adapters | Text and embedding implemented; speech and multimodal refused with `task_not_supported` | Provider dependency (no speech or multimodal provider chosen) |
+| Timeout | Implemented, bounded (`ai_gateway_timeout_seconds`) | Met |
+| Retry | Implemented, transient failures only, bounded (`ai_gateway_max_attempts`) | Met |
+| Fallback | **Implemented in this pass.** Optional second route per task, tried only after a transient failure. Permanent failures stop the task. | Code gap, closed |
+| Structured outputs | Implemented for text (exact key set and JSON types) | Met for text; embeddings return vectors |
+| Provider and model configurable by task | Implemented (owner-only routes, primary and fallback) | Met |
+| Secrets protected | Credentials resolved per organization at call time, never stored in routes, never in results or audit | Met |
+| Token usage captured | Implemented (input and output tokens, settled to actual) | Met |
+| Audio, image and page usage captured | Units exist; no provider reports them | Provider dependency |
+| Provider failure handled safely | Implemented (classified failures, released reservations, withheld unmetered answers) | Met |
+| Outcome audit for model calls | **Implemented in this pass.** Requested record committed before any provider call; completed record linked to it, holding codes and numbers only | Code gap, closed |
+| Live sandbox verification | Not performed. Needs a credential and approved data-use terms | External approval and credential |
+
+Decisions made in this pass (implementation-level, not product decisions):
+
+- A fallback is tried only after a transient failure or a missing credential. A permanent failure stops the task, because
+  another provider would hit the same fault, or would answer a request the first provider refused.
+- The requested audit record is written after the gate allows the call and before the credential is resolved. If it cannot
+  be written, the call is not made.
+- The completed audit record holds the task, provider, model, outcome, reason code, attempt count and usage numbers. It never
+  holds the prompt, the output or the credential.
+
+Verification on the final code (`feature/DFR1-E06-ai-gateway-core`):
+
+- Backend, focused: `tests/test_ai_gateway.py`: 62 passed.
+- Backend, full suite (fresh `dealflow_test` on port 5438): exit code 0; 2,203 passed, 14 skipped, 0 failed (386 s).
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0.
+  Single head `f7c3a9d1e5b2`. The fallback columns and the pair constraint are present.
+- Ruff `check` on the changed backend files: passed.
+- Frontend (`frontend/`): `npm run build` (tsc -b and vite build) exit 0; `npm run lint` exit 0 with two existing warnings in
+  `RequirementsPage.tsx` and `DealsPage.tsx`, neither touched here; `npx vitest run` exit 0, 123 passed. No frontend file changed.
+
+Commands used (reproducible on the disposable server):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head   (then downgrade -1, upgrade head)
+.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py
+cd frontend && npm run build && npm run lint && npx vitest run
+```
+
+Not done, and why this story stays open:
+
+- No live provider verification (external: credential and data-use approval).
+- Speech and multimodal adapters, and audio, image and page usage (provider choice required).
+- Production AI execution stays closed: the AI actor key, the AI resource store and an approved AI rate rule are open
+  (see `e06-ai-execution-decision-proposal.md`).
+- DFR1-016 (knowledge ingestion) has not started.
+
+## 20. DFR1-015 resume record (not ready to merge)
+
+Status: **NOT READY TO MERGE.** Code complete for the parts that need no external input. Story stays open.
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. Commits: `17ce46a` (gateway core), `0d37fb0` (fallback and outcome audit).
+Base: `origin/develop` at `6eab89a`. No PR exists yet. Merge: not authorized.
+
+Exact items that prevent completion (external, not code):
+
+1. Product approval, AI actor key: `governance.ai.execute` (or a named alternative), grants, and owner-only status. Source:
+   `docs/architecture/e13-ai-actor-permission-proposal.md`, section 10.
+2. Product approval, AI rate rule values (requests per user, per organization, concurrency). Currently refused by design
+   (`rate_limit_not_configured`). Source: `docs/architecture/e06-ai-execution-decision-proposal.md`, section 3.
+3. AI resource store and publish state (DFR1-019). Without it the resource gate refuses every AI call. This is a dependency on
+   another story, not an approval.
+4. Provider data-use approval for OpenAI (E01 matrix, row 5). Blocks any call that carries customer data.
+5. Sandbox credential and a sandbox organization with a spend cap, then one recorded successful live verification, and
+   `PROVIDER_LIVE_ADAPTERS_ENABLED=true` in that sandbox only.
+6. First speech and multimodal provider choice, if those acceptance items stay in DFR1-015 (otherwise they move to a later story).
+
+Code-level items that remain: none for DFR1-015 beyond the above, provided the approvals are granted as proposed.
+When item 1 is granted, the code change is: add the key to the catalogue (migration to backfill existing roles), point
+`DEFAULT_AI_PERMISSION` at it, and remove the test seam `allow_actor_execution_permission` from the gateway tests only where the
+production path is tested.
+
+Resume checklist (next session):
+
+1. `git switch feature/DFR1-E06-ai-gateway-core` and confirm `0d37fb0` (or the newer commit recorded here).
+2. Confirm the decisions above in writing before changing any gate or configuration.
+3. Commands (from `backend/`, with the disposable server on port 5438 running, never port 5433):
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q`
+   - `DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head` (then `downgrade -1`, `upgrade head`)
+   - `.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py`
+   - `cd frontend && npm run build && npm run lint && npx vitest run`
+4. Reusable components: `app/ai_gateway/` (service, routing, adapters, structured, contracts, tasks), the execution gate,
+   the usage ledger, `app/provider_secrets` (credential resolution), the independent audit writer, `tests/governance_helpers.py`
+   seams.
+5. Recovery note: if the disposable PostgreSQL on port 5438 is not running, restart it from its own data directory
+   (`C:/Users/amoun/AppData/Local/Temp/e13-pg-5438`) with `pg_ctl`. Do not use port 5433.
+6. Open PR text: `C:/Users/amoun/AppData/Local/Temp/` (regenerate from section 19 if missing). The PR must say "not ready to
+   merge" until items 1 to 5 are resolved.

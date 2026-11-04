@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     # Provider connections (ADR-0032). Live adapters are off by default and never enabled in CI.
     provider_live_adapters_enabled: bool = False
     provider_verification_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # Per-call timeout for AI gateway provider calls (DFR1-015). Bounded so a slow provider cannot hold a request open.
+    ai_gateway_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    # Attempts per provider call, including the first. Only transient failures are retried.
+    ai_gateway_max_attempts: int = Field(default=2, ge=1, le=3)
     provider_verification_failure_threshold: int = Field(default=3, ge=1, le=20)
     provider_verification_interval_hours: int = Field(default=12, ge=1, le=720)
     provider_verification_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
