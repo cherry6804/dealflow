@@ -579,7 +579,9 @@ Built in this pass (reusing the existing gateway, document service, outbox, priv
 - **Extraction** (`app/knowledge/extraction.py`): plain text, Markdown and CSV (strict UTF-8); XLSX through openpyxl, which the
   project already declares; DOCX through the standard library (ZIP and `word/document.xml` only). Limits: 10 MB XML, 500 ZIP
   members, 20 MB uncompressed, 10 sheets, 5,000 rows, 50 columns, 200,000 characters. DOCTYPE and ENTITY declarations are refused.
-  PDF and legacy or presentation formats are refused with `format_not_supported`.
+  PDF through `pypdf` 6.21.4 (text only; encrypted files, malformed files, zero-page files and files over 100 pages are refused;
+  200,000 characters maximum; recovery and cross-reference limits set). Legacy or presentation formats are refused with
+  `format_not_supported`. Dependency record: `docs/development/python-dependency-register.md`.
 - **Deletion:** the privacy document executor (`app/governance/privacy_execution.py`) removes a document's chunks before the
   document row. Without this, the RESTRICT foreign key would have made every ingested document undeletable (a defect found
   here and fixed).
@@ -592,7 +594,7 @@ Requirement mapping:
 |---|---|
 | Authenticated, tenant-scoped APIs | Met (tests: 403 without `documents.read`, cross-tenant search returns nothing, cross-tenant ingest returns `document_unavailable`) |
 | Upload lifecycle integration | Met (event in the upload transaction; handler indexes the stored file; tests use real local storage) |
-| Safe extraction for supported formats | Met for TXT, MD, CSV, XLSX, DOCX. **PDF not supported** (needs an approved parser dependency) |
+| Safe extraction for supported formats | Met for TXT, MD, CSV, XLSX, DOCX and PDF (pypdf, approved for this story). Malformed, encrypted, oversized and page-limit PDFs are tested and refused |
 | Prompt injection and untrusted retrieved content | Met as data handling (hostile text returned verbatim in `untrusted_data`, response shape fixed, no permission change). A model-level evaluation needs a reachable model |
 | Retrieval with available infrastructure | Met (application-side cosine over org-scoped rows; no extension required) |
 | Deletion, reprocessing, duplicate ingestion, authorization, tenant isolation, failure recovery | Met (tests in `tests/test_knowledge_lifecycle.py` and `tests/test_knowledge.py`) |
@@ -600,8 +602,10 @@ Requirement mapping:
 
 Verification (final code, `feature/DFR1-E06-knowledge-ingestion`):
 
-- Focused: `tests/test_knowledge.py`, `tests/test_knowledge_lifecycle.py`, `tests/test_ai_gateway.py`: 107 passed.
-- Full backend suite, fresh `dealflow_test` on port 5438: exit code 0; 2,248 passed, 14 skipped, 0 failed (516 s).
+- Focused: `tests/test_knowledge.py`, `tests/test_knowledge_lifecycle.py`, `tests/test_ai_gateway.py`: 116 passed on the final
+  code (after the docstring change, on a freshly created `dealflow_test`). The earlier 107 figure was before the PDF tests.
+- Full backend suite, after the PDF pass (`d016c-full.log`, pytest exit code 0): 2,257 passed, 14 skipped, 0 failed (397 s).
+  Earlier run on the pre-PDF code: 2,248 passed, 14 skipped, 0 failed (516 s).
 - Migration, fresh `dealflow` on port 5438: upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head
   `b9e4f2a7c1d3`.
 - Ruff: clean on the new and changed files. Pre-existing findings are unchanged and not introduced here: four in
@@ -610,7 +614,8 @@ Verification (final code, `feature/DFR1-E06-knowledge-ingestion`):
 
 External approvals and dependencies still open (the code-level criteria are complete except where they need these):
 
-1. PDF extraction: approval of a PDF parser dependency (for example `pypdf`) and its licence and security review.
+1. PDF extraction: resolved. `pypdf` 6.21.4 is pinned; the advisory scan reports no known vulnerabilities; the licence file is
+   BSD-style. The approver should still confirm the full licence text in the dependency register.
 2. `vector` extension: not needed for the current implementation. Only a later index optimization would need it.
 3. Eligible classifications: product approval (proposal: `PUBLIC` and `INTERNAL` only).
 4. Production AI execution: the AI actor key, the AI resource store (DFR1-019), an approved AI rate rule, provider data-use

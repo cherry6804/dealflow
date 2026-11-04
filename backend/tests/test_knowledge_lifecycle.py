@@ -218,12 +218,6 @@ def test_xlsx_text_is_extracted_with_sheet_names() -> None:
     assert "Flat\tPrice" in text and "A1\t250000" in text
 
 
-def test_pdf_is_refused_until_a_parser_is_approved() -> None:
-    with pytest.raises(extraction.ExtractionError) as refused:
-        extraction.extract_text("application/pdf", b"%PDF-1.4 minimal")
-    assert refused.value.reason == "format_not_supported"
-
-
 def test_a_docx_with_a_doctype_is_refused_as_unsafe() -> None:
     with pytest.raises(extraction.ExtractionError) as refused:
         extraction.extract_text(DOCX_TYPE, _docx(["x"], doctype=True))
@@ -448,3 +442,156 @@ def test_search_parameters_are_validated(tenant):
     assert client.get("/api/v1/knowledge/search", params={"query": ""}).status_code == 422
     assert client.get("/api/v1/knowledge/search", params={"query": "x", "top_k": 0}).status_code == 422
     assert client.get("/api/v1/knowledge/search", params={"query": "x", "top_k": 11}).status_code == 422
+
+
+# --- PDF extraction (approved: pypdf) ----------------------------------------------------------
+
+
+def _pdf(pages: list[str]) -> bytes:
+    """A small valid PDF with one text line per page, built here so the test controls every byte."""
+    count = len(pages)
+    objects: dict[int, bytes] = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: f"<< /Type /Pages /Kids [{' '.join(f'{4 + 2 * i} 0 R' for i in range(count))}] /Count {count} >>".encode(),
+        3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    }
+    for index, text in enumerate(pages):
+        page_id, content_id = 4 + 2 * index, 5 + 2 * index
+        objects[page_id] = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
+        ).encode()
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        objects[content_id] = b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: dict[int, int] = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += f"{number} 0 obj\n".encode() + objects[number] + b"\nendobj\n"
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for number in sorted(objects):
+        out += f"{offsets[number]:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def test_pdf_text_is_extracted_page_by_page_in_order() -> None:
+    text = extraction.extract_text(extraction.PDF_TYPE, _pdf(["Price list for flat A.", "Parking on level two."]))
+    assert text.splitlines() == ["Price list for flat A.", "Parking on level two."]
+
+
+def test_an_encrypted_pdf_is_refused() -> None:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter(clone_from=io.BytesIO(_pdf(["Secret figures."])))
+    writer.encrypt(user_password="owner-only-secret")
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    with pytest.raises(extraction.ExtractionError) as refused:
+        extraction.extract_text(extraction.PDF_TYPE, buffer.getvalue())
+    assert refused.value.reason == "encrypted_document"
+
+
+@pytest.mark.parametrize("raw", [b"%PDF-1.4 this is not a pdf at all", _pdf(["Cut short."])[:120]])
+def test_a_malformed_pdf_is_refused_as_unreadable(raw) -> None:
+    with pytest.raises(extraction.ExtractionError) as refused:
+        extraction.extract_text(extraction.PDF_TYPE, raw)
+    assert refused.value.reason == "content_unreadable"
+
+
+def test_a_pdf_over_the_page_limit_is_refused() -> None:
+    pages = [f"Page {number}." for number in range(extraction.MAX_PDF_PAGES + 1)]
+    with pytest.raises(extraction.ExtractionError) as refused:
+        extraction.extract_text(extraction.PDF_TYPE, _pdf(pages))
+    assert refused.value.reason == "page_limit_exceeded"
+
+
+def test_only_page_text_is_extracted_not_script_or_actions() -> None:
+    """A PDF with a JavaScript action: the action is not run, and its source is not returned as text."""
+    script = b"app.alert('hostile');"
+    base = _pdf(["Visible text only."])
+    # Add a JavaScript action to the catalog by rewriting object 1 at the same length, so the offsets stay valid.
+    patched = base.replace(b"<< /Type /Catalog /Pages 2 0 R >>",
+                           b"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (" + script + b") >> >>", 1)
+    assert patched != base
+    text = extraction.extract_text(extraction.PDF_TYPE, patched)
+    assert "hostile" not in text
+    assert "Visible text only." in text
+
+
+def test_an_uploaded_pdf_is_indexed_end_to_end_with_citations(tenant, monkeypatch):
+    _use_provider(monkeypatch, _Provider(_ok_embedding([[1.0, 0.0]])))
+    client = _client(tenant.member, tenant.org)
+    payload = _upload(client, filename="brochure.pdf", content=_pdf(["Brochure: flats from 250000."]),
+                      content_type="application/pdf")
+    assert client.post(f"/api/v1/knowledge/documents/{payload['id']}/ingest").json()["outcome"] == "succeeded"
+
+    _use_provider(monkeypatch, _Provider(_ok_embedding([[1.0, 0.0]])))
+    body = client.get("/api/v1/knowledge/search", params={"query": "flats"}).json()
+    (hit,) = body["hits"]
+    assert hit["citation"]["document_id"] == payload["id"]
+    assert hit["citation"]["display_name"] == "brochure.pdf"
+    assert "flats from 250000" in hit["text"]
+    assert hit["untrusted_data"] is True
+
+
+def test_an_encrypted_uploaded_pdf_is_refused_at_ingestion(tenant, monkeypatch):
+    from pypdf import PdfWriter
+
+    writer = PdfWriter(clone_from=io.BytesIO(_pdf(["Locked."])))
+    writer.encrypt(user_password="locked-secret")
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    provider = _Provider()
+    _use_provider(monkeypatch, provider)
+    client = _client(tenant.member, tenant.org)
+    payload = _upload(client, filename="locked.pdf", content=buffer.getvalue(), content_type="application/pdf")
+    body = client.post(f"/api/v1/knowledge/documents/{payload['id']}/ingest").json()
+    assert body["reason_code"] == "encrypted_document"
+    assert provider.calls == 0
+    assert _chunks_of(uuid.UUID(payload["id"])) == []
+
+
+# --- retries and idempotency ---------------------------------------------------------------------
+
+
+def test_running_the_handler_twice_on_one_event_indexes_once(tenant, monkeypatch):
+    """Outbox redelivery: the second run finds the same content and writes nothing new."""
+    provider = _Provider(_ok_embedding([[0.5, 0.5]]))
+    _use_provider(monkeypatch, provider)
+    client = _client(tenant.member, tenant.org)
+    payload = _upload(client, filename="redelivered.txt", content=b"Delivered twice.", content_type="text/plain")
+    with SessionLocal() as db:
+        event = db.scalars(select(OutboxEvent).where(
+            OutboxEvent.organization_id == tenant.org.id,
+            OutboxEvent.event_type == INGEST_REQUESTED_EVENT,
+            OutboxEvent.aggregate_id == payload["id"])).one()
+        handle_ingest_requested(db, event)
+        db.commit()
+        handle_ingest_requested(db, event)
+        db.commit()
+    assert provider.calls == 1
+    assert [chunk.content for chunk in _chunks_of(uuid.UUID(payload["id"]))] == ["Delivered twice."]
+
+
+def test_a_duplicate_ingestion_event_is_stored_once(tenant):
+    from app.outbox.service import enqueue_event
+
+    document_id = uuid.uuid4()
+    with SessionLocal() as db:
+        for _ in range(2):
+            enqueue_event(
+                db,
+                organization_id=tenant.org.id,
+                event_type=INGEST_REQUESTED_EVENT,
+                aggregate_type="document",
+                aggregate_id=str(document_id),
+                idempotency_key=f"knowledge-ingest:{document_id}",
+                payload={"document_id": str(document_id), "user_id": str(tenant.member.id)},
+            )
+            db.commit()
+        count = len(db.scalars(select(OutboxEvent).where(
+            OutboxEvent.organization_id == tenant.org.id,
+            OutboxEvent.idempotency_key == f"knowledge-ingest:{document_id}")).all())
+    assert count == 1

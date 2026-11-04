@@ -260,7 +260,7 @@ def test_non_text_documents_are_refused(world, monkeypatch):
     _stub_bytes(monkeypatch, b"%PDF-1.4")
     provider = _Provider()
     _use_provider(monkeypatch, provider)
-    assert _ingest(world, document_id).reason_code == "format_not_supported"
+    assert _ingest(world, document_id).reason_code == "content_unreadable"
     assert provider.calls == 0
 
 

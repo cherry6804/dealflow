@@ -1,13 +1,14 @@
 """Safe text extraction for knowledge ingestion (DFR1-016).
 
-Supported without any new dependency:
+Supported:
 
 - plain text, Markdown and CSV, decoded as strict UTF-8;
 - XLSX, through ``openpyxl``, which the project already declares;
-- DOCX, through the standard library: the package is read as a ZIP, and only ``word/document.xml`` is parsed.
+- DOCX, through the standard library: the package is read as a ZIP, and only ``word/document.xml`` is parsed;
+- PDF, through ``pypdf`` (pinned in ``pyproject.toml`` and ``uv.lock``, see ``docs/development/python-dependency-register.md``).
+  Text only; encrypted, malformed and over-page-limit files are refused.
 
-Not supported: PDF, legacy Office formats and presentations. A PDF parser is a new dependency that needs an approved deployment
-decision, so those formats are refused with ``format_not_supported`` rather than parsed unsafely.
+Not supported: legacy Office formats and presentations, which are refused with ``format_not_supported``.
 
 Limits, all enforced before parsing: the stored file size, the ZIP member count and total uncompressed size, the XML size,
 the number of sheets, rows and columns, and the total characters returned. XML that declares a DTD or entities is refused,
@@ -22,11 +23,14 @@ from xml.etree import ElementTree
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 TEXT_TYPES: frozenset[str] = frozenset({"text/plain", "text/markdown", "text/csv"})
+PDF_TYPE = "application/pdf"
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-SUPPORTED_TYPES: frozenset[str] = TEXT_TYPES | {XLSX_TYPE, DOCX_TYPE}
+SUPPORTED_TYPES: frozenset[str] = TEXT_TYPES | {PDF_TYPE, XLSX_TYPE, DOCX_TYPE}
 
 MAX_EXTRACTED_CHARACTERS = 200_000
 MAX_ZIP_MEMBERS = 500
@@ -35,12 +39,18 @@ MAX_XML_BYTES = 10_000_000
 MAX_SHEETS = 10
 MAX_ROWS = 5_000
 MAX_COLUMNS = 50
+MAX_PDF_PAGES = 100
+# Recovery and cross-reference limits passed to pypdf, so a damaged or hostile file cannot make it scan without bound.
+PDF_ROOT_RECOVERY_LIMIT = 1_000
+PDF_XREF_MAX_ENTRIES = 100_000
 
 REASON_FORMAT = "format_not_supported"
 REASON_NOT_TEXT = "content_not_utf8_text"
 REASON_UNSAFE = "unsafe_document_structure"
 REASON_UNREADABLE = "content_unreadable"
 REASON_TOO_LARGE = "content_too_large"
+REASON_ENCRYPTED = "encrypted_document"
+REASON_PAGE_LIMIT = "page_limit_exceeded"
 
 _DOCX_TEXT = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
 _DOCX_PARAGRAPH = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
@@ -58,6 +68,8 @@ def extract_text(content_type: str, raw: bytes) -> str:
     """Return the text of a supported document, or raise ``ExtractionError``."""
     if content_type in TEXT_TYPES:
         return _decode_text(raw)
+    if content_type == PDF_TYPE:
+        return _extract_pdf(raw)
     if content_type == XLSX_TYPE:
         return _extract_xlsx(raw)
     if content_type == DOCX_TYPE:
@@ -134,3 +146,39 @@ def _extract_docx(raw: bytes) -> str:
         if sum(len(item) for item in paragraphs) > MAX_EXTRACTED_CHARACTERS:
             raise ExtractionError(REASON_TOO_LARGE)
     return "\n".join(paragraphs)
+
+
+def _extract_pdf(raw: bytes) -> str:
+    """Extract the text of a PDF. Encrypted files, malformed files and files over the page limit are refused.
+
+    Text only: no annotation, form, script or embedded-file content is read, and nothing in the file is executed.
+    """
+    try:
+        reader = PdfReader(
+            io.BytesIO(raw),
+            strict=False,
+            root_object_recovery_limit=PDF_ROOT_RECOVERY_LIMIT,
+            xref_stream_maximum_entries=PDF_XREF_MAX_ENTRIES,
+        )
+    except (PdfReadError, ValueError, TypeError, KeyError, IndexError, OSError, AssertionError) as exc:
+        raise ExtractionError(REASON_UNREADABLE) from exc
+    try:
+        if reader.is_encrypted:
+            raise ExtractionError(REASON_ENCRYPTED)
+        page_count = len(reader.pages)
+        if page_count == 0:
+            raise ExtractionError(REASON_UNREADABLE)
+        if page_count > MAX_PDF_PAGES:
+            raise ExtractionError(REASON_PAGE_LIMIT)
+        lines: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                lines.append(text.strip())
+            if sum(len(item) for item in lines) > MAX_EXTRACTED_CHARACTERS:
+                raise ExtractionError(REASON_TOO_LARGE)
+    except ExtractionError:
+        raise
+    except (PdfReadError, ValueError, TypeError, KeyError, IndexError, OSError, AssertionError) as exc:
+        raise ExtractionError(REASON_UNREADABLE) from exc
+    return "\n".join(lines)
