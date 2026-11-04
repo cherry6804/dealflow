@@ -47,6 +47,7 @@ def run_forever(
 
 def _register_handlers() -> None:
     # Governance handlers (usage alert delivery) must be registered before any dispatch.
+    from app.agents.handlers import register_agent_handlers
     from app.governance.alert_delivery import register_governance_handlers
     from app.knowledge.handlers import register_knowledge_handlers
     from app.providers.verification import register_provider_handlers
@@ -54,6 +55,7 @@ def _register_handlers() -> None:
     register_governance_handlers()
     register_provider_handlers()
     register_knowledge_handlers()
+    register_agent_handlers()
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1025,3 +1025,104 @@ later story. No write tools were added, and no permission was granted automatica
 - DFR1-019 (agent definitions, versioning and runtime) depends on DFR1-018 and DFR1-017. The typed tool registry it needs is now on this branch.
 - DFR1-033 (Dealsflo Copilot with authorized business queries) depends on DFR1-015 and DFR1-018. Its read tools for leads, requirements,
   properties and deals now exist; Copilot itself is not built.
+
+## 27. DFR1-019 agent definitions, versioning and execution runtime (E07)
+
+Branch: `feature/DFR1-E07-agent-runtime`, cut from `origin/develop` at `9e34363` (DFR1-018 merged as PR #158).
+Dependencies: DFR1-018 is merged. DFR1-017 is merged (`a869438`); its tracker status is Partial because the SIBVO usage
+reconciliation (DFR1-053) is open, which this story does not need. Architecture: `docs/architecture/agent-runtime.md`.
+
+### What was built
+
+- Definitions: strict JSON configuration (`app/agents/configuration.py`). Unknown fields are refused at every level. Tool
+  assignments are limited to the approved registry. Inputs are declared. The plan is a fixed list of tool, knowledge, model and
+  approval steps. Each limit has a floor and a hard ceiling. Trigger is manual only.
+- Versions: a mutable draft per agent. Publishing writes an immutable numbered version with a validation snapshot. Executions are
+  pinned to the version they started with. Rollback repoints the agent to an earlier version after revalidating it; no version is
+  copied, edited or created.
+- Lifecycle: publish, pause, resume, archive, preview (no tool, model or provider called), roll back.
+- Publish and resume revalidate tool availability and each tool's permission for the actor, knowledge sources (available, eligible,
+  scanned, and readable by the actor), the text model route, the AI capability (switches, entitlement, provider readiness), and
+  every required limit.
+- Runtime (`app/agents/runtime.py`): creation checks the initiator's active membership and `agents.run`, the agent's published state,
+  the pinned input, concurrency and hourly limits, and the static checks. It stores the execution and queues an outbox event. The
+  outbox handler (`app/agents/handlers.py`, registered in both worker entry points) runs the steps one at a time, recording each
+  before moving on. Before every step: cancellation, deadline, membership, `agents.run`, agent published state, and AI capability.
+- Steps reuse the platform: model steps through the AI gateway (`ai.agents`, text task, structured output, bounded retries for
+  transient failures); tool steps through `invoke_tool` (DFR1-018) as the initiator; knowledge steps through `retrieve` (DFR1-016),
+  restricted to the agent's assigned documents (a new optional `document_ids` filter); approval steps pause the run until a different
+  member with `agents.approve` decides.
+- Recovery: a restart resumes at the next unrecorded step. A step started but not recorded as finished fails the run as
+  `interrupted_step` and is not repeated. Duplicate or late events do nothing.
+- Idempotency: the execution key is unique per organization. A repeated key with the same agent and input returns the stored
+  execution; a repeated key with different content is refused.
+- HTTP API (`app/api/agents.py`, router registered in `app/main.py`): tool catalogue, agent CRUD for drafts, preview, publish,
+  pause, resume, archive, rollback, versions, execution creation (202), execution list and detail with steps, cancel, and approval
+  decision. Errors carry a stable reason and, for validation, the problems found.
+- Frontend: `/agents` page (`pages/AgentsPage.tsx`), API client (`services/agentApi.ts`), pure helpers with unit tests
+  (`pages/agentPageHelpers.ts`). The page shows only data returned by the API. It is not in the workspace navigation menu yet.
+- Permissions: `agents.read`, `agents.manage`, `agents.publish`, `agents.run`, `agents.approve`. The system Owner role receives them
+  through the migration. No other role receives them automatically.
+
+### Migration
+
+- `e2a8c4f1b9d7_agent_runtime` (down revision `d2b6f8a1c4e7`): creates `agents`, `agent_versions`, `agent_executions` and
+  `agent_execution_steps`, adds the five permissions and grants them to the Owner role. Downgrade refuses while agent rows exist.
+- Validation on a freshly created `dealflow` database (port 5438): `alembic upgrade head` exit 0; `downgrade -1` exit 0;
+  `upgrade head` exit 0; single head `e2a8c4f1b9d7`.
+
+### Architectural decisions
+
+- The plan is a fixed list. There is no model-driven loop and no model-chosen tool. This bounds steps, tool calls and recursion.
+- Approval steps use execution step records, not the governance approval requests (E13). The governance requests are keyed to one
+  exact payload hash and require their capability to be marked approval-required, which would force an approval on every agent step.
+  Unifying the two is a follow-up.
+- `execution_gates_pending` does not block publishing or preview. It means the production approvals for AI execution are missing. An
+  execution is still refused at the execution gate until they exist, so nothing runs unapproved.
+- Tool calls and agent executions are rate-limited (per agent per hour, per organization per hour, and concurrency). They are not
+  charged as AI credits: the usage ledger has no unit for them. The gateway continues to meter model tokens and embedding usage.
+- A run holds the execution's row lock for its duration, which serializes runs of one execution.
+- Tool steps are not retried by the runtime. Model steps retry transient failures up to `max_retries`.
+
+### Tests
+
+- `tests/test_agents_definitions.py`: 27 tests. Configuration validation (named problems), drafts and tenant isolation, permission
+  denial for create and publish, publish-time checks (limits, AI disabled, ineligible knowledge), immutable versions, rollback,
+  pause and resume with revalidation, archive, and preview with no side effects.
+- `tests/test_agents_runtime.py`: 28 tests. Queued execution and step records; version pinning; idempotency and conflict; invalid input;
+  duplicate delivery; initiator permission and tool-permission refusal at creation; missing provider readiness; in-flight disable of AI,
+  pause, and membership revocation; exhausted budget; deadline; cancellation (queued and running); bounded retries; approval pause,
+  approve, self-approval refusal and rejection; concurrency and hourly limits; output size; plan length refusal; interrupted-step
+  recovery; deadline sweep; audit attribution to the initiator and correlation id; cross-organization denial.
+- `tests/test_agents_api.py`: 6 tests over HTTP. Tool catalogue, create, publish, run with repeat returning the stored execution,
+  permission refusal, cross-organization not found, invalid configuration with problems, and cancel.
+- `tests/test_ai_tools.py` and `tests/test_ai_tools_crm.py` (existing, from DFR1-018): unchanged and passing.
+- Frontend: `src/pages/agentPageHelpers.test.ts`, 12 tests.
+
+### Verification (state of the code; the only later edit restored one blank line in `authz/permissions.py`, which changes no behaviour)
+
+- Full backend suite: `pytest -q`, exit code 0; 2,415 passed, 14 skipped, 0 failed (738 s). Log `dfr1019-full.log`.
+- Focused agent, tool and knowledge tests were run during development: 125 passed.
+- Frontend: `npm run build` exit 0; `npm run lint` exit 0 (existing and new warnings only; the new page has one
+  set-state-in-effect warning from loading the list on mount); `npx tsc -b --noEmit` exit 0; `npx vitest run` exit 0, 19 files and
+  135 tests.
+- Ruff: no findings in the new backend files other than those already present in shared files at HEAD.
+- Diff review: changed existing files are `authz/permissions.py` (five catalogue entries), `config.py` (one setting),
+  `db/models/__init__.py` (model registration), `governance/table_inventory.py` (four entries), `knowledge/service.py` (optional
+  document filter, default unchanged), `main.py` (router), `outbox/runtime.py` and `outbox/worker.py` (handler registration),
+  `tests/conftest.py` (shared fixture registration), and `AppRouter.tsx` (route). No secret or credential is in the diff.
+
+### Known limitations and production blockers
+
+1. Agent execution history (`agent_executions`, `agent_execution_steps`) is not yet included in privacy export or deletion. It is
+   recorded as not covered in the table inventory. It must be covered before production runs.
+2. Agent approvals use execution step records, separate from governance approval requests (see decisions).
+3. Pending governance approvals do not block publishing or preview; execution is refused at the execution gate.
+4. Tool and agent execution counts are rate-limited, not charged as AI credits.
+5. Triggers are manual only.
+6. `expire_stale_running` is implemented and tested but is not scheduled. A run whose worker dies is finished as `interrupted_step`
+   or `timed_out` only when its event is next delivered. A scheduled sweep is needed before production.
+7. Production AI execution is refused until the AI actor key, the AI resource store (DFR1-019 resource gate) and an approved AI rate
+   rule exist (existing gate behaviour), plus provider data-use approval and a sandbox verification.
+8. Per-step traces and the final output are not yet covered by export or deletion (see 1).
+9. The agents page is not in the workspace navigation menu, and it has no component-level tests (helper logic is tested).

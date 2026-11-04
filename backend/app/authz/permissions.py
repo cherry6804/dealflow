@@ -66,6 +66,11 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("governance.channels.manage", "Configure channel policy and contact do-not-disturb."),
     ("provider_credentials.read", "View provider credential metadata."),
     ("provider_credentials.manage", "Create, rotate and revoke provider credentials."),
+    ("agents.read", "View agent definitions, versions and executions."),
+    ("agents.manage", "Create and edit agent drafts."),
+    ("agents.publish", "Publish, pause, resume, roll back and archive agents."),
+    ("agents.run", "Start an agent execution."),
+    ("agents.approve", "Approve or reject an agent's approval step."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)

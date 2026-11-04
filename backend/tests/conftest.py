@@ -9,6 +9,9 @@ import app.db.models  # noqa: F401  (registers every model on Base.metadata)
 from app.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
+
+# Fixtures shared by the agent tests (DFR1-019). Registered here so test modules do not re-import them.
+from tests.agents_support import keyring, world  # noqa: F401
 from tests.clamd_fake import FAKE_CLAMD
 
 

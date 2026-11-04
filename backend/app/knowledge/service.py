@@ -257,14 +257,20 @@ def retrieve(
     query: str,
     top_k: int = 5,
     sleep: Sleep = time.sleep,
+    document_ids: frozenset[UUID] | None = None,
 ) -> RetrieveResult:
-    """Return the best chunks of the organization's eligible, available documents for a query, with citations."""
+    """Return the best chunks of the organization's eligible, available documents for a query, with citations.
+
+    ``document_ids`` narrows the search to the given documents (an agent's assigned sources). An empty set searches nothing.
+    """
     if not actor_permission_granted(db, organization_id=organization_id, user_id=user_context.user.id,
                                        permission_key="documents.read"):
         return RetrieveResult(outcome="denied", reason_code=REASON_PERMISSION_DENIED)
     cleaned = query.strip()
     if not cleaned or len(cleaned) > MAX_INPUT_CHARACTERS or not 1 <= top_k <= MAX_TOP_K:
         return RetrieveResult(outcome="denied", reason_code=REASON_INVALID_QUERY)
+    if document_ids is not None and not document_ids:
+        return RetrieveResult(outcome="succeeded", reason_code=REASON_OK, hits=())
 
     vectors, embedding_reason = _embed(
         db,
@@ -287,6 +293,7 @@ def retrieve(
             Document.status == Document.STATUS_AVAILABLE,
             Document.scan_status == Document.SCAN_CLEAN,
             Document.access_classification.in_(sorted(ELIGIBLE_CLASSIFICATIONS)),
+            *([KnowledgeChunk.document_id.in_(sorted(document_ids, key=str))] if document_ids is not None else []),
         )
     ).all()
 

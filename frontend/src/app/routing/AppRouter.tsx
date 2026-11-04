@@ -62,6 +62,7 @@ const SiteVisitsPage = lazy(
 // Operations
 const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
 const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
+const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const AutomationRulesPage = lazy(
   () => import("../../pages/AutomationRulesPage"),
 );
@@ -204,6 +205,8 @@ export default function AppRouter() {
               path="/automation-rules"
               element={<AutomationRulesPage />}
             />
+
+            <Route path="/agents" element={<AgentsPage />} />
 
             <Route
               path="/automation-history"
