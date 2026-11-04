@@ -110,6 +110,7 @@ REASON_OK = "ok"
 REASON_PERMISSION_DENIED = "permission_denied"
 REASON_DOCUMENT_UNAVAILABLE = "document_unavailable"
 REASON_NOT_ELIGIBLE = "classification_not_eligible"
+REASON_NOT_SCANNED = "not_malware_scanned"
 REASON_UNSUPPORTED = "format_not_supported"
 REASON_TOO_LARGE = "content_too_large"
 REASON_NO_TEXT = "no_text_layer"
@@ -382,6 +383,8 @@ def review_document(
         return _refused(REASON_DOCUMENT_UNAVAILABLE)
     if document.access_classification not in ELIGIBLE_CLASSIFICATIONS:
         return _refused(REASON_NOT_ELIGIBLE)
+    if document.scan_status != Document.SCAN_CLEAN:
+        return _refused(REASON_NOT_SCANNED)
     content_type = document.content_type or ""
     if content_type not in IMAGE_TYPES and content_type != PDF_TYPE:
         return _refused(REASON_UNSUPPORTED)

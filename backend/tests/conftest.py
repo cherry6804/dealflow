@@ -9,6 +9,7 @@ import app.db.models  # noqa: F401  (registers every model on Base.metadata)
 from app.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
+from tests.clamd_fake import FAKE_CLAMD
 
 
 def pytest_configure() -> None:
@@ -17,6 +18,10 @@ def pytest_configure() -> None:
     # sessions. Enable the explicit test-only fallback here. Tests that
     # verify denial turn it off with monkeypatch.
     os.environ.setdefault("LOCAL_ENTITLEMENT_FALLBACK_ENABLED", "true")
+    # Uploads are malware-scanned. Tests use a local stand-in clamd daemon that speaks the real protocol, so the scanner
+    # client runs for real. It is not a bypass: an upload still needs a CLEAN verdict.
+    os.environ["CLAMAV_HOST"] = "127.0.0.1"
+    os.environ["CLAMAV_PORT"] = str(FAKE_CLAMD.start())
     # Settings are cached once per process; drop any copy read at import time.
     get_settings.cache_clear()
     settings = get_settings()

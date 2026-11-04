@@ -727,3 +727,68 @@ Open items (external approvals or provider work; each one blocks a criterion nam
 5. Mixed PDFs (some pages with text, some scanned) are read from the text layer only. Scanned pages are routed to OCR only
    when the whole document has no text.
 6. No review UI. The API is the only surface.
+
+## 24. DFR1-035 completion pass: malware scanning and a provider-health concurrency defect
+
+Branch: `feature/DFR1-E10-document-extraction-mvp`, continuing from `21a3237`.
+
+### Concurrency defect (pre-existing on develop, not caused by DFR1-035)
+
+- Test: `tests/test_provider_health.py::test_concurrent_sweeps_record_each_episode_once`. Reproduced at 1 failure in 8 isolated
+  runs before the fix. A temporary probe showed the per-sweep counts as `[1,1,1,1]`, `[0,1,1,1]`, `[1,1,0,1]` and similar, with
+  one audit row in every run.
+- Root cause: `_record_stale` checked whether an episode was recorded, then inserted it. When two sweeps raced, the loser's
+  insert hit the idempotency key. `persist_independent_audit_event` then returned the stored row, and `_record_stale` treated
+  that as a successful write. Every racing sweep therefore counted an episode it did not record, so the reported count was
+  wrong. The stored data was correct: one row, guarded by the unique partial index.
+- The test's expectation `all(count == 1)` codified that over-count. It is corrected to `sorted(results) == [0, 0, 0, 1]`: exactly
+  one sweep writes the episode and the others count nothing. The correction is to the expectation, and the defect is fixed in
+  the code.
+- Fix: `persist_idempotent_audit_event` (in `app/audit/independent.py`) returns True only when the call wrote the row. The
+  internal writer is shared, so the audit trail's behaviour is unchanged. `_record_stale` uses it.
+- Regression: `test_a_sweep_that_loses_the_insert_race_counts_nothing` forces the race deterministically and asserts the count
+  is zero. The concurrency test passed 40 of 40 isolated repetitions after the fix. `tests/test_provider_health.py` passed 15 of
+  15 repeated runs.
+- Develop: `app/providers/` and `app/audit/` are unchanged on this branch compared with `origin/develop`, so the defect is present
+  on develop. A separate fix is not needed beyond this change.
+
+### Upload malware scanning (new)
+
+- Scanner interface: `app/malware_scanning/base.py` (`MalwareScanner`, `ScanStatus`, `ScanResult`). Only `clean` lets a file be
+  stored. `infected`, `too_large`, `unavailable` and `error` each refuse the upload.
+- ClamAV integration: `app/malware_scanning/clamav.py` speaks the clamd INSTREAM protocol with the standard library. No new
+  dependency. Replies are parsed strictly: anything that is not `stream: OK`, `stream: <name> FOUND`, or a size-limit
+  error is an error, never clean.
+- Configuration: `CLAMAV_HOST` (empty means no scanner, and every upload is refused), `CLAMAV_PORT`, `CLAMAV_TIMEOUT_SECONDS`.
+  A clamd daemon must run as its own service in each environment. The repository does not provide one, so production scanning
+  needs that deployment.
+- Order in the upload path: the size limit, then the signature check, then the scan, then storage. A file the signature check
+  rejects never reaches the scanner. The scan runs on the staged bytes before anything is stored.
+- Outcomes: infected returns 422 and stores nothing. The scanner's size limit returns 413. Unavailable, timed out, unreachable,
+  unanswered or a malformed reply returns 503 and stores nothing. A failure to write the scan audit record also returns 503.
+- Recording: every verdict is written to the independent audit trail (`document.malware_scan`) with its decision, status,
+  engine, detail, size and, for infected files, the finding name. Documents store `scan_status`, `scan_engine` and `scanned_at`.
+- Eligibility: AI ingestion and document review refuse any document whose `scan_status` is not `clean`, with
+  `not_malware_scanned`. Retrieval also filters on `clean`. Documents created before this migration are `not_scanned` and are
+  not eligible until a scan is recorded for them; no rescan job is built.
+- Migration: `d2b6f8a1c4e7` adds the three document columns (downgrade removes them).
+- Tests: `tests/test_malware_scanning.py` (14 tests) covers clean, large-file full scan, infected, unreachable, not configured,
+  silent scanner, malformed reply, scanner size limit, malformed file before scanning, oversized file before scanning,
+  unscanned documents refused for ingestion and review, clean documents past the gate, reply parsing, and that only clean
+  documents are stored. Tests use `tests/clamd_fake.py`, a stand-in daemon that speaks the real protocol and reports the EICAR
+  test string as a finding. It is not a malware engine, and the test environment does not bypass the scan.
+
+### Verification
+
+- Full backend suite on the final code (`pytest -q`, log `dfr1035-r3.log`): exit code 0; 2,303 passed, 14 skipped, 0 failed (398 s).
+  The skips are the live SIBVO contract check, which is not configured here, and existing skips. The run was on the code as it
+  stands now; the only later edit was this evidence record, which no test reads.
+- Concurrency stability: `test_concurrent_sweeps_record_each_episode_once` passed 40 of 40 isolated runs. `test_provider_health.py` passed 16 of 16 in repeated runs.
+- Migration chain, fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `d2b6f8a1c4e7`.
+- Ruff, on every file this story changed: clean for new code. Findings remaining in touched files (blind `except` in the upload path, an
+  import-order finding in `documents/service.py` and `models/document.py`, and a `datetime.UTC` finding) are present at HEAD on develop and were not introduced here.
+- Frontend (no frontend file changed): `npm run build` exit 0, which includes the TypeScript build; `npm run lint` exit 0; `npx vitest run` exit 0, 123 tests.
+- Security: `pip-audit` on the exported locked dependencies: "No known vulnerabilities found", exit 0. No dependency was added by this pass.
+- Upload paths: `upload_document` is the only path that creates a document row or stores an uploaded file. The privacy export archive is written by the
+  privacy executor, not from user input, so it is not a document upload. Every eligibility check that reads documents (`ingest_document`,
+  `retrieve`, `review_document`) requires `scan_status = clean`. Retrieval filters on it in the database query.

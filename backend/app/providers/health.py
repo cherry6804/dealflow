@@ -25,7 +25,7 @@ from app.audit.attribution import register_system_actor, system_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
     AuditPersistenceError,
-    persist_independent_audit_event,
+    persist_idempotent_audit_event,
 )
 from app.config import get_settings
 from app.db.models.audit_event import AuditEvent
@@ -108,7 +108,9 @@ def _record_stale(db: Session, connection: ProviderConnection) -> bool:
     if _already_recorded(db, connection, verified_at):
         return False
     try:
-        persist_independent_audit_event(
+        # True only when this call wrote the row. A concurrent sweep that lost the insert race gets False here, so the
+        # count returned by the sweep is the number of episodes this sweep actually recorded.
+        return persist_idempotent_audit_event(
             db,
             attribution=system_attribution(
                 organization_id=connection.organization_id,
@@ -135,6 +137,5 @@ def _record_stale(db: Session, connection: ProviderConnection) -> bool:
             extra={"connection_id": str(connection.id), "organization_id": str(connection.organization_id)},
         )
         return False
-    return True
 
 

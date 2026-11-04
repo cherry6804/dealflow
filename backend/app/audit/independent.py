@@ -119,7 +119,7 @@ def _verify_attribution(session: Session, attribution: AuditAttribution) -> None
             raise AuditAttributionError("The audit attribution could not be verified.")
 
 
-def persist_independent_audit_event(
+def _persist_independent_audit(
     source: Session | Engine,
     *,
     attribution: AuditAttribution,
@@ -134,15 +134,7 @@ def persist_independent_audit_event(
     causation_id: UUID | None = None,
     idempotency_key: str | None = None,
     metadata: Mapping[str, Any] | None = None,
-) -> AuditEvent:
-    """Commit one audit row in its own transaction and return it.
-
-    ``source`` supplies the database only. The caller's transaction is neither used nor committed, so
-    the row survives a rollback of that transaction. The attribution is verified against the database
-    before the write. Raises ``AuditAttributionError`` when it cannot be verified, ``AuditPayloadError``
-    when the metadata is not allowed, and ``AuditPersistenceError`` when the write fails. Nothing is
-    written in any of those cases.
-    """
+) -> tuple[AuditEvent, bool]:
     if outcome not in {OUTCOME_REQUESTED, OUTCOME_COMPLETED, OUTCOME_DENIED}:
         raise ValueError(f"Unsupported audit outcome: {outcome!r}.")
     encoded = encode_metadata(metadata)
@@ -184,8 +176,89 @@ def persist_independent_audit_event(
             )
             if stored is None:
                 raise AuditPersistenceError("The audit record could not be written.") from exc
-            return stored
+            return stored, False
         except SQLAlchemyError as exc:
             session.rollback()
             raise AuditPersistenceError("The audit record could not be written.") from exc
+    return row, True
+
+
+def persist_independent_audit_event(
+    source: Session | Engine,
+    *,
+    attribution: AuditAttribution,
+    event_type: str,
+    action: str,
+    decision: str,
+    outcome: str,
+    permission_key: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    correlation_id: str | None = None,
+    causation_id: UUID | None = None,
+    idempotency_key: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> AuditEvent:
+    """Commit one audit row in its own transaction and return it.
+
+    ``source`` supplies the database only. The caller's transaction is neither used nor committed, so
+    the row survives a rollback of that transaction. The attribution is verified against the database
+    before the write. Raises ``AuditAttributionError`` when it cannot be verified, ``AuditPayloadError``
+    when the metadata is not allowed, and ``AuditPersistenceError`` when the write fails. Nothing is
+    written in any of those cases.
+    """
+    row, _created = _persist_independent_audit(
+        source,
+        attribution=attribution,
+        event_type=event_type,
+        action=action,
+        decision=decision,
+        outcome=outcome,
+        permission_key=permission_key,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        correlation_id=correlation_id,
+        causation_id=causation_id,
+        idempotency_key=idempotency_key,
+        metadata=metadata,
+    )
     return row
+
+
+def persist_idempotent_audit_event(
+    source: Session | Engine,
+    *,
+    attribution: AuditAttribution,
+    event_type: str,
+    action: str,
+    decision: str,
+    outcome: str,
+    permission_key: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    correlation_id: str | None = None,
+    causation_id: UUID | None = None,
+    idempotency_key: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """Like ``persist_independent_audit_event``, and return True only when this call wrote the row.
+
+    False means a row with the same idempotency key was already stored, by this call's earlier attempt or by a
+    concurrent one. Callers that count what they recorded must use this, so a duplicate is not counted.
+    """
+    _row, created = _persist_independent_audit(
+        source,
+        attribution=attribution,
+        event_type=event_type,
+        action=action,
+        decision=decision,
+        outcome=outcome,
+        permission_key=permission_key,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        correlation_id=correlation_id,
+        causation_id=causation_id,
+        idempotency_key=idempotency_key,
+        metadata=metadata,
+    )
+    return created
