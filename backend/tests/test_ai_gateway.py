@@ -779,7 +779,8 @@ def test_a_route_change_is_audited_with_the_previous_value(enabled):
     changed = [item for item in metadata if "previous" in item]
     assert len(changed) == 1
     assert changed[0]["model"] == "second-model"
-    assert changed[0]["previous"] == {"provider_key": "openai", "model": "first-model"}
+    assert changed[0]["previous"]["provider_key"] == "openai"
+    assert changed[0]["previous"]["model"] == "first-model"
 
 
 def _production_org(monkeypatch, org):
@@ -902,3 +903,148 @@ def _org_row(organization_id: uuid.UUID):
         assert row is not None
         db.expunge(row)
         return row
+
+
+# --- fallback routing and the outcome audit (DFR1-015 completion) ----------------------------
+
+
+def test_the_fallback_answers_after_the_primary_fails_transiently(enabled, live_settings, monkeypatch):
+    organization_id, user = enabled
+    _store_credential(organization_id, user.id, f"{SECRET_PREFIX}fallback-a")
+    _configure_budgets(organization_id)
+    with SessionLocal() as db:
+        set_route(db, organization_id=organization_id, actor_user_id=user.id, task=TaskType.TEXT,
+                  provider_key="openai", model="primary-model",
+                  fallback_provider_key="openai", fallback_model="fallback-model")
+        db.commit()
+    provider = _Provider(httpx.Response(503), httpx.Response(503),
+                         _ok_text("from the fallback", prompt=4, completion=6))
+    _use_provider(monkeypatch, provider)
+
+    with SessionLocal() as db:
+        result = gateway.execute(db, _text_request(organization_id, user), sleep=_no_sleep)
+        db.commit()
+
+    assert result.outcome == "succeeded"
+    assert result.model == "fallback-model"
+    assert result.text == "from the fallback"
+    assert provider.calls == 3  # two attempts on the primary, then the fallback's first attempt
+    assert _consumed(organization_id, UsageUnit.TOKENS_OUTPUT) == 6
+
+
+def test_the_fallback_is_not_used_after_a_permanent_failure(enabled, live_settings, monkeypatch):
+    organization_id, user = enabled
+    _store_credential(organization_id, user.id, f"{SECRET_PREFIX}fallback-b")
+    _configure_budgets(organization_id)
+    with SessionLocal() as db:
+        set_route(db, organization_id=organization_id, actor_user_id=user.id, task=TaskType.TEXT,
+                  provider_key="openai", model="primary-model",
+                  fallback_provider_key="openai", fallback_model="fallback-model")
+        db.commit()
+    provider = _Provider(httpx.Response(401), _ok_text("must never be asked"))
+    _use_provider(monkeypatch, provider)
+
+    with SessionLocal() as db:
+        result = gateway.execute(db, _text_request(organization_id, user), sleep=_no_sleep)
+        db.commit()
+
+    assert result.outcome == "failed"
+    assert result.reason_code == "provider_rejected_credential"
+    assert provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"fallback_provider_key": "openai"},  # a provider without a model
+        {"fallback_model": "m"},  # a model without a provider
+        {"fallback_provider_key": "openai", "fallback_model": "primary-model"},  # identical to the primary
+        {"fallback_provider_key": "not-a-provider", "fallback_model": "m"},  # unknown provider
+    ],
+)
+def test_an_invalid_fallback_is_refused_when_the_route_is_written(enabled, kwargs):
+    organization_id, user = enabled
+    with SessionLocal() as db:
+        with pytest.raises(InvalidRouteError):
+            set_route(db, organization_id=organization_id, actor_user_id=user.id, task=TaskType.TEXT,
+                      provider_key="openai", model="primary-model", **kwargs)
+        db.rollback()
+
+
+def test_the_outcome_audit_links_requested_and_completed_and_holds_no_content(enabled, live_settings, monkeypatch):
+    organization_id, user = enabled
+    secret = f"{SECRET_PREFIX}audit-never-in-log"
+    prompt = "Summarise this private prompt text"
+    answer = "A private answer produced by the model"
+    _store_credential(organization_id, user.id, secret)
+    _configure_budgets(organization_id)
+    _set_route(organization_id, user.id, TaskType.TEXT)
+    provider = _Provider(_ok_text(answer, prompt=5, completion=7))
+    _use_provider(monkeypatch, provider)
+
+    with SessionLocal() as db:
+        result = gateway.execute(db, _text_request(organization_id, user, prompt=prompt), sleep=_no_sleep)
+        db.commit()
+    assert result.succeeded
+
+    with SessionLocal() as db:
+        rows = db.scalars(select(AuditEvent).where(
+            AuditEvent.organization_id == organization_id, AuditEvent.event_type == "ai_gateway",
+            AuditEvent.action == "ai_gateway.execute")).all()
+        for row in rows:
+            db.expunge(row)
+    requested = [row for row in rows if row.outcome == "requested"]
+    completed = [row for row in rows if row.outcome == "completed"]
+    assert len(requested) == 1 and len(completed) == 1
+    assert completed[0].causation_id == str(requested[0].id)
+    payload = json.loads(completed[0].event_metadata)
+    assert payload["outcome"] == "succeeded"
+    assert payload["usage"] == {"tokens_input": 5, "tokens_output": 7}
+    for row in rows:
+        assert prompt not in (row.event_metadata or "")
+        assert answer not in (row.event_metadata or "")
+        assert secret not in (row.event_metadata or "")
+
+
+def test_a_failed_call_is_still_completed_in_the_audit(enabled, live_settings, monkeypatch):
+    organization_id, user = enabled
+    _store_credential(organization_id, user.id, f"{SECRET_PREFIX}audit-fail")
+    _configure_budgets(organization_id)
+    _set_route(organization_id, user.id, TaskType.TEXT)
+    provider = _Provider(httpx.Response(401))
+    _use_provider(monkeypatch, provider)
+
+    with SessionLocal() as db:
+        result = gateway.execute(db, _text_request(organization_id, user), sleep=_no_sleep)
+        db.commit()
+    assert result.outcome == "failed"
+
+    with SessionLocal() as db:
+        completed = db.scalars(select(AuditEvent).where(
+            AuditEvent.organization_id == organization_id, AuditEvent.action == "ai_gateway.execute",
+            AuditEvent.outcome == "completed")).all()
+    assert len(completed) == 1
+    assert json.loads(completed[0].event_metadata)["reason_code"] == "provider_rejected_credential"
+
+
+def test_the_route_api_accepts_and_returns_a_fallback(org):
+    organization_id, owner = org
+    client = _client_for(_tenant(owner, _org_row(organization_id)))
+    response = client.put("/api/v1/ai/gateway/routes/text", json={
+        "provider_key": "openai", "model": "gpt-primary",
+        "fallback_provider_key": "openai", "fallback_model": "gpt-fallback",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fallback_model"] == "gpt-fallback"
+    listed = client.get("/api/v1/ai/gateway/routes")
+    assert listed.status_code == 403 or listed.json()["items"][0]["fallback_model"] == "gpt-fallback"
+
+
+def test_the_route_api_refuses_a_half_fallback(org):
+    organization_id, owner = org
+    client = _client_for(_tenant(owner, _org_row(organization_id)))
+    response = client.put("/api/v1/ai/gateway/routes/text", json={
+        "provider_key": "openai", "model": "gpt-primary", "fallback_provider_key": "openai",
+    })
+    assert response.status_code == 422

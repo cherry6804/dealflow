@@ -31,6 +31,10 @@ class AiTaskRoute(Base):
             "task IN ('text', 'embedding', 'speech', 'multimodal')",
             name="ck_ai_task_routes_task",
         ),
+        CheckConstraint(
+            "(fallback_provider_key IS NULL) = (fallback_model IS NULL)",
+            name="ck_ai_task_routes_fallback_pair",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -40,6 +44,9 @@ class AiTaskRoute(Base):
     task: Mapped[str] = mapped_column(String(20), nullable=False)
     provider_key: Mapped[str] = mapped_column(String(40), nullable=False)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Optional second route, tried only after a transient failure of the primary (DFR1-015 fallback).
+    fallback_provider_key: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

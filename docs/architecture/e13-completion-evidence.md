@@ -398,3 +398,61 @@ What is not met, and why DFR1-015 is not Done:
   adds two lines to that file and no new finding.
 
 DFR1-016 (knowledge ingestion and retrieval): not started. It depends on DFR1-015 and on the same production gates.
+
+## 19. DFR1-015 completion pass (E06): gaps, classification and verification
+
+Branch: `feature/DFR1-E06-ai-gateway-core`. This pass adds the two code-level gaps and classifies the rest.
+
+Acceptance criteria, classified:
+
+| Criterion | State | Classification |
+|---|---|---|
+| Route text, embedding, speech and multimodal tasks through adapters | Text and embedding implemented; speech and multimodal refused with `task_not_supported` | Provider dependency (no speech or multimodal provider chosen) |
+| Timeout | Implemented, bounded (`ai_gateway_timeout_seconds`) | Met |
+| Retry | Implemented, transient failures only, bounded (`ai_gateway_max_attempts`) | Met |
+| Fallback | **Implemented in this pass.** Optional second route per task, tried only after a transient failure. Permanent failures stop the task. | Code gap, closed |
+| Structured outputs | Implemented for text (exact key set and JSON types) | Met for text; embeddings return vectors |
+| Provider and model configurable by task | Implemented (owner-only routes, primary and fallback) | Met |
+| Secrets protected | Credentials resolved per organization at call time, never stored in routes, never in results or audit | Met |
+| Token usage captured | Implemented (input and output tokens, settled to actual) | Met |
+| Audio, image and page usage captured | Units exist; no provider reports them | Provider dependency |
+| Provider failure handled safely | Implemented (classified failures, released reservations, withheld unmetered answers) | Met |
+| Outcome audit for model calls | **Implemented in this pass.** Requested record committed before any provider call; completed record linked to it, holding codes and numbers only | Code gap, closed |
+| Live sandbox verification | Not performed. Needs a credential and approved data-use terms | External approval and credential |
+
+Decisions made in this pass (implementation-level, not product decisions):
+
+- A fallback is tried only after a transient failure or a missing credential. A permanent failure stops the task, because
+  another provider would hit the same fault, or would answer a request the first provider refused.
+- The requested audit record is written after the gate allows the call and before the credential is resolved. If it cannot
+  be written, the call is not made.
+- The completed audit record holds the task, provider, model, outcome, reason code, attempt count and usage numbers. It never
+  holds the prompt, the output or the credential.
+
+Verification on the final code (`feature/DFR1-E06-ai-gateway-core`):
+
+- Backend, focused: `tests/test_ai_gateway.py`: 62 passed.
+- Backend, full suite (fresh `dealflow_test` on port 5438): exit code 0; 2,203 passed, 14 skipped, 0 failed (386 s).
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0.
+  Single head `f7c3a9d1e5b2`. The fallback columns and the pair constraint are present.
+- Ruff `check` on the changed backend files: passed.
+- Frontend (`frontend/`): `npm run build` (tsc -b and vite build) exit 0; `npm run lint` exit 0 with two existing warnings in
+  `RequirementsPage.tsx` and `DealsPage.tsx`, neither touched here; `npx vitest run` exit 0, 123 passed. No frontend file changed.
+
+Commands used (reproducible on the disposable server):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest tests/test_ai_gateway.py -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow_test APP_ENVIRONMENT=test .venv/Scripts/python.exe -m pytest -q
+DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5438/dealflow alembic -c ../alembic.ini upgrade head   (then downgrade -1, upgrade head)
+.venv/Scripts/ruff.exe check app/ai_gateway app/api/ai_gateway.py app/db/models/ai_task_route.py tests/test_ai_gateway.py
+cd frontend && npm run build && npm run lint && npx vitest run
+```
+
+Not done, and why this story stays open:
+
+- No live provider verification (external: credential and data-use approval).
+- Speech and multimodal adapters, and audio, image and page usage (provider choice required).
+- Production AI execution stays closed: the AI actor key, the AI resource store and an approved AI rate rule are open
+  (see `e06-ai-execution-decision-proposal.md`).
+- DFR1-016 (knowledge ingestion) has not started.

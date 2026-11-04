@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api/v1/ai/gateway", tags=["ai-gateway"])
 class AiTaskRouteRequest(BaseModel):
     provider_key: str = Field(min_length=1, max_length=40)
     model: str = Field(min_length=1, max_length=120)
+    # Optional fallback, given as a pair or not at all. Checked in the route writer.
+    fallback_provider_key: str | None = Field(default=None, min_length=1, max_length=40)
+    fallback_model: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class AiTaskRouteResponse(BaseModel):
@@ -34,6 +37,8 @@ class AiTaskRouteResponse(BaseModel):
     task: str
     provider_key: str
     model: str
+    fallback_provider_key: str | None = None
+    fallback_model: str | None = None
     updated_at: datetime
 
 
@@ -69,6 +74,8 @@ def put_route(
             task=task,
             provider_key=body.provider_key,
             model=body.model,
+            fallback_provider_key=body.fallback_provider_key,
+            fallback_model=body.fallback_model,
         )
     except InvalidRouteError as exc:
         db.rollback()

@@ -30,12 +30,18 @@ def upgrade() -> None:
         sa.Column("task", sa.String(length=20), nullable=False),
         sa.Column("provider_key", sa.String(length=40), nullable=False),
         sa.Column("model", sa.String(length=120), nullable=False),
+        sa.Column("fallback_provider_key", sa.String(length=40), nullable=True),
+        sa.Column("fallback_model", sa.String(length=120), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("organization_id", "task", name="uq_ai_task_routes_org_task"),
         sa.CheckConstraint(
             "task IN ('text', 'embedding', 'speech', 'multimodal')",
             name="ck_ai_task_routes_task",
+        ),
+        sa.CheckConstraint(
+            "(fallback_provider_key IS NULL) = (fallback_model IS NULL)",
+            name="ck_ai_task_routes_fallback_pair",
         ),
     )
     op.create_index("ix_ai_task_routes_organization_id", "ai_task_routes", ["organization_id"])
