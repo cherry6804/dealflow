@@ -1,6 +1,7 @@
 """DealFlow database models."""
 
 from app.db.models.activity import Activity
+from app.db.models.knowledge_chunk import KnowledgeChunk
 from app.db.models.ai_task_route import AiTaskRoute
 from app.db.models.audit_event import AuditEvent
 from app.db.models.auth_login_rate_limit import AuthLoginRateLimit
@@ -88,6 +89,7 @@ __all__ = [
     "ProviderVerificationAttempt",
     "Activity",
     "AuditEvent",
+    "KnowledgeChunk",
     "AiTaskRoute",
     "AuthLoginRateLimit",
     "AuthSession",

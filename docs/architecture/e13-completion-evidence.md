@@ -499,3 +499,67 @@ Resume checklist (next session):
    (`C:/Users/amoun/AppData/Local/Temp/e13-pg-5438`) with `pg_ctl`. Do not use port 5433.
 6. Open PR text: `C:/Users/amoun/AppData/Local/Temp/` (regenerate from section 19 if missing). The PR must say "not ready to
    merge" until items 1 to 5 are resolved.
+
+## 21. DFR1-016 tenant-scoped knowledge ingestion and retrieval (E06)
+
+Branch: `feature/DFR1-E06-knowledge-ingestion`, cut from `origin/develop` at `da28b6b` (DFR1-015 merged as PR #154).
+Dependency DFR1-015: merged. Story is not Done; see the open items.
+
+Built:
+
+- Chunking: bounded windows (1,000 characters, 100 overlap), at most 200 chunks per document, documents up to 1 MB.
+- Ingestion (`app/knowledge/service.py`, `ingest_document`), in order: `documents.read` checked in the database; the document is
+  available and in the organization; its classification is eligible; its content type is plain text; the bytes decode as strict
+  UTF-8. Embeddings go through the AI gateway (`ai.document_processing`, embedding task). Chunks are written only after every
+  embedding succeeds. Re-ingesting unchanged content makes no provider call.
+- Retrieval, in order: `documents.read`; query bounds; one gateway embedding; chunks of available, eligible documents of the
+  organization only; best `top_k` by cosine similarity, with citations (document id, display name, chunk index). Results carry
+  `untrusted=True`; the module never places retrieved text into a prompt.
+- Derived data: `knowledge_chunks` (migration `b9e4f2a7c1d3`, downgrade drops it). Chunks are removed by
+  `remove_document_chunks`. Retrieval also filters on the document's current status, so a stale chunk is never returned.
+- Privacy inventory: `knowledge_chunks` is `not_covered`, with the reason that it is derived and removed with its source.
+
+Gaps fixed while building this story:
+
+- **Gateway reservation key (defect, DFR1-015 code).** The gate's reservation key came from the correlation id and capability.
+  Two calls for the same capability with no correlation id shared a key, so the second call was refused as
+  `usage_key_conflict`. Every gateway call now carries its own idempotency key. Covered by the retrieval and ingestion tests,
+  which make several calls in one test.
+
+Eligibility (proposal, not approved): only `PUBLIC` and `INTERNAL` documents are ingested. `CONFIDENTIAL` and `RESTRICTED` are
+excluded until product approves otherwise.
+
+Verification:
+
+- `tests/test_knowledge.py`: 24 tests passing. Covers chunk bounds, storage with embeddings, unchanged re-ingestion, permission
+  refusal, classification refusal, content-type and encoding refusal, unavailable and foreign documents, oversized documents
+  and too many chunks, failed embedding leaving prior chunks untouched, production refusal, ranking with citations, exclusion of
+  archived, restricted and foreign documents, permission refusal for retrieval, invalid queries, data-only handling of hostile
+  text, chunk removal, and metering through the gateway.
+- Full backend suite on the final code: exit code 0; 2,227 passed, 14 skipped, 0 failed (595 s), fresh `dealflow_test` on port 5438.
+- Migration on a fresh `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0;
+  single head `b9e4f2a7c1d3`.
+- Ruff: the new and changed files pass. `app/db/models/__init__.py` keeps four findings that exist on `develop` (an unsorted
+  import block, a duplicate import, an unsorted `__all__`, and a duplicate `__all__` entry); this change adds two lines to that
+  file and no new finding.
+- Frontend: `npm run build` exit 0, `npm run lint` exit 0 (two existing warnings), `npx vitest run` exit 0 with 123 tests. No
+  frontend file changed.
+
+Open items (external or product, not code):
+
+1. The AI actor key, the AI resource store (DFR1-019) and an approved AI rate rule. Until then every embedding is refused by
+   the production gate, so ingestion and retrieval cannot run in production.
+2. Live embeddings need provider data-use approval and a recorded sandbox verification (E01 matrix, row 5).
+3. Eligible classifications: product approval (the proposal above).
+4. Similarity search is application-side. A pgvector index needs the `vector` extension, which is not installed on the test
+   server. Installing it, or accepting application-side search at this scale, is a decision.
+5. Not built: an HTTP route, a hook from document upload, text extraction for PDF and office formats, and a prompt-injection
+   evaluation against a real model (no model is reachable in tests).
+
+Pending work reported in Phase 1 of this story (nothing discarded, nothing merged):
+
+- `feature/DFR1-E07-typed-tool-registry` (DFR1-018): one commit `6937172`, no PR. Depends on DFR1-008, which is open.
+- `docs/E06-ai-execution-decisions`: one commit `1c2e397`, no PR (documentation).
+- `docs/E13-post-merge-audit`: two commits, no PR (documentation).
+- `docs/E13-post-merge-verification-2`: two commits, no PR (documentation).
+- `main` is four commits ahead of `develop` (revert and CI commits). Not touched.

@@ -108,6 +108,7 @@ TABLE_INVENTORY: dict[str, TableEntry] = {
     # Configuration.
     "automation_rules": TableEntry(DISPOSITION_CONFIGURATION, reason="Rule definitions."),
     "organization_capability_settings": TableEntry(DISPOSITION_CONFIGURATION, reason="Switch settings and their change records."),
+    "knowledge_chunks": TableEntry(DISPOSITION_NOT_COVERED, reason="Derived copies of document text and embeddings. Removed when the source document is archived or deleted. Not exported separately: the source document is exported."),
     "ai_task_routes": TableEntry(DISPOSITION_CONFIGURATION, reason="Provider and model choice per AI task. Holds no credential."),
     "organization_usage_budgets": TableEntry(DISPOSITION_CONFIGURATION, reason="Budget configuration and aggregate quantities."),
     "channel_policies": TableEntry(DISPOSITION_CONFIGURATION, reason="Channel configuration."),
