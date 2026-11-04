@@ -940,3 +940,88 @@ No migration was added. No frontend file changed.
 - DFR1-020 (lead qualification scoring) depends on DFR1-008 and DFR1-015. It becomes dependency-ready on merge.
 - DFR1-022 (property matching and next-best-action) depends on DFR1-008 and DFR1-020. Matching exists; next-best-action is not built and
   depends on DFR1-020.
+
+## 26. DFR1-018 typed AI tool registry: completion record (E07)
+
+Branch: `feature/DFR1-E07-typed-tool-registry`. The existing branch (commit `6937172`, built on `origin/develop` at `6eab89a`) was kept
+and reconciled with `origin/develop` at `8d3e35d` (DFR1-008 merged, PR #157) by a merge commit. No history was rewritten and no branch
+was recreated. The E13 evidence conflict in this file was resolved by keeping both sides' sections.
+
+### Existing branch audit
+
+- Complete for its original scope: registry with strict definition checks, typed argument validation, server-side permission check
+  (`actor_permission_granted`, checked against the database), central execution gate (`evaluate_execution`, with `ai.assistant`), a
+  statement timeout inside a savepoint, a bounded plain-JSON result, requested and completed audit records, denial audit (including
+  cross-tenant attempts under the system actor with `attempted_user_id`), and one read-only tool (`contacts.get`, no email or phone).
+- Partial against the story: only one CRM area (contacts) was covered. The story asks for leads, requirements, properties, follow-ups,
+  site visits and deals to be evaluated.
+- Outdated: it did not include DFR1-008 (now merged) or DFR1-015 (now merged). Neither is required by the tool layer, which does not call AI.
+- Build state before this pass: 29 tests passed on the merged develop; the merged tree is the base for this work.
+
+### Reused
+
+- The registry, validation, service, audit, gate integration and tests from `6937172`, unchanged except as recorded below.
+- The CRM services that already enforce tenant scope: `get_lead`, `get_customer_requirement`, `get_property`, `get_contact`.
+
+### Tool catalogue (approved read-only tools)
+
+| Tool | Permission | Returns | Withheld |
+|---|---|---|---|
+| `contacts.get` | `contacts.read` | `id`, display name, `is_active` | email, phone |
+| `leads.get` | `leads.read` | `id`, `contact_id`, `status`, `interest`, `outcome`, `next_action_at`, `is_active` | `next_action` text (free text) |
+| `requirements.get` | `requirements.read` | `id`, `status`, `is_active`, budget min, max and currency | the customer's name and contact details |
+| `properties.get` | `properties.read` | `id`, `status`, `transaction_type`, `property_type`, `city`, `locality`, `bhk`, `price`, `currency` | street address lines, source and owner contacts |
+| `deals.get` | `deals.read` | `id`, `stage`, `expected_value`, `currency`, `property_id`, `lead_id`, `customer_profile_id` | notes, owner name |
+
+Every tool takes one UUID argument (its record id). `deals.get` reads without a row lock, so a read cannot block a stage transition.
+Tool results are bounded by `MAX_RESULT_CHARACTERS` and run under a statement timeout (`DEFAULT_TIMEOUT_MS`).
+
+Evaluated and not added: follow-ups and site visits. The services have only paginated list functions and no single-record read,
+and their records carry lead-linked notes and attendance details. Adding them needs an explicit field review, so they are left for a
+later story. No write tools were added, and no permission was granted automatically.
+
+### Security model
+
+- Organization and actor come from the server: `organization_id` is the verified tenant, and the actor is the authenticated user.
+  Arguments are checked against the schema; an `organization_id` or any other unknown argument is refused as `invalid_arguments`.
+- Permission is checked per tool, against the database, through an active membership and an active role. A revoked or inactive
+  membership is refused, and the attempt is audited under the system actor with the attempted user id.
+- A record in another organization returns the same answer as a missing one (`{"found": false}`), so existence is not revealed.
+- The execution gate runs in full for every call (entitlement and switches, provider readiness, actor, resource, consent, rate,
+  budget). A disabled capability or missing provider readiness stops the call before any data is read.
+- No arbitrary SQL, shell execution or code: a tool is a registered Python handler chosen by key, and the model cannot supply one.
+- Audit records hold tool keys, argument names and outcomes. They never hold argument values or results.
+
+### Limitations and decisions
+
+- Budget exhaustion does not apply. A tool call is not token-metered, and no usage unit exists for it. The gate's budget step runs with
+  no units reserved. A decision on whether tool calls should consume a budget unit belongs to the approver.
+- Concurrent repetition: every tool is read-only, so repeated and concurrent calls change nothing and each call is audited separately.
+  A dedicated concurrency test was not added because no shared state is written.
+- Production refuses every AI call until the AI actor key, the AI resource store and an AI rate rule are approved (existing gate behaviour).
+- No HTTP endpoint exposes tool invocation. Agents call the service, so the API surface is unchanged.
+- The catalogue test (`test_the_release_registers_exactly_the_approved_read_only_tools`) was updated to the five approved tools. The
+  earlier assertion of exactly one tool was a statement of the earlier catalogue, not a security property, and the new assertion keeps the
+  read-only and AI-capability checks for every tool.
+
+### Tests
+
+- `tests/test_ai_tools.py`: 29 tests from the original branch, with the catalogue assertion updated as described above.
+- `tests/test_ai_tools_crm.py` (new, 10 tests): valid reads with exact field sets and no secret values; invalid and tenant-claim arguments;
+  unregistered names; write-style names absent from the catalogue; another organization's record indistinguishable from a missing one;
+  a user naming an organization they do not belong to; a member without the tool permission; a revoked membership with system-actor
+  audit; a disabled AI capability; missing provider readiness; repeated reads returning the same data with per-call audit to the user.
+
+### Verification
+
+- Focused tool tests (`tests/test_ai_tools.py` and `tests/test_ai_tools_crm.py`): 40 passed, 0 failed.
+- Full backend suite (`pytest -q`, log `dfr1018-full.log`): exit code 0; 2,354 passed, 14 skipped, 0 failed (694 s).
+- Frontend (no frontend file changed): `npm run build` exit 0; `npm run lint` exit 0; `npx tsc -b --noEmit` exit 0; `npx vitest run` exit 0, 18 files and 123 tests.
+- Migrations: none added. Head `d2b6f8a1c4e7`, unchanged.
+- Ruff: no findings in the changed tool files. The original test file keeps one finding that is unchanged from its earlier form.
+
+### Unblocks
+
+- DFR1-019 (agent definitions, versioning and runtime) depends on DFR1-018 and DFR1-017. The typed tool registry it needs is now on this branch.
+- DFR1-033 (Dealsflo Copilot with authorized business queries) depends on DFR1-015 and DFR1-018. Its read tools for leads, requirements,
+  properties and deals now exist; Copilot itself is not built.

@@ -131,12 +131,23 @@ def _counting_registry(handler, *, permission="contacts.read", parameters=(), ti
 # --- registry rules -------------------------------------------------------------------------
 
 
-def test_the_release_registers_exactly_the_approved_read_only_tool() -> None:
-    assert DEFAULT_REGISTRY.keys() == (CONTACT_TOOL,)
+def test_the_release_registers_exactly_the_approved_read_only_tools() -> None:
+    # The approved catalogue: one read tool per CRM area the release exposes. Follow-ups and site visits are not exposed.
+    assert DEFAULT_REGISTRY.keys() == (
+        "contacts.get",
+        "deals.get",
+        "leads.get",
+        "properties.get",
+        "requirements.get",
+    )
     definition = DEFAULT_REGISTRY.get(CONTACT_TOOL)
     assert definition is not None and definition.read_only is True
     assert definition.required_permission == "contacts.read"
     assert definition.capability_key == ASSISTANT
+    registered = DEFAULT_REGISTRY.keys()
+    for key in registered:
+        tool = DEFAULT_REGISTRY.get(key)
+        assert tool is not None and tool.read_only is True and tool.capability_key == ASSISTANT
 
 
 @pytest.mark.parametrize(
