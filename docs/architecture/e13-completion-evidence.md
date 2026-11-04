@@ -345,3 +345,56 @@ Story status: unchanged. DFR1-006, DFR1-017, DFR1-050 remain Partial; DFR1-053 r
 - **Not approved.** The approval needed is six answers from the release owner and the security owner, listed in section 10
   of the proposal. No permission key has been added and no role grant has changed.
 - Story status: unchanged. DFR1-006 remains Partial; DFR1-017, DFR1-050 and DFR1-053 keep their status; E13 is not Done.
+
+## 18. DFR1-018 typed AI tool registry (E07)
+
+Branch: `feature/DFR1-E07-typed-tool-registry`, cut from `origin/develop` at `6eab89a`.
+
+Dependencies, validated:
+
+- DFR1-006 (execution gate): merged and used; the tool call goes through `evaluate_execution`.
+- DFR1-015 (gateway): built on `feature/DFR1-E06-ai-gateway-core` (not yet merged). The tool layer does not import it.
+- DFR1-008 (E02 CRM gap audit): **open**. The tool reuses the existing contact service; the audit of other CRM gaps is not closed.
+
+What exists:
+
+- Registry (`app/ai_tools/registry.py`): checks each definition at registration. The key must be well formed and unique;
+  the permission must be catalogued; the capability must be an AI capability; the tool must be read-only; the timeout and
+  parameter names must be in bounds. Nothing is registered from input data.
+- Strict schemas (`app/ai_tools/validation.py`): unknown keys, missing required keys, wrong types (a boolean is never an
+  integer), out-of-range values, overlong and blank strings are refused. Refusals name the parameter, not the value.
+- Invocation (`app/ai_tools/service.py`), in order: registered tool; valid arguments; the user holds the tool's permission in
+  this organization (checked in the database, so an owner-only key cannot be reached by a manager); the shared gate allows the
+  AI capability; the handler runs in a savepoint with a statement timeout; the result is bounded and plain JSON.
+- Audit: a requested record before the handler and a completed record after it, linked by causation. Records hold the tool key,
+  argument names and outcome, never argument values or results. A denial writes a record. An attempt by a user who is not an
+  active member of the organization is recorded under the registered `ai_tools` system actor, with the attempted user
+  identifier, so it is visible.
+- Failure handling: a database timeout (SQLSTATE 57014) is `tool_timeout`; other database errors and controlled handler
+  failures are `tool_failed` with no internal message returned; a result above 16 KB is `result_too_large`. The savepoint
+  rolls back only the tool's work.
+- One approved tool, `contacts.get`: returns the contact's identifier, display name and active flag. Email and phone are not
+  returned, because a tool result can reach an external model provider, and no data-use approval exists.
+
+Verification:
+
+- `tests/test_ai_tools.py`: 29 tests passing. They cover the registry rules, strict schemas and limits, a member with the
+  permission, linked audit records, an unknown tool, a member without the permission, a privilege escalation through an owner-only
+  tool, a disabled capability, production refusal without approvals, cross-tenant contact lookup (indistinguishable from a
+  missing contact), a user outside the organization, a database timeout rolled back alone, a controlled failure, a database
+  error, an oversized result, and plain-JSON output.
+- Full backend suite on the branch: exit code 0; **2,170 passed, 14 skipped, 0 failed** (421 s), on the isolated database
+  (port 5438), recreated before the run.
+- Migration: none added. Single head `n5e8a1c4d7b9`.
+- Ruff `check` on the new and changed files: passed.
+- Frontend: no frontend file changed.
+
+Not met, so DFR1-018 is not Done:
+
+- The approved tool list is a product decision. Only the read tool exists.
+- DFR1-008 is open.
+- Production refuses every call (actor key, resource store and rate rule are open). Tests use the same test-only seams as the
+  gateway tests, and assert the production refusal.
+- Write tools are refused by design. A write tool needs its own approval flow (ADR-0029 gate 9).
+- No HTTP endpoint exposes tool invocation. Agents will call the service, so the API surface stays closed.
+- Retries: none, by design (see the service docstring). Idempotency: all tools are read-only, so repetition changes nothing.
