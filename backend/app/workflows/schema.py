@@ -40,6 +40,10 @@ STEP_TYPES = ("crm_action", "condition", "agent", "approval", "delay")
 CONDITION_OPERATORS = ("eq", "neq", "in", "not_in", "exists", "gt", "gte", "lt", "lte")
 ORDERED_OPERATORS = ("gt", "gte", "lt", "lte")
 APPROVER_PERMISSIONS = ("leads.update", "requirements.update", "agents.approve")
+# How long a human decision may stay open. Governance approvals accept one minute to seven days.
+DEFAULT_APPROVAL_EXPIRY_SECONDS = 259_200
+MIN_APPROVAL_EXPIRY_SECONDS = 60
+MAX_APPROVAL_EXPIRY_SECONDS = 604_800
 FAILURE_POLICIES = ("stop", "route")
 
 MAX_INPUTS = 10
@@ -228,10 +232,10 @@ def _normalise_step(raw: object, index: int, *, input_names: set[str], problems:
         problems.add(f"{path}.type", f"Must be one of: {', '.join(STEP_TYPES)}.")
         return None
     extra_fields = {
-        "crm_action": {"action", "arguments"},
+        "crm_action": {"action", "arguments", "approval"},
         "condition": {"condition", "then", "else"},
-        "agent": {"agent_id", "arguments"},
-        "approval": {"approver_permission", "reason"},
+        "agent": {"agent_id", "arguments", "approval"},
+        "approval": {"approver_permission", "reason", "expires_after_seconds"},
         "delay": {"seconds"},
     }[step_type]
     if step_type == "condition":
@@ -285,6 +289,9 @@ def _normalise_step(raw: object, index: int, *, input_names: set[str], problems:
                               input_names=input_names, problems=problems)
             clean["action"] = action
             clean["arguments"] = args
+            gate = _approval_gate(data, f"{path}.approval", problems)
+            if gate is not None:
+                clean["approval"] = gate
     elif step_type == "condition":
         condition = _object(data.get("condition"), f"{path}.condition", {"left", "operator", "right"}, problems)
         if condition is not None:
@@ -303,13 +310,34 @@ def _normalise_step(raw: object, index: int, *, input_names: set[str], problems:
         except (TypeError, ValueError):
             problems.add(f"{path}.agent_id", "Must be an agent identifier.")
         clean["arguments"] = _agent_inputs(data.get("arguments", {}), f"{path}.arguments", input_names, problems)
+        gate = _approval_gate(data, f"{path}.approval", problems)
+        if gate is not None:
+            clean["approval"] = gate
     elif step_type == "approval":
         clean["approver_permission"] = _choice(data.get("approver_permission"), f"{path}.approver_permission",
                                                APPROVER_PERMISSIONS, problems)
         clean["reason"] = _text(data.get("reason"), f"{path}.reason", MAX_REASON, problems, required=True)
+        clean["expires_after_seconds"] = _integer(
+            data.get("expires_after_seconds", DEFAULT_APPROVAL_EXPIRY_SECONDS), f"{path}.expires_after_seconds",
+            MIN_APPROVAL_EXPIRY_SECONDS, MAX_APPROVAL_EXPIRY_SECONDS, problems)
     elif step_type == "delay":
         clean["seconds"] = _integer(data.get("seconds"), f"{path}.seconds", 1, MAX_DELAY_SECONDS, problems)
     return clean
+
+
+def _approval_gate(data: dict[str, Any], path: str, problems: _Problems) -> dict[str, Any] | None:
+    """An approval configured on a sensitive action: the approver permission and how long the decision may stay open."""
+    if "approval" not in data:
+        return None
+    gate = _object(data.get("approval"), path, {"approver_permission", "expires_after_seconds"}, problems)
+    if gate is None:
+        return None
+    permission = _choice(gate.get("approver_permission"), f"{path}.approver_permission", APPROVER_PERMISSIONS, problems)
+    expires = _integer(gate.get("expires_after_seconds", DEFAULT_APPROVAL_EXPIRY_SECONDS), f"{path}.expires_after_seconds",
+                       MIN_APPROVAL_EXPIRY_SECONDS, MAX_APPROVAL_EXPIRY_SECONDS, problems)
+    if permission is None or expires is None:
+        return None
+    return {"approver_permission": permission, "expires_after_seconds": expires}
 
 
 def _agent_inputs(raw: object, path: str, input_names: set[str], problems: _Problems) -> dict[str, str] | None:

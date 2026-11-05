@@ -65,6 +65,7 @@ const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
 const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const LeadIntakePage = lazy(() => import("../../pages/LeadIntakePage"));
 const WorkflowsPage = lazy(() => import("../../pages/WorkflowsPage"));
+const ApprovalsPage = lazy(() => import("../../pages/ApprovalsPage"));
 const AutomationRulesPage = lazy(
   () => import("../../pages/AutomationRulesPage"),
 );
@@ -211,6 +212,7 @@ export default function AppRouter() {
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/lead-intake" element={<LeadIntakePage />} />
             <Route path="/workflows" element={<WorkflowsPage />} />
+            <Route path="/approvals" element={<ApprovalsPage />} />
 
             <Route
               path="/automation-history"

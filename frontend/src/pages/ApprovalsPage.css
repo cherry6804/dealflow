@@ -1,0 +1,131 @@
+.approvals-page {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.5rem 1rem;
+}
+
+.approvals-header h1 {
+  margin-bottom: 0.25rem;
+}
+
+.approvals-layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 900px) {
+  .approvals-layout {
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  }
+}
+
+.approvals-list,
+.approvals-detail {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+}
+
+.approvals-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.approvals-items {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.approvals-item {
+  display: grid;
+  width: 100%;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.approvals-item[aria-current="true"] {
+  border-width: 2px;
+}
+
+.approvals-item:focus-visible,
+.approvals-button:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 2px;
+}
+
+.approvals-item-title {
+  font-weight: 600;
+}
+
+.approvals-button {
+  padding: 0.5rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.approvals-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.approvals-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.approvals-facts dd {
+  margin: 0;
+}
+
+.approvals-field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.approvals-field textarea {
+  width: 100%;
+}
+
+.approvals-history {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+.approvals-history p {
+  margin: 0.25rem 0 0;
+}
+
+.approvals-subtle {
+  opacity: 0.8;
+}
+
+.approvals-alert {
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 4px solid currentColor;
+}
+
+.approvals-notice {
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 4px solid currentColor;
+}
