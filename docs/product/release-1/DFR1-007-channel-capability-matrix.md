@@ -1,166 +1,235 @@
-# DFR1-007 Channel provider comparison and capability matrix
+# DFR1-007 Channel provider comparison, decisions and capability matrix
 
 - **Story:** DFR1-007, Confirm communication providers and channel capability matrix (Epic DFR1-E04, P0, 2 points, Sprint S1).
-- **Status:** Research and comparison complete. **No provider is selected.** Provider selection is a product decision and is awaiting the owner's written choice.
-- **Date of research:** 2026-11-05. Sources were fetched on that date. Provider pages change; re-check before contracting.
-- **Scope:** Documentation only. No application code, no provider account, no sandbox, no credentials. Nothing in this document claims that a provider works with Dealsflo.
+- **Status:** Documentation complete. **Provider strategy approved** as the Release 1 target architecture (ADR-0033, Accepted). **No provider account, credential, sandbox, API permission or live integration is verified.** Nothing here is a verified connection or a tested integration.
+- **Research date:** 2026-11-05. Pages were fetched that day. Provider terms change; re-check before contracting.
+- **Scope:** Documentation only. No application code, no provider account, no sandbox, no credentials.
 
-## 0. How to read the verification labels
+## 0. Labels used in this document
 
-- **Verified (official source):** stated on an official provider page fetched on 2026-11-05. The source link is given.
-- **Reported (secondary):** found in search snippets or third-party guides only. Must be confirmed with the provider.
-- **Assumption:** our planning assumption. Must be confirmed.
-- **Not researched:** not covered in this pass.
+- **Verified (official source):** stated on an official provider page fetched on 2026-11-05. Link given.
+- **Reported (secondary):** from search snippets or third-party guides only. Confirm with the provider.
+- **Assumption:** planning assumption. Confirm before relying on it.
+- **Not verified:** not checked against a provider. Stays this way until the provider confirms in writing or a test passes.
 
-## 1. Telephony (Exotel, Twilio, Knowlarity)
+Three states are kept separate throughout:
 
-### 1.1 Facts by criterion
+| State | Meaning | Current status |
+|---|---|---|
+| **Selected provider** | The architecture names it (ADR-0033). | Yes, for each channel below. |
+| **Verified connection** | A real account and credential passed the provider's verification probe in an environment. | **None exists.** |
+| **Tested integration** | Automated tests pass against the provider's sandbox or live API. | **None exists.** Existing tests use mocked boundaries only. |
 
-| Criterion | Exotel | Twilio | Knowlarity |
+## 1. Approved provider strategy (summary)
+
+| Channel | Provider | Role | Launch status |
 |---|---|---|---|
-| Inbound call event | **Verified.** `incoming_call` event posted to a configured `popup_url`, with `call_sid`, `direction`, `from`, `to`, `exophone`, `timestamp`, `caller_info` ([Call Notifications](https://developer.exotel.com/docs/ip-pstn-webrtc/api-reference/call-notifications)). | **Verified.** Voice webhooks on a configured URL with `CallSid`, `From`, `To` and TwiML response ([Twilio voice docs](https://www.twilio.com/docs/usage/webhooks/webhooks-security) for signing; voice webhook fields not re-fetched). | **Reported.** End-of-call webhook and "What to do" HTTP hook that returns a forwarding number ([Knowlarity integration guide, 2013](https://www.scribd.com/document/202780359/Knowlarity-Sr-Integration-Guide-Jan-2013-2)). The current reference page did not load its content ([API reference](https://developer.knowlarity.com/api-reference)). |
-| Webhook authentication | **Not documented.** The call notification page describes no signature, token or IP allowlist. **This is a blocker for DFR1-027 until Exotel confirms the mechanism.** | **Verified.** `X-Twilio-Signature`, HMAC-SHA1 over the URL and parameters with the auth token; JSON bodies covered by a `bodySHA256` query parameter; SDK validation recommended ([Secure webhooks](https://www.twilio.com/docs/usage/webhooks/webhooks-security)). No replay protection described. | **Not verified.** No signature or auth method found. |
-| Webhook retry | **Verified.** Non-200 triggers retries at 5 s, 30 s and 5 min; dropped after three failed retries and logged ([Call Notifications](https://developer.exotel.com/docs/ip-pstn-webrtc/api-reference/call-notifications)). Dropped events need a reconciliation path. | Not re-fetched. Assumed retry behaviour: to confirm. | Not verified. |
-| Answer and bridge | **Reported.** Call flows and "Connect two numbers" APIs exist ([Make a call API](https://developer.exotel.com/api/make-a-call-api)). Exact answer and bridge behaviour for an inbound call not verified. | **Reported.** TwiML `Dial`, `Enqueue` and `Conference` verbs are the usual mechanisms. Not re-fetched in this pass. | Reported. SIP configuration and streaming options exist, described as a Voice AI or UIC setup. |
-| Human transfer | **Reported.** Achieved through call flow or connect APIs. To confirm for an active call. | **Reported.** Via `Dial` to an agent number or SIP endpoint. To confirm. | **Reported.** "What to do" hook returns a forwarding number. |
-| Caller ID and status callbacks | `exophone` shows the dialled number. Status callbacks (`call_ringing`, `call_answered`, `call_completed`) verified above. | Status callbacks and `From`/`To` supported (usual). | Not verified. |
-| Recording and consent | Not researched in detail. | India voice page: "Customers must obtain consent from the call recipient before sending commercial communications." Recording rules: **not stated** ([Twilio India voice](https://www.twilio.com/en-us/guidelines/in/voice)). | Not verified. |
-| India numbers | **Reported.** ExoPhone (virtual/DID) and toll-free available; monthly rental per number. Plan prices from third-party sites only ([Number types FAQ](https://developer.exotel.com/docs/faqs/number-types)). | **Verified (restriction).** "Outbound calls to India can only be made from international (non-Indian) numbers." Toll-free numbers in India are not for outbound use ([India voice guidelines](https://www.twilio.com/en-us/guidelines/in/voice)). Local India number availability **not verified**. | Reported, not verified. |
-| Sandbox / test numbers | **Not documented** on the pages fetched. Requires confirmation. | Twilio test credentials and trial accounts are standard; India-specific trial limits **not verified**. | **Not documented.** |
-| Pricing | **Reported only.** Per-minute inbound rate is unpublished; third-party sources disagree (₹0.30–0.50 per minute vs ₹0.80–1.00 for outbound). Written quote required ([Exotel migration blog](https://exotel.com/blog/migrate-twilio-to-exotel-voice-ai-india/), [CloudTalk pricing guide](https://www.cloudtalk.io/blog/exotel-pricing/)). | Not researched in this pass. Use the Twilio India price list before budgeting. | Not researched. |
-| Concurrency and limits | Not researched. | Not researched. Twilio flags high-volume short calls to Indian numbers as a block risk. | Not researched. |
-| Regulatory | TRAI/DLT and telemarketer rules apply to commercial calling and SMS. Exotel-specific obligations **not researched**. | India guidelines say calls without recipient consent may be treated as Unsolicited Commercial Communication. Twilio recommends legal review ([India voice](https://www.twilio.com/en-us/guidelines/in/voice)). SMS in India requires DLT sender ID registration ([India SMS guide](https://www.twilio.com/en-us/guidelines/in/sms)). | Not researched. |
-| Documentation and support | Call notification page is clear. Auth and sandbox missing. | Mature docs. Signature docs verified. | Documentation fragmented. Several pages did not load. |
+| India telephony | Exotel | Primary | Required for Release 1 inbound and outbound India calling |
+| International telephony | Twilio | Primary, per supported country and calling direction | Required for each validated country and direction |
+| WhatsApp | Meta WhatsApp Business Cloud API (direct) | Primary | Release 1; no BSP at launch |
+| Messenger and Instagram | Official Meta APIs | Primary | Release 1 P1, not a launch blocker |
+| Email | Amazon SES | Initial transport | Release 1, subject to inbound, threading and attachment validation |
+| Call recording | Supported, off by default | Policy-gated | Enabled only under consent, privacy, retention and organisation policy |
 
-### 1.2 Comparison matrix (telephony)
+## 2. Telephony: facts and evidence
 
-Scores: 1 weak, 2 adequate, 3 strong. "?" means not verified.
+### 2.1 Exotel (India primary)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Inbound call event | Verified: `incoming_call` posted to a configured URL with `call_sid`, `direction`, `from`, `to`, `exophone`, `timestamp`, `caller_info` | [Call notifications](https://developer.exotel.com/docs/ip-pstn-webrtc/api-reference/call-notifications) |
+| Status callbacks | Verified: `outbound_call`, `call_ringing`, `call_answered`, `call_completed`, `missed_call` | Same |
+| Webhook retry | Verified: non-200 retried at 5 s, 30 s and 5 min; dropped after three failures and logged | Same. Dropped events need reconciliation |
+| Webhook authentication | **Not verified. Not documented on the page fetched.** Blocker for the Exotel adapter | Same (no signature, token or allowlist described) |
+| Answer, bridge, transfer | Reported: call flows and connect APIs exist. Inbound answer, bridge and human transfer not verified | [Make a call API](https://developer.exotel.com/api/make-a-call-api) |
+| AI streaming | Not verified. To be confirmed in writing (protocol and direction) | — |
+| Number types and India availability | Reported: ExoPhone (virtual) and toll-free; monthly rental per number | [Number types FAQ](https://developer.exotel.com/docs/faqs/number-types) |
+| Sandbox and test number | Not verified. Not documented on the pages fetched | — |
+| Pricing | Not published for inbound. Third-party figures conflict (₹0.30–0.50 vs ₹0.80–1.00 per minute). **Written quotation required.** | [Exotel migration blog](https://exotel.com/blog/migrate-twilio-to-exotel-voice-ai-india/) (unverified), [CloudTalk guide](https://www.cloudtalk.io/blog/exotel-pricing/) (secondary) |
+| Concurrency limits | Not verified | — |
+
+### 2.2 Twilio (international primary)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Webhook signing | Verified: `X-Twilio-Signature`, HMAC-SHA1 over the URL and parameters with the auth token. JSON bodies covered by `bodySHA256`. SDK validation recommended | [Secure webhooks](https://www.twilio.com/docs/usage/webhooks/webhooks-security) |
+| Replay protection | Not described by Twilio. Dealsflo must add its own window and deduplication | Same |
+| India voice restrictions | Verified: outbound calls to India only from non-Indian numbers. Toll-free numbers in India are reachable from outside India and are not for outbound use. Voice OTP and 2FA not permitted | [India voice guidelines](https://www.twilio.com/en-us/guidelines/in/voice) |
+| India SMS | Verified: domestic messages need DLT registration of the company and sender ID before Twilio registration | [India SMS guidelines](https://www.twilio.com/en-us/guidelines/in/sms) |
+| Recording and consent | Verified: consent from the recipient is needed before commercial communications; TRAI may treat calls without consent as unsolicited commercial communication. Recording rules are not stated on the page | [India voice guidelines](https://www.twilio.com/en-us/guidelines/in/voice) |
+| Per-country number availability | **Not verified for any target country.** Must be validated per country | — |
+| Pricing | Not pulled in this pass. **Written quotation or current price list required.** | — |
+| Sandbox | Assumed available (test credentials). Trial limits per country not verified | — |
+
+### 2.3 Knowlarity (not selected)
+
+- Developer reference did not load its content. Webhook authentication, sandbox and inbound payload not verified. Only a 2013 integration guide was readable ([secondary](https://www.scribd.com/document/202780359/Knowlarity-Sr-Integration-Guide-Jan-2013-2)).
+- Not selected. Re-evaluate only if current documentation is supplied.
+
+### 2.4 Telephony comparison (scores: 1 weak, 2 adequate, 3 strong, ? not verified)
 
 | Dimension | Exotel | Twilio | Knowlarity |
 |---|---|---|---|
 | Inbound webhook shape | 3 (verified) | 3 (verified) | ? |
 | Webhook authentication | ? (blocker) | 3 (verified) | ? |
-| Retry and delivery | 3 (verified) | 2 (assumed) | ? |
-| Answer, bridge, transfer | 2 (reported) | 2 (reported) | 1–2 (reported, unclear) |
-| India number availability | 3 (reported) | 1–2 (outbound restricted, local numbers unverified) | ? |
-| Sandbox access | ? (not documented) | 2 (assumed, trial limits unverified) | ? |
-| Pricing transparency | 1 (no public rate) | ? | ? |
-| Integration complexity | 2 | 2 | ? |
-| Security (signing, replay) | ? until confirmed | 3 (signing); replay guidance absent | ? |
-| Scalability | ? | 3 (assumed, global platform) | ? |
-| Developer experience | 2 | 3 | 1 (fragmented) |
-| Reliability | 2 (retry policy documented) | 3 (assumed) | ? |
+| Retry and delivery | 3 (verified) | 2 | ? |
+| India number availability | 3 (reported) | 1 (outbound restriction; per-country unverified) | ? |
+| Sandbox access | ? | 2 (assumed) | ? |
+| Pricing transparency | 1 | ? | ? |
+| Security | ? until auth confirmed | 3 | ? |
+| Reliability | 2 | 3 (assumed) | ? |
+| Developer experience | 2 | 3 | 1 |
 | Vendor dependency and portability | 2 | 2 | 2 |
 
-### 1.3 Recommendation (for owner decision, not a selection)
+## 3. Country-specific selection and capability routing
 
-- **Primary candidate: Exotel.** India-native, with the most complete verified inbound webhook contract of the three (event shape and retry policy). It is the best fit for Indian numbers and local compliance, which matters for real-estate customers. **Condition:** Exotel must confirm in writing how webhooks are authenticated (signature, token or allowlist), the sandbox process, and the answer, bridge and transfer behaviour before DFR1-027 starts.
-- **Fallback candidate: Twilio.** The best-documented signing scheme and developer experience. **Caveats for India:** outbound calls to Indian numbers must originate from non-Indian numbers, toll-free numbers cannot be used for outbound, and voice OTP is not permitted. For a real-estate product that makes outbound follow-up calls to Indian numbers, this is a material constraint, so Twilio fits inbound-led use better than outbound-led use.
-- **Not recommended yet: Knowlarity.** Documentation could not be verified (the current API reference did not load its content). Re-evaluate only if Knowlarity supplies current webhook and authentication documentation.
+Routing key: **(number country, calling direction, capability)**. The router reads the organisation's configuration and the connection's verified status.
 
-These are recommendations only. The owner decides.
-
-## 2. WhatsApp Business
-
-### 2.1 Facts
-
-- **Meta rate card is INR for India.** Billing localisation for India began 1 January 2026 for eligible customers; migration to INR by 31 December 2026 ([WhatsApp pricing](https://developers.facebook.com/docs/whatsapp/pricing), verified).
-- **Free service messages:** from 1 October 2026, each business phone number gets 1,000 free service messages per month; messages beyond that are charged ([WhatsApp pricing](https://developers.facebook.com/docs/whatsapp/pricing), verified).
-- **India per-message amounts:** the official page did not show amounts (they are in a linked rate card file). Third-party sources report marketing ₹0.8631 and utility or authentication ₹0.115 per message before GST. **Reported, not verified.** Confirm against the rate card file before budgeting.
-- **BSP:** platform fees are billed by the BSP on top of Meta's message charges. **Reported.** BSP list not researched in this pass.
-
-### 2.2 Options
-
-| Option | Notes | Status |
+| Scenario | Provider | Rule |
 |---|---|---|
-| Meta WhatsApp Business Platform, direct (Cloud API) | Official route. Requires Meta business verification and approved message templates for business-initiated messages. | Not verified for Dealsflo. Needs a Meta business account. |
-| Official BSP (for example, a Meta-listed Tech Provider) | Simplifies onboarding and template management; adds platform fees. | Candidates not researched. Owner choice. |
+| India calling, Indian number | Exotel | Primary. Outbound from Indian numbers through Exotel |
+| International, country in the validated list | Twilio | Only for each country and direction that has been validated (section 6) |
+| International, country not validated | None | Refused with a normalised reason. Handed to a human |
+| Outbound to Indian numbers from Twilio | **Not allowed** | Twilio's India rule: outbound to India only from non-Indian numbers. Refused; route through Exotel |
+| Toll-free outbound in India via Twilio | **Not allowed** | Refused |
+| Any direction, provider not verified for the organisation | None | Refused. No silent fallback |
+| Configured fallback provider | Only if the organisation has configured it | Explicit configuration, audited |
 
-## 3. Meta Messenger and Instagram
+Rules:
 
-### 3.1 Facts (verified from [Messenger Platform overview](https://developers.facebook.com/docs/messenger-platform/overview), fetched 2026-11-05)
+- Routing never names a provider in CRM or workflow services. The routing layer maps the request to a configured adapter.
+- A route is used only when the organisation has enabled the capability and the connection is verified and healthy (ADR-0032).
+- Refusals are audited with the reason code. Nothing is placed or sent on a refused route.
 
-- Prerequisites: Meta developer account and app with the Messenger use case; a linked Facebook Page; an Instagram Professional account for Instagram Messaging; Business Verification if people without an app role will use it.
-- **Standard Access** covers users with a role on the app or Page. **Advanced Access** needs App Review. App Review is not needed to message only your own Page.
-- Permissions requested through Facebook Login for Business: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `pages_read_engagement`, `business_management`; Instagram adds `instagram_basic`, `instagram_manage_messages`.
-- **Standard messaging window:** 24 hours after a user's message. Up to 7 days after a Click-to-Messenger or Click-to-Direct ad.
-- **Webhook signature:** the page did not state it. Meta's webhook signing (`X-Hub-Signature-256`) is the expected mechanism. **Reported; confirm in the Webhooks documentation.**
+## 4. WhatsApp Business (Meta Cloud API, direct)
 
-### 3.2 Fit for Dealsflo
+| Criterion | Status | Evidence |
+|---|---|---|
+| Route | Direct Cloud API, no BSP at launch (approved) | ADR-0033 |
+| Rate card | Verified: rates published in INR for India (billing localisation from 1 January 2026; migrate by 31 December 2026) | [WhatsApp pricing](https://developers.facebook.com/docs/whatsapp/pricing) |
+| Free service messages | Verified: 1,000 free service messages per business phone number per month, from 1 October 2026 | Same |
+| Per-message amounts | **Not in the page.** Third-party figures (marketing ₹0.8631, utility ₹0.115) are reported only. Use the official INR rate-card file | Reported |
+| Prerequisites | Meta business verification, WABA, phone number, approved templates for business-initiated messages, messaging policies | Meta documentation to confirm for the account type |
+| Webhook verification | To confirm from Meta's webhook documentation before implementation | — |
+| Sandbox | To confirm (test number availability) | — |
 
-Messenger and Instagram suit inbound lead enquiries from ads. Dealsflo would need Advanced Access for customers' Pages beyond its own, and App Review for that. This is a larger dependency than WhatsApp and is not needed for DFR1-027.
+## 5. Messenger and Instagram (Meta, P1)
 
-## 4. Email
+| Criterion | Status | Evidence |
+|---|---|---|
+| Prerequisites | Verified: Meta app with Messenger use case, linked Facebook Page, Instagram Professional account for Instagram, Business Verification if non-role users will use it | [Messenger Platform overview](https://developers.facebook.com/docs/messenger-platform/overview) |
+| Access levels | Verified: Standard Access for users with a role; Advanced Access needs App Review. App Review not needed to message your own Page only | Same |
+| Permissions | Verified list: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `pages_read_engagement`, `business_management`; Instagram adds `instagram_basic`, `instagram_manage_messages` | Same |
+| Messaging window | Verified: 24 hours after a user message; up to 7 days after a Click-to-Messenger or Click-to-Direct ad | Same |
+| Webhook signature | Expected `X-Hub-Signature-256`. **Not verified on the page.** Confirm in Meta's webhook documentation | — |
+| Scope for Dealsflo | Dealsflo-owned Pages need no App Review. Customers' Pages need Advanced Access and App Review | Analysis |
 
-### 4.1 Options researched
+## 6. Email (Amazon SES, initial transport)
 
-- **Amazon SES (candidate).** Verified from [SES sending process](https://docs.aws.amazon.com/ses/latest/dg/send-email-concepts-process.html): accepted requests return a message ID; bounce, complaint and auto-response notifications return to the sender by email or Amazon SNS; hard bounces to suppressed addresses are refused. **Not verified** from this pass: sandbox limits and production-access request steps, and domain-verification steps (confirm in the SES getting-started documentation before use).
-- **Postmark, SendGrid, Zoho and others:** **not researched.** Listed as options for the owner to shortlist.
-- **Existing SMTP settings:** account email already uses `EMAIL_SMTP_*` (`docs/product/release-1/E01-environment-and-provider-matrix.md`). That is not a business-email integration.
+| Criterion | Status | Evidence |
+|---|---|---|
+| Delivery outcomes | Verified: accepted requests return a message ID; bounce, complaint and auto-response notifications return to the sender by email or Amazon SNS; suppressed addresses are refused | [SES sending process](https://docs.aws.amazon.com/ses/latest/dg/send-email-concepts-process.html) |
+| Identity verification | To confirm in the SES getting-started documentation (domain verification, DKIM) | — |
+| Sandbox and production access | To confirm (sending limits and production access request) | — |
+| Inbound receiving | **Required and not verified.** Confirm SES receiving rules, storage and routing for inbound messages | — |
+| Threading and attachments | **Required and not verified.** Must be tested end to end before launch | — |
+| Pricing | To confirm from SES pricing page | — |
 
-## 5. Cost assumptions (all to confirm)
+## 7. Costs (pending written quotations)
 
-- Telephony per-minute cost: unpublished for Exotel; confirm with a quote. Twilio: pull the India price list.
-- WhatsApp: use the rate card file. Budget the free 1,000 service messages per number from 1 October 2026 and BSP fees separately.
-- Email: SES is typically low cost per message; confirm with current SES pricing.
+Exact pricing is not available for most items. Each entry below is a planning assumption until replaced by a quotation or a current price list.
 
-## 6. Compliance and security (summary)
+| Item | Current basis | Quotation needed from |
+|---|---|---|
+| Exotel India calls and numbers | Not published for inbound; third-party only | Exotel sales |
+| Exotel SMS and WhatsApp (if used) | Not researched | Exotel sales |
+| Twilio international voice, per country and direction | Not pulled | Twilio price list or sales, per country |
+| Twilio number rental, per country | Not pulled | Twilio |
+| WhatsApp messages (INR, per category) | Rate card file; Meta publishes India INR rates. Figures in third-party sources not used | Meta rate card file |
+| BSP fees | Not applicable at launch (direct) | — |
+| Messenger and Instagram messages | Meta messaging pricing not researched in this pass | Meta documentation |
+| SES sending and receiving | Not pulled | AWS pricing page |
+| Recording storage | Depends on retention (section 8) | Storage decision |
 
-- **TRAI/DLT:** commercial SMS and calls to Indian numbers are regulated. Sender registration and consent records are needed, and they must be checked with a legal adviser. Twilio's India guidance flags UCC risk without recipient consent.
-- **Recording and consent:** Dealsflo must record consent before any recording or transcription (brief requirement). No provider page reviewed here defines the recording rule for Indian calls. Confirm per provider.
-- **Webhook security:** Twilio signs with HMAC-SHA1 (verified). Exotel signing is unknown. Dealsflo's own verifier (DFR1-012) is provider-neutral, so a provider-specific verifier is added only after selection.
-- **Secrets:** all credentials go through the DFR1-011 connection registry and secrets boundary. None are stored in configuration files.
+Cost attribution: every provider call is metered by organisation, provider, capability and direction in the shared usage ledger. No cost figure in this document is a commitment.
 
-## 7. Required sandbox and account prerequisites (per selection)
+## 8. Call recording, consent, retention and access control
 
-- **Exotel:** account and ExoPhone with India number; API key and token; written confirmation of webhook authentication and sandbox access.
-- **Twilio:** account, test credentials, an India-capable number (if local India numbers are needed, confirm availability and regulatory bundle), and a DLT registration for SMS.
-- **WhatsApp:** Meta business account, business verification, WABA, phone number, approved templates, BSP if used.
-- **Messenger and Instagram:** Meta app, Page, Instagram Professional account, App Review for Advanced Access.
-- **Email:** verified sending domain and SES identity, production access request.
+Recording is supported in Release 1 and **disabled by default**. It is enabled per organisation only when all of the following hold.
 
-No account for any of these exists in this repository. Nothing was created.
+1. **Consent:** the organisation's configured consent policy permits recording for the call type, and the caller is informed before recording starts. The provider's consent requirement (Twilio: recipient consent for commercial communication, verified) is applied in addition to Dealsflo's policy.
+2. **Policy:** privacy and retention settings for the organisation allow recording. A recording is not made when the policy is off, and the decision is audited.
+3. **Retention:** each recording has a retention period set by policy. Expired recordings are deleted by a job that writes an audit record. Deletion is not complete until storage confirms it. (Retention periods are a product decision; no default is set here.)
+4. **Access:** only members with a recording permission can play or download a recording. Access is server-side and audited. Links are short-lived and organisation-scoped.
+5. **Transcription:** not done unless recording is enabled and the consent policy also permits transcription. Transcripts follow the same retention and access rules.
+6. **Storage location:** must be confirmed against data residency requirements for India. Not decided here.
+7. **Provider-side recording:** if a provider records by default, Dealsflo disables it when the policy is off and verifies the setting. Not verified for any provider.
 
-## 8. Unresolved questions (owner or provider to answer)
+Open questions for the owner: retention period by call type; storage location; whether recordings are needed for the Release 1 pilot.
 
-1. Telephony provider selection (Exotel or Twilio, or another).
-2. Exotel: how are webhooks authenticated? Is there a sandbox? Confirm the answer, bridge and transfer flow for an inbound call.
-3. Twilio: Indian local number availability for inbound use. Trial limits for India.
-4. Outbound calling to Indian numbers: which provider and number type will you use? Twilio cannot originate outbound calls to Indian numbers from Indian numbers.
-5. Call recording: is it in scope for Release 1? Consent wording and storage location.
-6. WhatsApp: direct Cloud API or BSP? Which BSP?
-7. Messenger and Instagram: will customers' Pages be connected, which requires App Review?
-8. Email: SES or another provider?
-9. Budget: approve the cost assumptions above.
+## 9. Security and compliance
 
-## 9. Impact on DFR1-011 and DFR1-027
+- **Webhooks:** verified ingress is DFR1-012 (HMAC over timestamp and body, constant-time comparison, replay window, deduplication). Provider-specific signing (for example Twilio `X-Twilio-Signature`) is implemented by the provider adapter, using DFR1-012's contract. Exotel signing is unknown.
+- **Secrets:** all provider credentials go through the DFR1-011 connection registry and secrets boundary (encrypted, shown once, never in configuration files or logs). Each provider's secret types are listed in its adapter specification.
+- **TRAI and DLT:** commercial SMS and calls to Indian numbers are regulated. Sender registration, consent records and legal review are required before launch. Confirm with counsel.
+- **Data protection:** personal data in provider payloads is redacted before storage (DFR1-012 redaction). Audit records hold identifiers and reason codes, not payloads.
+- **Provider data-use terms:** not reviewed in this pass for any provider. Required before live use.
 
-- **DFR1-011 (connection registry):** the registry is provider-neutral and already on develop for OpenAI. A telephony provider adds a provider key, credential fields, and a connection probe. Probes stay unregistered until selection. No change is made to the registry in this story.
-- **DFR1-027 (inbound lifecycle):** blocked until (a) the owner selects a telephony provider, (b) the provider confirms webhook authentication in writing, and (c) a sandbox account exists. Without (b), DFR1-027 cannot verify inbound webhooks against the provider, and the story can only be mocked.
-- **DFR1-012 (already merged):** the synthetic `hmac_sha256_v1` verifier must not be presented as a provider format. A provider adapter adds its own verifier through the registered contract.
+## 10. Verification and sandbox prerequisites (per provider)
 
-## 10. Exact next steps
+| Provider | Required before implementation | Required before live use |
+|---|---|---|
+| Exotel | Written webhook authentication; sandbox account and test number; inbound calling API; answer and bridge; human transfer; AI streaming protocol; number and regulatory requirements; pricing and concurrency limits | Account approval; live numbers; regulatory registrations; signed contract |
+| Twilio | Per-country and per-direction validation (number availability, regulatory bundle, rules); test credentials | Production account; per-country numbers; regulatory approvals; contract |
+| WhatsApp (Meta Cloud API) | Business verification; WABA; test number; template approvals; webhook verification confirmed | App review (if required by permissions); production number; policy compliance; approved templates |
+| Messenger and Instagram | Meta app; Page and Instagram account; permissions; webhook verification confirmed | App Review for Advanced Access (for customer Pages); business verification |
+| Amazon SES | Sender and domain identity verified (DKIM); sandbox testing; inbound receiving rule; threading and attachment tests | Production access request; bounce and complaint handling live |
 
-1. Owner selects the telephony provider (or confirms the recommendation, or asks for a different candidate).
-2. Owner decides the WhatsApp route (direct or BSP) and whether Messenger and Instagram are in Release 1.
-3. Owner confirms the email provider.
-4. Send questions 2 to 5 above to the selected telephony provider and record the written answers as an addendum to this document.
-5. Obtain a sandbox account and record its identifiers (not credentials) in the E01 matrix.
-6. Only then start provider-specific work (adapter, probe and verifier), in DFR1-027 and DFR1-011 follow-ups.
+No account, credential or sandbox exists in this repository for any of these. Nothing was created.
 
-## 11. Source list
+## 11. Impact on DFR1-011 and the implementation sequence
+
+Approved sequence (one story and one PR at a time; each waits for the previous PR to merge):
+
+1. **DFR1-011:** telephony and channel-specific connection verification. Adds provider keys and probes. Probes run only against real connections in a configured environment; they never mark a connection verified without a real check.
+2. **DFR1-027:** Exotel inbound call lifecycle. Blocked until the Exotel verification gate in section 10 is met.
+3. **DFR1-028:** voice conversation, transcription and post-call CRM update.
+4. **DFR1-029:** WhatsApp Cloud API.
+5. **DFR1-031:** Amazon SES email integration.
+6. **DFR1-030:** Messenger and Instagram integration.
+- Twilio is implemented as a separate adapter after the Exotel adapter contract is established and tested.
+
+## 12. Unresolved questions
+
+1. Exotel: webhook authentication method; sandbox; AI streaming protocol; written pricing and concurrency.
+2. Twilio: number availability and rules per target country and direction. Which countries are in scope for Release 1?
+3. Recording: retention periods, storage location and India residency; whether needed for the pilot.
+4. WhatsApp: business verification status and owner of the WABA.
+5. Messenger and Instagram: whether customer Pages will be connected in Release 1 (App Review).
+6. SES: inbound receiving design and threading requirements.
+7. Costs: quotations for every item in section 7.
+8. Legal review of TRAI, DLT and consent obligations.
+
+## 13. Exact next steps
+
+1. Merge this documentation PR (owner approval).
+2. Obtain the Exotel written pack (section 10).
+3. Obtain the Twilio per-country validation for each target country and direction.
+4. Open the Meta business verification and WABA ownership questions.
+5. Confirm SES identity and inbound receiving design.
+6. Only after the matching verification gate is met, start DFR1-011, then DFR1-027.
+
+## 14. Source list
 
 - Exotel call notifications: https://developer.exotel.com/docs/ip-pstn-webrtc/api-reference/call-notifications
 - Exotel make-a-call API: https://developer.exotel.com/api/make-a-call-api
 - Exotel number types FAQ: https://developer.exotel.com/docs/faqs/number-types
-- Exotel migration blog: https://exotel.com/blog/migrate-twilio-to-exotel-voice-ai-india/
-- CloudTalk Exotel pricing guide: https://www.cloudtalk.io/blog/exotel-pricing/
+- Exotel migration blog (unverified pricing): https://exotel.com/blog/migrate-twilio-to-exotel-voice-ai-india/
+- CloudTalk Exotel pricing guide (secondary): https://www.cloudtalk.io/blog/exotel-pricing/
 - Twilio secure webhooks: https://www.twilio.com/docs/usage/webhooks/webhooks-security
 - Twilio India voice guidelines: https://www.twilio.com/en-us/guidelines/in/voice
 - Twilio India SMS guidelines: https://www.twilio.com/en-us/guidelines/in/sms
 - Knowlarity integration guide (2013, secondary): https://www.scribd.com/document/202780359/Knowlarity-Sr-Integration-Guide-Jan-2013-2
-- Knowlarity API reference (content not loaded): https://developer.knowlarity.com/api-reference
 - WhatsApp Business Platform pricing: https://developers.facebook.com/docs/whatsapp/pricing
 - Messenger Platform overview: https://developers.facebook.com/docs/messenger-platform/overview
 - Amazon SES sending process: https://docs.aws.amazon.com/ses/latest/dg/send-email-concepts-process.html
-- Third-party WhatsApp rate summaries (secondary, not used as facts): myoperator.com, chatmaxima.com, 2factor.in (search results only)
