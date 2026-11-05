@@ -19,6 +19,7 @@ from app.agents.service import (
     AgentError,
     archive,
     create_agent,
+    execution_metrics,
     get_agent,
     list_agents,
     list_versions,
@@ -30,6 +31,7 @@ from app.agents.service import (
     rollback,
     update_draft,
 )
+from app.agents.templates import TEMPLATES, template_summaries
 from app.ai_tools.registry import DEFAULT_REGISTRY
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.authz.dependencies import require_permission
@@ -158,6 +160,61 @@ def list_approved_tools(tenant: TenantContext = Depends(require_permission("agen
             "parameters": [{"name": p.name, "type": p.type.value, "required": p.required} for p in definition.parameters],
         })
     return {"items": items}
+
+
+class FromTemplateRequest(_Strict):
+    template_key: str = Field(min_length=1, max_length=60)
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+@router.get("/templates")
+def list_templates_endpoint(tenant: TenantContext = Depends(require_permission("agents.read"))) -> dict[str, Any]:
+    """The approved templates for lead intake and qualification. Creating from one stores an ordinary draft."""
+    return {"items": template_summaries()}
+
+
+@router.post("/from-template", status_code=status.HTTP_201_CREATED)
+def create_agent_from_template_endpoint(
+    payload: FromTemplateRequest,
+    tenant: TenantContext = Depends(require_permission("agents.manage")),
+    user_context: CurrentUserContext = Depends(get_current_user_context),
+    db: Session = Depends(get_db_session),
+) -> dict[str, Any]:
+    template = TEMPLATES.get(payload.template_key)
+    if template is None:
+        raise HTTPException(status_code=404, detail={"reason": "template_not_found"})
+    try:
+        agent = create_agent(
+            db,
+            organization_id=tenant.organization_id,
+            actor_id=user_context.user.id,
+            name=payload.name,
+            description=payload.description or template["title"],
+            configuration=template["configuration"],
+        )
+        db.commit()
+    except AgentError as error:
+        db.rollback()
+        _raise(error)
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail={"reason": "agent_name_taken"}) from error
+    return _agent_body(agent, None)
+
+
+@router.get("/{agent_id}/metrics")
+def agent_metrics_endpoint(
+    agent_id: UUID,
+    tenant: TenantContext = Depends(require_permission("agents.read")),
+    user_context: CurrentUserContext = Depends(get_current_user_context),
+    db: Session = Depends(get_db_session),
+) -> dict[str, Any]:
+    try:
+        metrics = execution_metrics(db, organization_id=tenant.organization_id, actor_id=user_context.user.id, agent_id=agent_id)
+    except AgentError as error:
+        _raise(error)
+    return metrics
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

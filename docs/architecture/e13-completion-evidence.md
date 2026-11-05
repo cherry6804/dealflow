@@ -1260,3 +1260,186 @@ action) depends on DFR1-008 and DFR1-020. Neither is started here.
 
 - Privacy export and deletion for lead priority scores and corrections (DFR1-050), before production use of scoring with real customer data.
 - No production blocker from an external provider: scoring makes no provider call.
+
+## 29. DFR1-021 lead intake and qualification agents (E07)
+
+Branch: `feature/DFR1-E07-lead-intake-qualification-agents`, cut from `origin/develop` at `8257ed2` (DFR1-020 merged as PR #160).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-021. Summary: Deliver core lead intake and qualification agents. Epic DFR1-E07. Sprint S3 (Days 7-9). Priority P0.
+  Story points 5. Labels: agents, sales. Status To Do at the start of this work.
+- User story / scope: Build receptionist, identity resolution, qualification and lead scoring agent templates using authorized tools.
+- Acceptance criteria: Agents create/update only through CRM services; review uncertain extraction; execution metrics and failure
+  reasons visible.
+- Dependencies: DFR1-019, DFR1-020.
+
+The authoritative plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v2.docx) lists the lead receptionist, identity
+resolver, qualification and lead scoring as core templates. It requires that a disabled workflow never auto-sends or auto-calls, and that
+manual CRM operations and inbound storage keep working when AI is off.
+
+The request asked for more than the backlog's acceptance criteria. Items the backlog does not require are listed under "Not built" below
+and are not claimed. The epic is E07, as the backlog states, so the branch name matches the backlog.
+
+### Dependency verification
+
+- DFR1-018 (typed tool registry): on `origin/develop` (`ee87424`, merged in PR #158).
+- DFR1-019 (agent runtime): on `origin/develop` (`4c95374`, merged in PR #159).
+- DFR1-020 (lead priority): on `origin/develop` (`d42b792`, merged in PR #160, merge `8257ed2`).
+- Open branches on the remote were left untouched. No other branch was rebased, reset or deleted.
+
+### What already existed and was reused
+
+- Agent definitions, immutable versions, pinned executions, step records, limits, concurrency and hourly rate limits, approvals,
+  cancellation and the outbox handler (`app/agents/`).
+- Typed tool registry (`app/ai_tools/`). The qualification template uses the read-only tool `leads.get`.
+- DFR1-020 scoring: `calculate_and_store` in `app/leads/priority_service.py`. The qualification agent calls it through a CRM action; no
+  second scoring engine exists.
+- CRM services: `create_contact`, `ContactDuplicateError` and the normalizers in `app/contacts/service.py` and
+  `app/imports/duplicate_detection.py`; `create_lead` in `app/leads/service.py`; `get_lead`.
+- The execution gate, the AI capability checks (`validate_access`, `static_allowed`), the independent audit writer and user attribution.
+- Permissions `leads.read`, `leads.create`, `leads.update`, `contacts.read`, `contacts.create`, `agents.read`, `agents.manage`,
+  `agents.run`, `agents.approve`. No permission was added.
+
+### Architecture
+
+Intake and identity (no AI):
+
+- A submission is stored first (`lead_intake_submissions`), with the raw payload as received, normalized fields, validation problems,
+  identity candidates, the outcome and any human decision. Invalid submissions are stored and never processed.
+- Repeated submissions: the reference is unique per organization. The same content returns the stored submission. Different content
+  under the same reference is refused (409 `idempotency_conflict`).
+- Identity matching (`app/leads/intake.py`, pure): email and phone are normalized, then compared with contacts in the same organization.
+  One contact matched by email is a match. A single contact matched only by phone is a match only when the name also agrees. Anything
+  else with a candidate is ambiguous and waits for a person. No two existing contacts are ever merged.
+- Processing (`process_submission`): an open lead (not won, lost or inactive) for a matched contact is reused, so processing never creates a
+  second open lead for the same person. A new person gets a contact and a lead through the CRM services.
+- A duplicate-identifier conflict while creating a contact is refused and the submission stays open. The CRM does not allow two contacts
+  with the same email or phone, so "create new" cannot override it.
+- Human decision (`decide_submission`, permission `leads.update`): attach to a candidate the submission matched, create a new contact, or
+  reject. The decision and the deciding member are recorded. A decided submission cannot be decided again.
+
+Agent workflow (through the existing runtime):
+
+- New step kind `crm_action`. An action is one key from a fixed catalogue (`app/agents/crm_action_catalogue.py`):
+  `intake.process` (leads.create and contacts.create), `intake.resolve_identity` (contacts.read, read only), `lead.calculate_priority`
+  (leads.update), `qualification.record` (leads.update).
+- Arguments are references only: `$input.name` for a declared input, or `$step.N.field` for an output of an earlier step. A literal value is
+  refused when the configuration is saved.
+- The runtime checks every action's permissions for the initiating member before the handler runs. A refused permission stops the execution
+  with `crm_permission_denied`. A service error fails the step with the service's reason code, and only the action's own work is rolled
+  back (a savepoint).
+- Agents write only through the intake service, the DFR1-020 priority service and the qualification service. No action changes a lead's own
+  fields, so an agent cannot overwrite a human's change to a lead.
+
+Templates (`app/agents/templates.py`, four, each a draft that goes through the normal publish path):
+
+- `lead_receptionist`: `intake.process` on a stored submission. Autonomy `act`.
+- `identity_resolver`: `intake.resolve_identity`, read only. Autonomy `act`.
+- `lead_scoring`: `lead.calculate_priority` on a lead.
+- `lead_qualification`: `leads.get` (tool), `lead.calculate_priority`, one model step that suggests a next action (structured output
+  `next_action`), then `qualification.record`.
+
+A template is a starting configuration, not code. It names no permission, and creating from one stores an ordinary draft.
+
+Qualification findings (`app/leads/qualification.py`, table `lead_qualification_results`, one row per execution):
+
+- `verified_crm_facts`: values read from the lead and contact at the time of the run.
+- `rule_findings`: the stored DFR1-020 score, band, method, confidence, ruleset version, timestamp, and each factor with its points and value.
+  Taken from the stored score, not recalculated.
+- `missing_information`: fields the CRM does not hold. Never guessed.
+- `recommended_next_actions`: rule-based, labelled `basis: rule`.
+- `ai_suggestions`: model text, truncated to 300 characters, labelled `basis: ai_suggestion`, `verified: false`.
+- `human_decisions`: empty until a person reviews. Each review records the decision, reason, member and time.
+- `escalation`: `requires_review` with reasons (`insufficient_data`, `no_contact_route`, `low_confidence`).
+- `lead_updated_at` is kept as a snapshot. `stale` is true when the lead changed after the findings were recorded.
+- One result per execution (unique on `execution_id`). A repeated call returns the existing result.
+
+Review: a result has one review, either accept or override. An override needs a reason. A second review is refused (409
+`already_reviewed`). A review changes only the review fields of the result.
+
+Metrics: `GET /api/v1/agents/{id}/metrics` (agents.read) returns counts by execution status and the ten most common failure reasons.
+
+### Human control and authorization boundaries
+
+- Ambiguous identity, duplicate identifiers and conflicting contacts are never written by an agent. They wait for `leads.update`.
+- Agents do not reject, disqualify or change lead status, interest or owner.
+- No customer communication exists in this story. No template sends a message or places a call.
+- Every write checks the initiating member's permissions at creation (`validate_access`), at each step and in the service. Tests cover a
+  member who lacks the CRM permission.
+- AI switched off: an agent run is refused at creation. Intake, processing, decisions and review work without AI.
+- Cross-tenant: every query is scoped to the verified organization. Another organization's submission, lead, result or agent returns 404,
+  and an attach to another organization's contact is refused as not a candidate.
+- Audit: intake submission, processing, decisions, qualification records and reviews write independent audit events with identifiers and
+  outcomes only. Names, email and phone are never written to the audit trail (tested).
+
+### Failure handling
+
+- Repeated submissions: idempotent by reference (tested).
+- Concurrent processing of one submission: the row lock serialises it; three concurrent calls create one contact and one lead (tested).
+- Duplicate outbox delivery: a second delivery finds the execution finished and does nothing (tested).
+- Invalid or missing input: refused before anything is queued, or failed with `invalid_crm_argument` or `invalid_submission`.
+- Provider timeouts and invalid model output on the model step: reuse the existing gateway and runtime behaviour (bounded retries, then the
+  step ends with a reason). Covered by the DFR1-019 tests, not repeated here.
+- No automatic retry of a CRM action. A failed action ends the execution with its reason, so a repeat cannot duplicate a write. An operator
+  starts a new execution with a new key.
+- Lead changed during qualification: the findings are kept and marked stale on read. Nothing is overwritten.
+
+### Migration
+
+- `a7c3e9d1f2b4_lead_intake_qualification` (down revision `f3b9d2c7a1e4`): creates `lead_intake_submissions` and
+  `lead_qualification_results`. No permission is added. Downgrade refuses while rows exist.
+- Validated on a freshly created `dealflow` database on the disposable PostgreSQL server (port 5438): upgrade head exit 0; downgrade one
+  step exit 0; re-upgrade exit 0; single head `a7c3e9d1f2b4`.
+
+### Files changed
+
+- Backend, new: `app/agents/crm_action_catalogue.py`, `app/agents/crm_actions.py`, `app/agents/templates.py`,
+  `app/db/models/lead_intake.py`, `app/leads/intake.py`, `app/leads/intake_service.py`, `app/leads/qualification.py`,
+  `app/api/lead_intake.py`, `app/api/lead_qualification.py`, `alembic/versions/a7c3e9d1f2b4_lead_intake_qualification.py`,
+  `tests/test_lead_intake_qualification.py`.
+- Backend, changed: `app/agents/configuration.py` (step kind and reference validation), `app/agents/runtime.py` (CRM step execution and
+  `$step` references), `app/agents/service.py` (CRM permission checks, preview description, metrics), `app/api/agents.py` (templates,
+  from-template, metrics), `app/main.py` and `app/db/models/__init__.py` (registration), `app/governance/table_inventory.py` (two entries,
+  not covered, DFR1-050).
+- Frontend, new: `src/pages/LeadIntakePage.tsx`, `LeadIntakePage.css`, `LeadIntakePage.test.tsx`, `src/services/leadIntakeApi.ts`.
+- Frontend, changed: `src/app/routing/AppRouter.tsx` (route `/lead-intake`), `src/pages/AgentsPage.tsx` (templates and metrics),
+  `src/services/agentApi.ts`.
+- Documentation: this section; the DFR1-021 tracker row; `docs/architecture/agent-runtime.md` (CRM action steps).
+
+### Test results
+
+- Focused: `tests/test_lead_intake_qualification.py`, 39 passed, exit 0.
+- Full backend suite (`pytest tests -q -p no:warnings`, from `backend/`): 2,472 passed, 14 skipped, 0 failed, exit 0 (991.54 s). The 14 skips are
+  the same live-provider tests as before, not configured in this environment. 2,433 + 39 = 2,472.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0; the three new `set-state-in-effect` warnings in `LeadIntakePage.tsx` and
+  `AgentsPage.tsx` follow the existing page pattern (the load effect). `vitest run`: 20 files, 139 tests passed, exit 0 (includes 4 new
+  tests in `LeadIntakePage.test.tsx`). `npm run build` exit 0.
+
+### Scope not built
+
+- No external channel integration. Intake accepts submissions from authenticated members (`manual`, `form`, `api` labels). No public
+  website endpoint, no provider webhook, no portal connector. Website and API intake need their own integration story.
+- No configurable intake fields. The intake fields are fixed (name, email, phone, interest).
+- No lead source model. Source is recorded as the channel and the external reference only; no source attribution exists elsewhere in the CRM.
+- No conflict detection beyond identity, and no agent decision to reject or disqualify a lead.
+- No outbound communication, consent-aware sending or call placement. These need a separately authorized, consent-aware workflow.
+- No approval step is used by the templates. Their autonomy is `act` because their writes are CRM records created from stored input.
+- No qualification-specific budget test. The model step uses the gateway budget, and the DFR1-019 budget test covers that path.
+- No frontend component test for the new agents-page sections. The intake page has four tests.
+- The intake page is a route only. It is not in workspace navigation, the same gap as the agents page (DFR1-037).
+
+### Known limitations
+
+- Agent runs need AI enabled and provider readiness, as in DFR1-019. Intake works without AI.
+- Rule set `priority-rules-v1` is versioned in code, as in DFR1-020.
+- Identity matching is deterministic: exact normalized email, and exact digits for phone. There is no fuzzy matching.
+- Metrics count executions. They do not include latency, cost or evaluation scores; those belong to DFR1-055.
+
+### Production blockers
+
+- Privacy export and deletion do not cover lead intake submissions (raw payload with personal data), qualification findings or reviews
+  (DFR1-050). Both tables are listed as not covered in `table_inventory.py`.
+- DFR1-019 blockers still apply to any agent run: AI actor key, AI resource store, AI rate rule, provider data-use approval and sandbox
+  verification. The qualification template also needs a routed text model.
+- Scheduled stale-run sweep is not wired (DFR1-051), as before.

@@ -14,12 +14,13 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from app.agents.crm_action_catalogue import CRM_ACTIONS
 from app.ai_gateway.structured import validate_schema
 
 CATEGORIES = ("sales", "operations", "research")
 LANGUAGES = ("en", "de", "es", "fr", "nl", "sv", "da", "nb")
 INPUT_TYPES = ("uuid", "string", "integer")
-STEP_KINDS = ("tool", "knowledge", "model", "approval")
+STEP_KINDS = ("tool", "knowledge", "model", "approval", "crm_action")
 AUTONOMY_LEVELS = ("suggest", "act")
 APPROVAL_POLICIES = ("none", "before_result")
 TRIGGER_TYPES = ("manual",)
@@ -59,6 +60,7 @@ _NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _INPUT_REF = re.compile(r"^\$input\.([a-z][a-z0-9_]{0,39})$")
 _PLACEHOLDER = re.compile(r"\$(input|step)\.([a-z0-9_]+)")
 _STEP_REF = re.compile(r"^[0-9]{1,2}$")
+_STEP_FIELD_REF = re.compile(r"^\$step\.([0-9]{1,2})\.([a-z][a-z0-9_]{0,39})$")
 
 
 class ConfigurationError(ValueError):
@@ -180,6 +182,46 @@ def _placeholders_ok(text: str, *, input_names: set[str], step_index: int, probl
             problems.append(f"{where} refers to a step that does not come before it.")
 
 
+def _is_reference(value: str, *, index: int, input_names: set[str]) -> bool:
+    """A ``$input.name`` declared by the agent, or a ``$step.N.field`` that comes before this step."""
+    match = _INPUT_REF.fullmatch(value)
+    if match is not None:
+        return match.group(1) in input_names
+    step_match = _STEP_FIELD_REF.fullmatch(value)
+    return step_match is not None and int(step_match.group(1)) < index
+
+
+def _normalise_crm_action(item: object, where: str, *, index: int, input_names: set[str],
+                          problems: list[str]) -> dict[str, Any] | None:
+    """A CRM action step names one approved action and its arguments. Arguments are references, never literal values."""
+    data = _object(item, where, {"kind", "action", "arguments"}, problems)
+    if data is None:
+        return None
+    action = data.get("action")
+    spec = CRM_ACTIONS.get(action) if isinstance(action, str) else None
+    if spec is None:
+        problems.append(f"{where}.action is not an approved CRM action.")
+        return None
+    arguments = data.get("arguments", {})
+    if not isinstance(arguments, dict):
+        problems.append(f"{where}.arguments must be an object.")
+        return None
+    allowed = set(spec.required_arguments) | set(spec.optional_arguments)
+    clean: dict[str, str] = {}
+    for name, value in arguments.items():
+        if name not in allowed:
+            problems.append(f"{where}.arguments has an argument this action does not take.")
+            continue
+        if not isinstance(value, str) or not _is_reference(value, index=index, input_names=input_names):
+            problems.append(f"{where}.arguments must refer to a declared input or to an earlier step.")
+            continue
+        clean[name] = value
+    if any(name not in clean for name in spec.required_arguments):
+        problems.append(f"{where} is missing a required argument.")
+        return None
+    return {"kind": "crm_action", "action": action, "arguments": clean}
+
+
 def _normalise_steps(raw: object, *, tools: set[str], input_names: set[str], problems: list[str]) -> list[dict[str, Any]]:
     if not isinstance(raw, list) or not raw:
         problems.append("steps must be a non-empty list.")
@@ -252,6 +294,10 @@ def _normalise_steps(raw: object, *, tools: set[str], input_names: set[str], pro
                 continue
             _placeholders_ok(prompt, input_names=input_names, step_index=index, problems=problems, where=where)
             steps.append({"kind": "model", "prompt": prompt, "output_schema": dict(schema)})
+        elif kind == "crm_action":
+            clean = _normalise_crm_action(item, where, index=index, input_names=input_names, problems=problems)
+            if clean is not None:
+                steps.append(clean)
         else:  # approval
             data = _object(item, where, {"kind", "reason"}, problems)
             if data is None:

@@ -63,6 +63,7 @@ const SiteVisitsPage = lazy(
 const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
 const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
 const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
+const LeadIntakePage = lazy(() => import("../../pages/LeadIntakePage"));
 const AutomationRulesPage = lazy(
   () => import("../../pages/AutomationRulesPage"),
 );
@@ -207,6 +208,7 @@ export default function AppRouter() {
             />
 
             <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/lead-intake" element={<LeadIntakePage />} />
 
             <Route
               path="/automation-history"

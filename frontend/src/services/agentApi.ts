@@ -114,7 +114,31 @@ export interface AgentWriteInput {
 
 const BASE = "/agents";
 
+export interface AgentTemplateSummary {
+  key: string;
+  title: string;
+  purpose: string;
+  tools: string[];
+  steps: number;
+}
+
+export interface AgentExecutionMetrics {
+  agent_id: string;
+  total: number;
+  by_status: Partial<Record<ExecutionStatus, number>>;
+  failure_reasons: Array<{ reason: string; count: number }>;
+}
+
 export const agentApi = {
+  templates() {
+    return api.get<{ items: AgentTemplateSummary[] }>(`${BASE}/templates`);
+  },
+  createFromTemplate(input: { template_key: string; name: string; description?: string }) {
+    return api.post<Agent>(`${BASE}/from-template`, input);
+  },
+  metrics(agentId: string) {
+    return api.get<AgentExecutionMetrics>(`${BASE}/${encodeURIComponent(agentId)}/metrics`);
+  },
   tools(): Promise<{ items: ApprovedTool[] }> {
     return api.get<{ items: ApprovedTool[] }>(`${BASE}/tools`);
   },
