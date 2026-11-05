@@ -66,6 +66,7 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("governance.channels.manage", "Configure channel policy and contact do-not-disturb."),
     ("provider_credentials.read", "View provider credential metadata."),
     ("provider_credentials.manage", "Create, rotate and revoke provider credentials."),
+    ("webhook_endpoints.manage", "Create, rotate and disable inbound webhook endpoints and their signing secrets."),
     ("agents.read", "View agent definitions, versions and executions."),
     ("agents.manage", "Create and edit agent drafts."),
     ("agents.publish", "Publish, pause, resume, roll back and archive agents."),
@@ -91,6 +92,7 @@ OWNER_ONLY_PERMISSION_KEYS = frozenset(
         "governance.approvals.decide",
         "governance.channels.manage",
         "provider_credentials.manage",
+        "webhook_endpoints.manage",
     }
 )
 

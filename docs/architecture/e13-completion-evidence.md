@@ -2014,3 +2014,96 @@ The architecture plan names a visual drag/drop editor, templates, simulation, va
 ### Production blockers
 
 - None introduced by this story. The existing blockers from DFR1-024 and DFR1-025 (privacy coverage of run and task records, scheduled sweeps) still apply.
+
+## 35. DFR1-012 verified webhook ingress and normalised event envelope (E04)
+
+Branch: `feature/DFR1-E04-verified-webhook-ingress`, cut from `origin/develop` at `3845080` (confirmed before branching; DFR1-026 merged as PR #166).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-012. Summary: Build verified webhook ingress and normalized event envelope. Epic DFR1-E04. Sprint S2 (Days 4-6). Priority P0. Story points 5. Labels: webhooks, eventing.
+- Scope: implement signature verification, raw event capture with redaction, provider event normalisation, deduplication and correlation IDs.
+- Acceptance criteria: invalid signatures rejected; idempotent event processing; provider payload versioning; replay-safe storage and observability.
+- Dependency: DFR1-011 (connection registry and secrets boundary). On develop, with the telephony-specific probes still pending DFR1-007.
+
+### Dependency verification
+
+- DFR1-011: the connection model, service, API and secrets boundary are on develop (`app/db/models/provider_connection.py`, `app/api/provider_connections.py`, `app/provider_secrets/`, `tests/test_provider_connection_lifecycle.py`). The tracker's earlier path `app/governance/provider_connections.py` was wrong, and is corrected below. No telephony provider probe is registered. This story does not register one.
+- DFR1-015: merged to develop through PR #154. Its tracker row said otherwise, and is corrected below.
+- DFR1-007: pending. No provider is selected, so no provider-specific verifier or adapter is added here.
+
+### Corrections to earlier tracker and evidence statements
+
+- "Webhook verification exists only for SIBVO billing" was not supported by the code. Develop had no inbound route and no signature verification code. `BillingWebhookEvent` is a table model only. The DFR1-012 row now says so.
+- DFR1-015 is merged to develop through PR #154 (merge `da28b6b`). The earlier row described its code as only on the feature branch.
+- DFR1-011's path and test file were wrong in the tracker. Corrected.
+- Telephony-specific connection probes remain pending DFR1-007.
+
+### What was built
+
+- Verifier contract (`app/webhooks/verifier.py`): a `SignatureVerifier` protocol with a `key`, and a registry. The implemented verifier is `hmac_sha256_v1`, Dealsflo's own synthetic format. It is not compatible with any provider's scheme.
+- Synthetic format `hmac_sha256_v1`: the sender sends `X-Dealsflo-Timestamp: <unix seconds>` and `X-Dealsflo-Signature: sha256=<hex>`, where `<hex>` is HMAC-SHA256 over the ASCII bytes of `<timestamp>.` followed by the exact raw body, keyed with the endpoint secret. Comparison is constant time (`hmac.compare_digest`, tested with a spy). The signature is checked before timestamp age, so a stale correctly signed delivery is reported as stale.
+- Timestamp checks: a missing or malformed timestamp is refused. A timestamp older than the replay window is `stale_timestamp`. A timestamp more than 60 seconds in the future is `future_timestamp`. The replay window is `INBOUND_WEBHOOK_REPLAY_WINDOW_SECONDS` (default 300, 30 to 3600).
+- Replay: a replay inside the window is the same event ID and body, so it is a duplicate and is not processed again. A replay outside the window is stale. A provider retry of identical bytes is also a duplicate, which is safe.
+- Envelope (`app/webhooks/envelope.py`): one JSON object with string `id` (≤200 characters), string `type` (≤120, lowercase dotted), optional `occurred_at` (ISO 8601 with a timezone) and optional object `data`. Duplicate keys, depth above 12, non-object bodies, and bodies over 256 KB are refused. The stored envelope has `envelope_version`, `provider`, `provider_event_id`, `event_type`, `occurred_at`, `received_at`, `correlation_id` and the redacted `payload`.
+- Redaction (`app/webhooks/redaction.py`): values under secret-like or card-like names are replaced with `[REDACTED]`. Emails become `[EMAIL]`. Phone-like numbers keep only the last four digits. Strings are capped at 500 characters. This reuses `SENSITIVE_FIELD_NAMES` from the provider-secrets boundary.
+- Raw event capture: this story stores the redacted, parsed envelope for accepted deliveries. It does not store raw bytes, and refused deliveries store only the SHA-256 of the body and its size. The raw body is never stored unredacted.
+- Endpoints (`app/db/models/inbound_webhook.py`, `app/webhooks/service.py`): the server-side trust configuration. The URL carries the endpoint identifier, and the organisation and provider come from the endpoint row. The signing secret is AES-256-GCM ciphertext from the existing provider-secrets cipher, with associated data bound to the endpoint, organisation and version. It is shown once at creation or rotation and is never returned again.
+- Deduplication: a unique partial index allows one accepted delivery per endpoint and provider event ID. The same body is a `duplicate` (200). A different body under the same ID is a `conflict` (409). Under concurrency, the unique index refuses the second copy, and it is treated as a duplicate.
+- Outbox handoff: an accepted delivery queues one `inbound_webhook.received` event in the same transaction, with idempotency key `inbound_webhook:<endpoint>:<provider event ID>` and payload `{delivery_id}` only. The handler marks the delivery handled, once. No business effect is applied in this story. The handler is registered in the outbox runtime, and a missing delivery is a permanent failure.
+- Failure handling: an unreadable secret fails closed with 503 and records `failed`. A database error before commit writes nothing and returns 503, so the provider can retry. Oversized bodies are refused with 413, before reading when `Content-Length` says so.
+- Organisation isolation: an endpoint in another organisation is invisible to the caller (404 on list, rotate and disable). The receiving response never contains an organisation identifier. A delivery is recorded under the endpoint's organisation, even when the payload names another one.
+- Audit: each outcome writes an independent audit record with identifiers, reason codes and sizes only. Audit metadata refuses secret-like keys, so the field was renamed to `version` on rotation. No body, envelope, secret or signature is audited.
+- Administration: `/api/v1/webhook-endpoints` (list, create, rotate, disable), with `webhook_endpoints.manage`, granted to the Owner role only.
+
+### Endpoints and routes
+
+- `POST /api/v1/webhooks/inbound/{endpoint_id}`: no user session. 202 accepted, 200 duplicate, 400 malformed, 401 signature or timestamp refused, 403 disabled or connection not connected, 404 unknown endpoint, 409 conflict, 413 too large, 503 secret unavailable or temporarily unavailable.
+- `GET /api/v1/webhook-endpoints`, `POST /api/v1/webhook-endpoints` (201, with `signing_secret` once), `POST /api/v1/webhook-endpoints/{id}/rotate` (with `signing_secret` once), `POST /api/v1/webhook-endpoints/{id}/disable`.
+
+### Migration
+
+- `f1a7c3e9b5d2_inbound_webhooks` (down revision `e5a7c9d1f3b2`). Creates `inbound_webhook_endpoints` and `inbound_webhook_deliveries`, the partial unique index, and registers and grants `webhook_endpoints.manage` to the Owner role. Downgrade refuses while rows exist.
+- Validated on a freshly created `dealflow` database on the isolated server (127.0.0.1:5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `f1a7c3e9b5d2`.
+
+### Files changed
+
+- Backend, new: `app/webhooks/__init__.py`, `app/webhooks/verifier.py`, `app/webhooks/envelope.py`, `app/webhooks/redaction.py`, `app/webhooks/service.py`, `app/webhooks/handlers.py`, `app/db/models/inbound_webhook.py`, `app/api/webhook_ingress.py`, `alembic/versions/f1a7c3e9b5d2_inbound_webhooks.py`, `tests/test_webhook_ingress.py`.
+- Backend, changed: `app/config.py` (replay window), `app/authz/permissions.py` (permission and Owner-only set), `app/db/models/__init__.py`, `app/governance/table_inventory.py` (both tables: endpoints as never exported, deliveries as not covered pending DFR1-050), `app/main.py` (routers), `app/outbox/runtime.py` (handler registration).
+
+### Environment variables and deployment prerequisites
+
+- `INBOUND_WEBHOOK_REPLAY_WINDOW_SECONDS` (optional, default 300).
+- Secrets: `PROVIDER_SECRETS_ACTIVE_KEY_ID` and `PROVIDER_SECRETS_KEYRING` (local keyring, not allowed in production), or the managed key provider. Without a configured key, endpoints fail closed with 503 and nothing is processed.
+- The outbox worker must be running for accepted deliveries to be marked handled. This story does not deploy or assume any scheduler or worker.
+- Migration `f1a7c3e9b5d2` must be applied.
+- Webhook URL for a sender: `https://<host>/api/v1/webhooks/inbound/<endpoint_id>`. The sender must sign with the endpoint secret, in the synthetic format above, unless a provider-specific verifier is added after DFR1-007.
+- No secret is committed. Test secrets are generated per test run.
+
+### Test results (actual)
+
+- Focused: `tests/test_webhook_ingress.py` 47 passed. With the outbox, outbox worker, email outbox worker, error redaction, table inventory, billing webhook model, provider connection lifecycle and provider secrets tests: 176 passed, exit 0.
+- Full backend suite (`pytest tests -q`, from `backend/`, isolated database on 127.0.0.1:5438): 2,687 passed, 14 skipped, 0 failed, exit 0 (840.14 s). The 14 skips are the live-provider tests that are not configured here.
+- Lint: `ruff check` exit 0 on all new and changed files. `ruff format --check` clean on new files. Two pre-existing unsorted import blocks in `app/main.py` and `app/authz/permissions.py` were left untouched.
+- Frontend: no frontend files changed by this story, so no frontend checks were run for it.
+
+### Verification status (what is and is not verified)
+
+- Mocked-boundary tests cover valid and invalid signatures, tampering, missing and stale timestamps, replay, duplicates and conflicts, cross-organisation isolation, disabled endpoints, unreadable secrets, malformed bodies, redaction, audit content, and outbox idempotency and handler behaviour.
+- Synthetic HMAC tests are not real provider sandbox verification. No provider has been selected (DFR1-007), no provider webhook has been received, and no provider signature scheme has been checked against a provider's documentation or account.
+- Not built: provider-specific verifiers, provider connection probes, and an automatic link between an endpoint and a verified connection in the tests. Linking is checked at creation and at ingress, but the connected-link path is not exercised with a real verified connection.
+
+### Known limitations
+
+- Raw bytes are not captured. Only the redacted envelope is stored for accepted deliveries, and only hashes for refused ones.
+- Delivery records are not in privacy export or deletion (DFR1-050). Listed as not covered in `table_inventory.py`.
+- Replay protection relies on the timestamp window and event-ID deduplication. A signed request that is replayed inside the window is recorded as a duplicate, not as a separate delivery.
+- Provider payload versioning is limited to the envelope version. Provider-specific versions arrive with provider adapters.
+- The handler performs no business processing yet. Downstream consumers come with DFR1-027 and later stories.
+- The envelope's `provider` field is the endpoint's provider key. No provider key is registered for real providers yet.
+
+### Production blockers
+
+- Provider-specific verifiers and connection probes, pending DFR1-007.
+- Privacy export and deletion for the delivery records (DFR1-050).
+- A running outbox worker and a managed key provider in production.
