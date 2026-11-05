@@ -76,6 +76,8 @@ TABLE_INVENTORY: dict[str, TableEntry] = {
     "documents": _exported("documents.files"),
     "team_invitations": _exported("team.invitations"),
     "ai_usage_events": _exported("ai.usage"),
+    "ai_provider_prices": TableEntry(DISPOSITION_CONFIGURATION, reason="Platform provider price versions. Configuration, not customer data."),
+    "ai_provider_cost_entries": TableEntry(DISPOSITION_NOT_COVERED, reason="Provider cost per settled usage unit, priced or unpriced, with the price version used. Not yet covered by export or deletion (DFR1-050)."),
     # Platform email outbox: no organization column. Excluded from per-organization export (D5).
     "email_outbox_messages": TableEntry(
         DISPOSITION_NOT_COVERED,

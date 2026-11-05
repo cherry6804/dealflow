@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import delete, select
 
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import (
     RELEASE_REASON_EXPIRED,
     RELEASE_REASON_RELEASED,
@@ -52,6 +53,7 @@ UNIT = UsageUnit.TOKENS_OUTPUT
 def _cleanup(organization_id: UUID) -> None:
     with SessionLocal() as db:
         db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == organization_id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
         db.commit()

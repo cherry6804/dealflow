@@ -100,6 +100,8 @@ class AgentExecution(Base):
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     input_values: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_step_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     next_step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     steps_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

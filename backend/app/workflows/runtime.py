@@ -576,6 +576,8 @@ def _run_agent(db: Session, execution: WorkflowExecution, step: dict[str, Any], 
             user_context=user_context,
             input_values=values,
             idempotency_key=f"workflow:{execution.id}:{step['id']}",
+            workflow_execution_id=execution.id,
+            workflow_step_id=step["id"],
         )
     except AgentError as error:
         if error.reason == "permission_denied":

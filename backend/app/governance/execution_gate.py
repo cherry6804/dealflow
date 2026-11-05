@@ -58,6 +58,7 @@ from app.audit.independent import (
 )
 from app.auth.dependencies import CurrentUserContext
 from app.authz.permissions import OWNER_ONLY_PERMISSION_KEYS, OWNER_ROLE_NAME
+from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.permission import Permission
@@ -425,7 +426,7 @@ def _reserve_budget(
         for unit, quantity in request.budget_units:
             # Use the unit value, so the stored key does not depend on how the enum formats itself.
             key = f"{base_key}:{UsageUnit(unit).value}"
-            reserve(
+            entry = reserve(
                 db,
                 organization_id=request.organization_id,
                 unit=UsageUnit(unit),
@@ -442,6 +443,9 @@ def _reserve_budget(
                 provider=request.attribution.provider if request.attribution else None,
                 model=request.attribution.model if request.attribution else None,
             )
+            if request.attribution is not None and request.attribution.workflow_step_id is not None:
+                entry.workflow_step_id = request.attribution.workflow_step_id
+                db.flush()
             reservations.append((unit, key))
     except BudgetNotConfiguredError:
         _release_all(db, request.organization_id, reservations)
@@ -601,11 +605,15 @@ def settle_ticket(
     *,
     provider: str | None = None,
     model: str | None = None,
-) -> None:
-    """Settle each reservation with its actual usage. Units not in ``actual`` are released."""
+) -> dict[str, AiUsageEvent]:
+    """Settle each reservation with its actual usage. Units not in ``actual`` are released.
+
+    Returns the settled usage entries by unit, so the caller can record their cost.
+    """
+    settled: dict[str, AiUsageEvent] = {}
     for unit, key in ticket.reservation_keys:
         if unit in actual:
-            settle(
+            settled[unit] = settle(
                 db,
                 organization_id=ticket.organization_id,
                 idempotency_key=key,
@@ -615,6 +623,7 @@ def settle_ticket(
             )
         else:
             release(db, organization_id=ticket.organization_id, idempotency_key=key)
+    return settled
 
 
 def release_ticket(db: Session, ticket: ExecutionTicket) -> None:

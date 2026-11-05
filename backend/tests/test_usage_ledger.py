@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import delete, func, select
 
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
@@ -41,6 +42,7 @@ def org() -> Iterator[UUID]:
     yield organization.id
     with SessionLocal() as db:
         db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == organization.id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization.id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization.id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization.id))
         db.commit()
@@ -246,6 +248,7 @@ def test_usage_and_idempotency_are_scoped_to_one_organization(org) -> None:
     finally:
         with SessionLocal() as db:
             db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == other.id))
+            db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == other.id))
             db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == other.id))
             db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == other.id))
             db.commit()

@@ -221,6 +221,8 @@ def create_execution(
     user_context: CurrentUserContext,
     input_values: object,
     idempotency_key: str,
+    workflow_execution_id: UUID | None = None,
+    workflow_step_id: str | None = None,
 ) -> tuple[AgentExecution, bool]:
     """Create one queued execution, or return the one an earlier request with the same key created.
 
@@ -290,6 +292,8 @@ def create_execution(
         status=AgentExecution.STATUS_QUEUED,
         idempotency_key=key,
         input_hash=input_hash,
+        workflow_execution_id=workflow_execution_id,
+        workflow_step_id=workflow_step_id,
         input_values=typed,
         correlation_id=str(uuid.uuid4()),
     )
@@ -353,7 +357,13 @@ def _run_model_step(db: Session, execution: AgentExecution, step: dict[str, Any]
                 output_schema=step["output_schema"],
                 max_output_tokens=512,
                 input_token_estimate=len(prompt) // 4 + 1,
-                attribution=UsageAttribution(agent_id=str(execution.agent_id), execution_id=str(execution.id)),
+                attribution=UsageAttribution(
+                    agent_id=str(execution.agent_id),
+                    execution_id=str(execution.id),
+                    workflow_id=str(execution.workflow_execution_id) if execution.workflow_execution_id else None,
+                    workflow_step_id=execution.workflow_step_id,
+                    call_key=f"agent:{execution.id}:{index}:{attempt}",
+                ),
             ),
             sleep=sleep,
         )

@@ -71,6 +71,9 @@ def _grant_images(tenant_state: SimpleNamespace, limit: int = 100) -> None:
 
         configure_budget(db, organization_id=tenant_state.org.id, unit=UsageUnit.IMAGES, limit_quantity=limit,
                          moment=datetime.now(UTC))
+        # Pages are a separate unit. Page-by-page OCR is refused until the organization has a page budget (DFR1-017).
+        configure_budget(db, organization_id=tenant_state.org.id, unit=UsageUnit.DOCUMENT_PAGES, limit_quantity=limit,
+                         moment=datetime.now(UTC))
         db.commit()
 
 

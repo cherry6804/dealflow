@@ -81,6 +81,8 @@ class GatewayRequest:
     images: tuple[ImageInput, ...] = ()
     # Agent, workflow and execution that caused this call, when there is one. Provider and model are filled in by the gateway.
     attribution: UsageAttribution | None = None
+    # Pages of a document this call reads, counted by the caller. Metered as the document_pages unit, never as images.
+    document_pages: int = 0
 
 
 @dataclass(frozen=True)

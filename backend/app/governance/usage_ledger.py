@@ -155,6 +155,8 @@ class UsageAttribution:
     task_type: str | None = None
     provider: str | None = None
     model: str | None = None
+    workflow_step_id: str | None = None
+    call_key: str | None = None
 
 
 @dataclass(frozen=True)

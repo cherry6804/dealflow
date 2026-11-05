@@ -21,7 +21,9 @@ import json
 import time
 import uuid
 from collections.abc import Callable
+from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai_gateway.adapters import (
@@ -58,7 +60,9 @@ from app.audit.independent import (
     persist_independent_audit_event,
 )
 from app.config import get_settings
+from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
+from app.governance.ai_pricing import record_provider_costs
 from app.governance.execution_gate import (
     ExecutionRequest,
     evaluate_execution,
@@ -82,6 +86,9 @@ GATEWAY_EXECUTE_ACTION = "ai_gateway.execute"
 Sleep = Callable[[float], None]
 _BACKOFF_STEP_SECONDS = 0.5
 _BACKOFF_CAP_SECONDS = 2.0
+
+
+REASON_USAGE_ALREADY_RECORDED = "usage_already_recorded"
 
 
 def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) -> TaskResult:
@@ -115,6 +122,14 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
     if not candidates:
         return _refused(REASON_TASK_NOT_SUPPORTED, route=route)
 
+    # A call that an agent or workflow already metered is not sent to the provider again.
+    if (
+        request.attribution is not None
+        and request.attribution.call_key is not None
+        and _already_recorded(db, request.organization_id, request.attribution.call_key)
+    ):
+        return TaskResult(outcome="denied", reason_code=REASON_USAGE_ALREADY_RECORDED,
+                          provider_key=route.provider_key, model=route.model)
     decision = evaluate_execution(
         db,
         ExecutionRequest(
@@ -123,7 +138,7 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
             user_context=request.user_context,
             resource_id=request.resource_id,
             # Each call reserves under its own key. A shared key would make every later call for the same capability conflict.
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=_call_key(request),
             budget_units=_budget_units(request),
             attribution=_reserve_attribution(request, route.provider_key, route.model),
         ),
@@ -157,7 +172,9 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
         return result
 
     try:
-        settle_ticket(db, ticket, actual=call.usage, provider=provider_key, model=model)
+        events = settle_ticket(db, ticket, actual=_actual_usage(call.usage, request), provider=provider_key, model=model)
+        record_provider_costs(db, organization_id=request.organization_id, events=events,
+                              provider_key=provider_key, model=model)
     except UsageError:
         # The provider has answered, but its usage cannot be recorded against the reservation. The answer is withheld,
         # so nothing is returned that was not metered. The caller must roll back this session.
@@ -364,6 +381,30 @@ def _validate_multimodal(request: GatewayRequest) -> str | None:
     return None
 
 
+def _call_key(request: GatewayRequest) -> str:
+    """The idempotency key for this call. An agent or workflow call names its own key, so a repeat shares one usage entry."""
+    if request.attribution is not None and request.attribution.call_key is not None:
+        return request.attribution.call_key
+    return str(uuid.uuid4())
+
+
+def _already_recorded(db: Session, organization_id: UUID, call_key: str) -> bool:
+    """True when usage for this call key is already recorded."""
+    return db.scalar(select(AiUsageEvent.id).where(
+        AiUsageEvent.organization_id == organization_id,
+        AiUsageEvent.idempotency_key.like(f"{call_key}:%"),
+        AiUsageEvent.status == AiUsageEvent.STATUS_RECORDED,
+    ).limit(1)) is not None
+
+
+def _actual_usage(usage: dict[str, int], request: GatewayRequest) -> dict[str, int]:
+    """The provider's usage, plus the pages this call read. Pages come from the request, never from images."""
+    actual = dict(usage)
+    if request.document_pages > 0:
+        actual["document_pages"] = request.document_pages
+    return actual
+
+
 def _reserve_attribution(request: GatewayRequest, provider_key: str, model: str) -> UsageAttribution:
     """The attribution known before the call. The provider and model are the planned route; settlement records the one that answered."""
     base = request.attribution or UsageAttribution()
@@ -372,6 +413,8 @@ def _reserve_attribution(request: GatewayRequest, provider_key: str, model: str)
         workflow_id=base.workflow_id,
         execution_id=base.execution_id,
         task_type=request.task.value,
+        workflow_step_id=base.workflow_step_id,
+        call_key=base.call_key,
         provider=provider_key,
         model=model,
     )
@@ -387,6 +430,8 @@ def _budget_units(request: GatewayRequest) -> tuple[tuple[str, int], ...]:
         units.append(("images", len(request.images)))
     if request.input_token_estimate > 0:
         units.append(("tokens_input", request.input_token_estimate))
+    if request.document_pages > 0:
+        units.append(("document_pages", request.document_pages))
     return tuple(units)
 
 

@@ -37,6 +37,7 @@ def run_multimodal(
     images: tuple[ImageInput, ...],
     schema: dict[str, str],
     max_output_tokens: int,
+    document_pages: int = 0,
     sleep: Sleep = time.sleep,
 ) -> TaskResult:
     """Run one prompt over one or more images, with a structured output. The caller commits or rolls back the session."""
@@ -53,6 +54,7 @@ def run_multimodal(
             output_schema=schema,
             max_output_tokens=max_output_tokens,
             input_token_estimate=estimate,
+            document_pages=document_pages,
         ),
         sleep=sleep,
     )

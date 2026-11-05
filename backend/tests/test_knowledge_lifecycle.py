@@ -29,6 +29,7 @@ from app.api.documents import router as documents_router
 from app.api.knowledge import router as knowledge_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
 from app.config import get_settings
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_task_route import AiTaskRoute
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
@@ -120,6 +121,7 @@ def _cleanup(*organization_ids: uuid.UUID) -> None:
         for organization_id in organization_ids:
             db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.organization_id == organization_id))
             db.execute(delete(Document).where(Document.organization_id == organization_id))
+            db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
             db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
             db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
             db.execute(delete(AiTaskRoute).where(AiTaskRoute.organization_id == organization_id))

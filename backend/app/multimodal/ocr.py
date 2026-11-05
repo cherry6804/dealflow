@@ -70,6 +70,7 @@ class GatewayOcrAdapter:
             user_context=user_context,
             prompt=OCR_PROMPT,
             images=(ImageInput(mime_type=OCR_IMAGE_MIME_TYPE, data=image),),
+            document_pages=1,
             schema=OCR_SCHEMA,
             max_output_tokens=OCR_MAX_OUTPUT_TOKENS,
             sleep=sleep,

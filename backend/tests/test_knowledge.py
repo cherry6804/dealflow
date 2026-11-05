@@ -25,6 +25,7 @@ from app.ai_gateway.contracts import MAX_INPUT_CHARACTERS
 from app.ai_gateway.tasks import TaskType
 from app.auth.dependencies import CurrentUserContext
 from app.config import get_settings
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_task_route import AiTaskRoute
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
@@ -87,6 +88,7 @@ def _cleanup(organization_id: uuid.UUID) -> None:
     with SessionLocal() as db:
         db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.organization_id == organization_id))
         db.execute(delete(Document).where(Document.organization_id == organization_id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
         db.execute(delete(AiTaskRoute).where(AiTaskRoute.organization_id == organization_id))
