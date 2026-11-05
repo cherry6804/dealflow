@@ -135,6 +135,21 @@ Approval steps are recorded on the execution's own step row and decided through 
 approval requests (E13), because those are keyed to a single exact payload hash and require their capability to be marked
 as approval-required, which would force an approval on every agent step. Unifying the two is a follow-up.
 
+## CRM action steps (DFR1-021)
+
+A plan step may be a `crm_action`. It names one key from the fixed catalogue in `app/agents/crm_action_catalogue.py`:
+`intake.process`, `intake.resolve_identity`, `lead.calculate_priority` and `qualification.record`. The arguments are references only:
+`$input.name` for a declared input, or `$step.N.field` for a field of an earlier step's output. A literal value is refused when the
+configuration is saved.
+
+Each action runs as the initiating member. The runtime checks the action's permissions before the handler runs, and a refused permission
+stops the execution with `crm_permission_denied`. Actions write only through the intake service, the DFR1-020 priority service and the
+qualification service. They never change a lead's own fields. A failed action ends the execution with its reason and is not retried, so a
+repeat cannot duplicate a write.
+
+Templates for the receptionist, identity resolver, lead scoring and lead qualification agents live in `app/agents/templates.py`. A
+template is a starting configuration. It names no permission, and creating from one stores an ordinary draft.
+
 ## Known limits of this release
 
 - Execution history (`agent_executions`, `agent_execution_steps`) is not yet covered by privacy export or deletion. It is recorded as

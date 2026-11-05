@@ -23,12 +23,13 @@ from app.agents.configuration import (
     normalise_configuration,
     require_publishable,
 )
+from app.agents.crm_action_catalogue import CRM_ACTIONS
 from app.ai_gateway.routing import resolve_route
 from app.ai_gateway.tasks import TaskType
 from app.ai_tools.registry import DEFAULT_REGISTRY
 from app.audit.attribution import user_attribution
 from app.audit.independent import OUTCOME_COMPLETED, persist_independent_audit_event
-from app.db.models.agent import Agent, AgentVersion
+from app.db.models.agent import Agent, AgentExecution, AgentVersion
 from app.db.models.document import Document
 from app.governance.execution_gate import actor_permission_granted
 from app.governance.policy import REASON_EXECUTION_GATES_PENDING, evaluate_capability
@@ -205,6 +206,16 @@ def validate_access(db: Session, *, organization_id: UUID, actor_id: UUID, confi
         elif not actor_permission_granted(db, organization_id=organization_id, user_id=actor_id,
                                           permission_key=definition.required_permission):
             problems.append(f"The actor lacks the permission for the tool {tool_key}.")
+    for step in configuration.get("steps", []):
+        if step.get("kind") != "crm_action":
+            continue
+        spec = CRM_ACTIONS.get(step.get("action"))
+        if spec is None:
+            problems.append("A CRM action in the plan is no longer available.")
+            continue
+        for permission in spec.permissions:
+            if not actor_permission_granted(db, organization_id=organization_id, user_id=actor_id, permission_key=permission):
+                problems.append(f"The actor lacks the permission for the action {spec.key}.")
     documents = configuration.get("knowledge_document_ids", [])
     if documents:
         if not actor_permission_granted(db, organization_id=organization_id, user_id=actor_id,
@@ -387,4 +398,32 @@ def _describe_step(index: int, step: Mapping[str, Any]) -> dict[str, Any]:
         return {"index": index, "kind": "knowledge", "top_k": step["top_k"]}
     if step["kind"] == "model":
         return {"index": index, "kind": "model", "output_keys": sorted(step["output_schema"])}
+    if step["kind"] == "crm_action":
+        return {"index": index, "kind": "crm_action", "action": step["action"], "argument_names": sorted(step["arguments"])}
     return {"index": index, "kind": "approval"}
+
+
+def execution_metrics(db: Session, *, organization_id: UUID, actor_id: UUID, agent_id: UUID) -> dict[str, Any]:
+    """Execution counts by status and the most common failure reasons for one agent. Read only."""
+    _require(db, organization_id=organization_id, actor_id=actor_id, permission="agents.read")
+    get_agent(db, organization_id=organization_id, agent_id=agent_id)
+    scope = (AgentExecution.organization_id == organization_id, AgentExecution.agent_id == agent_id)
+    by_status = {
+        status: count
+        for status, count in db.execute(
+            select(AgentExecution.status, func.count()).where(*scope).group_by(AgentExecution.status)
+        ).all()
+    }
+    reasons = db.execute(
+        select(AgentExecution.failure_reason, func.count())
+        .where(*scope, AgentExecution.failure_reason.is_not(None))
+        .group_by(AgentExecution.failure_reason)
+        .order_by(func.count().desc(), AgentExecution.failure_reason)
+        .limit(10)
+    ).all()
+    return {
+        "agent_id": str(agent_id),
+        "total": sum(by_status.values()),
+        "by_status": by_status,
+        "failure_reasons": [{"reason": reason, "count": count} for reason, count in reasons],
+    }

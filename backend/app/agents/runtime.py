@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -34,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.configuration import ConfigurationError, validate_input_values
+from app.agents.crm_actions import run_crm_action
 from app.agents.service import (
     AGENT_CAPABILITY,
     REASON_PERMISSION_DENIED,
@@ -63,6 +65,8 @@ from app.outbox.service import enqueue_event
 EXECUTION_REQUESTED_EVENT = "agent.execution_requested"
 EXECUTION_AUDIT_EVENT = "agent_execution"
 KNOWLEDGE_CAPABILITY_BOUNDARY = "knowledge"
+
+_STEP_FIELD = re.compile(r"^\$step\.([0-9]{1,2})\.([a-z][a-z0-9_]{0,39})$")
 
 MAX_TRACE_CHARACTERS = 2_000
 MAX_CITATIONS = 10
@@ -171,10 +175,15 @@ def _close_step(row: AgentExecutionStep, status: str, *, reason: str | None = No
     row.finished_at = _now()
 
 
-def _resolve(value: str, inputs: dict[str, Any]) -> Any:
-    """A ``$input.name`` reference becomes the input's value. Anything else is a literal."""
+def _resolve(value: str, inputs: dict[str, Any], outputs: dict[int, object] | None = None) -> Any:
+    """A ``$input.name`` reference becomes the input's value, and ``$step.N.field`` becomes a field of an earlier step's output.
+    Anything else is a literal. A reference that cannot be resolved becomes None, which the receiving step refuses."""
     if isinstance(value, str) and value.startswith("$input."):
         return inputs[value[len("$input."):]]
+    match = _STEP_FIELD.fullmatch(value) if isinstance(value, str) else None
+    if match is not None:
+        output = (outputs or {}).get(int(match.group(1)))
+        return output.get(match.group(2)) if isinstance(output, dict) else None
     return value
 
 
@@ -477,8 +486,11 @@ def _execute_step(db: Session, execution: AgentExecution, step: dict[str, Any], 
     if kind == "model":
         return _run_model_step(db, execution, step, index=index, outputs=outputs,
                                user_context=user_context, max_retries=max_retries, sleep=sleep)
+    if kind == "crm_action":
+        arguments = {name: _resolve(value, execution.input_values, outputs) for name, value in step["arguments"].items()}
+        return run_crm_action(db, execution, step["action"], arguments)
     if kind == "tool":
-        arguments = {name: _resolve(value, execution.input_values) for name, value in step["arguments"].items()}
+        arguments = {name: _resolve(value, execution.input_values, outputs) for name, value in step["arguments"].items()}
         result = invoke_tool(db, organization_id=execution.organization_id, tool_key=step["tool"],
                              arguments=arguments, user_context=user_context)
         execution.tool_calls += 1

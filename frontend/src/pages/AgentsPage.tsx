@@ -5,6 +5,8 @@ import {
   agentApi,
   type Agent,
   type AgentExecution,
+  type AgentExecutionMetrics,
+  type AgentTemplateSummary,
   type AgentVersion,
   type ApprovedTool,
   type PreviewResult,
@@ -51,6 +53,10 @@ export default function AgentsPage() {
   const [form, setForm] = useState<AgentForm>(emptyForm());
   const [versions, setVersions] = useState<AgentVersion[]>([]);
   const [executions, setExecutions] = useState<AgentExecution[]>([]);
+  const [templates, setTemplates] = useState<AgentTemplateSummary[]>([]);
+  const [templateKey, setTemplateKey] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const [metrics, setMetrics] = useState<AgentExecutionMetrics | null>(null);
   const [activeExecution, setActiveExecution] = useState<AgentExecution | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [runInputs, setRunInputs] = useState<Record<string, string>>({});
@@ -63,9 +69,11 @@ export default function AgentsPage() {
 
   const loadAgents = useCallback(async () => {
     try {
-      const [list, toolCatalogue] = await Promise.all([agentApi.list(), agentApi.tools()]);
+      const [list, toolCatalogue, templateList] = await Promise.all([agentApi.list(), agentApi.tools(), agentApi.templates()]);
       setAgents(list.items);
       setTools(toolCatalogue.items);
+      setTemplates(templateList.items);
+      setTemplateKey((current) => current || templateList.items[0]?.key || "");
       setLoadError(null);
     } catch (caught) {
       setLoadError(messageFor(caught));
@@ -74,9 +82,14 @@ export default function AgentsPage() {
 
   const loadAgentDetail = useCallback(async (agentId: string) => {
     try {
-      const [versionList, executionList] = await Promise.all([agentApi.versions(agentId), agentApi.executions(agentId)]);
+      const [versionList, executionList, metricsResult] = await Promise.all([
+        agentApi.versions(agentId),
+        agentApi.executions(agentId),
+        agentApi.metrics(agentId),
+      ]);
       setVersions(versionList.items);
       setExecutions(executionList.items);
+      setMetrics(metricsResult);
     } catch (caught) {
       setError(messageFor(caught));
     }
@@ -85,6 +98,25 @@ export default function AgentsPage() {
   useEffect(() => {
     void loadAgents();
   }, [loadAgents]);
+
+  async function createFromTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const template = templates.find((item) => item.key === templateKey);
+    if (!template || !templateName.trim()) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    try {
+      const created = await agentApi.createFromTemplate({ template_key: template.key, name: templateName.trim() });
+      setTemplateName("");
+      setNotice(`Draft "${created.name}" created from ${template.title}. Review it, then publish it before it can run.`);
+      await loadAgents();
+      selectAgent(created);
+    } catch (caught) {
+      setError(messageFor(caught));
+    }
+  }
 
   function selectAgent(agent: Agent) {
     setSelectedId(agent.id);
@@ -249,6 +281,30 @@ export default function AgentsPage() {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section aria-labelledby="template-title" className="agents-panel">
+          <h2 id="template-title">Start from a template</h2>
+          <form onSubmit={createFromTemplate} className="agents-form">
+            <label>
+              Template
+              <select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)}>
+                {templates.map((template) => (
+                  <option key={template.key} value={template.key}>
+                    {template.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="agents-subtle">{templates.find((item) => item.key === templateKey)?.purpose}</p>
+            <label>
+              Draft name
+              <input value={templateName} onChange={(event) => setTemplateName(event.target.value)} maxLength={120} required />
+            </label>
+            <button type="submit" className="agents-button" disabled={!templateKey}>
+              Create draft
+            </button>
+          </form>
         </section>
 
         <section aria-labelledby="agent-form-title" className="agents-panel agents-panel-wide">
@@ -427,6 +483,24 @@ export default function AgentsPage() {
 
       {selected ? (
         <div className="agents-layout">
+          {metrics ? (
+            <section aria-labelledby="metrics-title" className="agents-panel">
+              <h2 id="metrics-title">Execution metrics</h2>
+              <p className="agents-subtle">
+                {metrics.total} run(s). {Object.entries(metrics.by_status).map(([status, count]) => `${status}: ${count}`).join(", ") || "No runs yet."}
+              </p>
+              {metrics.failure_reasons.length > 0 ? (
+                <ul className="agents-list">
+                  {metrics.failure_reasons.map((item) => (
+                    <li key={item.reason}>
+                      {item.reason}: {item.count}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
+
           <section aria-labelledby="versions-title" className="agents-panel">
             <h2 id="versions-title">Version history</h2>
             {versions.length === 0 ? <p className="agents-subtle">Nothing has been published yet.</p> : null}
