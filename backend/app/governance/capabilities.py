@@ -139,4 +139,5 @@ APPROVAL_REQUIRED_CAPABILITIES: frozenset[str] = frozenset({
     "channels.email",
     "channels.sms",
     "channels.voice",
+    "automation.workflows",
 })

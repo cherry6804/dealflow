@@ -55,16 +55,25 @@ from app.audit.independent import (
 )
 from app.auth.dependencies import CurrentUserContext
 from app.db.models.agent import AgentExecution
+from app.db.models.approval_request import ApprovalRequest
+from app.db.models.human_task import HumanTask
 from app.db.models.membership import Membership
 from app.db.models.user import User
 from app.db.models.workflow import WorkflowDefinition, WorkflowVersion
 from app.db.models.workflow_execution import WorkflowExecution, WorkflowExecutionStep
+from app.governance.approvals import (
+    ApprovalError,
+    check_approval_for_execution,
+    consume_approval,
+    payload_hash,
+)
 from app.governance.capabilities import AUTOMATION_WORKFLOWS
 from app.governance.execution_gate import actor_permission_granted
 from app.governance.policy import evaluate_capability
+from app.human_tasks import service as human_tasks
 from app.outbox.service import enqueue_event
 from app.workflows.publish_checks import publish_problems
-from app.workflows.schema import MAX_DELAY_SECONDS
+from app.workflows.schema import DEFAULT_APPROVAL_EXPIRY_SECONDS, MAX_DELAY_SECONDS
 
 WORKFLOW_SYSTEM_ACTOR = register_system_actor("workflow_runtime")
 EXECUTION_REQUESTED_EVENT = "workflow.execution_requested"
@@ -300,14 +309,17 @@ def _concurrency_problems(db: Session, *, organization_id: UUID, workflow_id: UU
     return None
 
 
-def _enqueue(db: Session, execution: WorkflowExecution) -> None:
+def _enqueue(db: Session, execution: WorkflowExecution, *, token: str | None = None) -> None:
+    """Queue the run for the worker. A start uses a fixed key. A resume passes a fresh token, so a resume after a wait is
+    delivered even though the start was already delivered under the first key."""
+    key = f"workflow-execution:{execution.id}" if token is None else f"workflow-execution:{execution.id}:{token}"
     enqueue_event(
         db,
         organization_id=execution.organization_id,
         event_type=EXECUTION_REQUESTED_EVENT,
         aggregate_type="workflow_execution",
         aggregate_id=str(execution.id),
-        idempotency_key=f"workflow-execution:{execution.id}",
+        idempotency_key=key,
         payload={"execution_id": str(execution.id), "user_id": str(execution.run_as_user_id)},
         correlation_id=execution.correlation_id,
     )
@@ -677,6 +689,30 @@ def run_execution(db: Session, execution: WorkflowExecution, user_context: Curre
             _finish(db, execution, WorkflowExecution.STATUS_FAILED, reason=REASON_STEP_LIMIT)
             return execution
         index, step = by_id[current]
+        spec = _approval_spec(step)
+        if spec is not None:
+            verdict, reason = _pass_gate(db, execution, step, index, spec, inputs, outputs, now=_now())
+            if verdict == "waiting":
+                execution.status = WorkflowExecution.STATUS_WAITING_APPROVAL
+                execution.updated_at = _now()
+                db.flush()
+                _audit(db, execution, "workflow.execution.waiting_approval", {"step_id": step["id"]})
+                return execution
+            if verdict == "failed":
+                _record_step(db, execution, step, index, status="failed", attempts=1, reason=reason, trace=None)
+                _finish(db, execution, WorkflowExecution.STATUS_FAILED, reason=reason)
+                return execution
+            if verdict == "approved_step":
+                row = _record_step(db, execution, step, index, status="succeeded", attempts=1, reason=None,
+                                   trace={"output": {"decision": "approved"}})
+                task = _find_task(db, execution, step["id"])
+                row.decided_by_user_id = task.decided_by_user_id if task is not None else None
+                outputs[step["id"]] = {"decision": "approved"}
+                execution.steps_completed += 1
+                execution.next_step_id = step.get("next")
+                execution.updated_at = _now()
+                db.flush()
+                continue
         _record_step(db, execution, step, index, status="running", attempts=0, reason=None, trace=None)
 
         outcome = _execute(db, execution, step, index, inputs, outputs, user_context, sleep)
@@ -733,45 +769,174 @@ def _resume_queued(db: Session, execution: WorkflowExecution, next_step: str | N
     execution.wake_at = None
     execution.updated_at = _now()
     db.flush()
-    _enqueue(db, execution)
+    _enqueue(db, execution, token=uuid.uuid4().hex)
 
 
 def decide_approval(db: Session, *, organization_id: UUID, user_context: CurrentUserContext, execution_id: UUID,
                     step_id: str, approve: bool, reason: str | None) -> WorkflowExecution:
-    """Approve or reject the approval step a run waits on. The decider needs the step's approver permission and is not the run-as member."""
-    decider = user_context.user.id
+    """Approve or reject the step a run waits on, through its human task. The rules are in ``decide_workflow_task``."""
     execution = _lock_execution(db, organization_id=organization_id, execution_id=execution_id)
     if execution.status != WorkflowExecution.STATUS_WAITING_APPROVAL or execution.next_step_id != step_id:
         raise ExecutionError(REASON_NOT_WAITING)
-    version = db.get(WorkflowVersion, execution.version_id)
-    step = next((item for item in version.configuration["steps"] if item["id"] == step_id), None)
-    if step is None or step["type"] != "approval":
-        raise ExecutionError(REASON_STEP_NOT_FOUND, status=404)
-    if not actor_permission_granted(db, organization_id=organization_id, user_id=decider,
-                                    permission_key=step["approver_permission"]):
-        raise ExecutionError(REASON_PERMISSION_DENIED, ["You do not hold the permission this approval needs."], status=403)
-    if decider == execution.run_as_user_id:
-        raise ExecutionError(REASON_SELF_APPROVAL, ["The member a run acts as cannot approve that run."], status=403)
-    rows = _step_rows(db, execution)
-    row = rows.get(step_id)
-    if row is None or row.status != "waiting_approval":
+    task = _find_task(db, execution, step_id)
+    if task is None:
         raise ExecutionError(REASON_NOT_WAITING)
-    index = next(i for i, item in enumerate(version.configuration["steps"]) if item["id"] == step_id)
-    now = _now()
-    if approve:
-        _record_step(db, execution, step, index, status="succeeded", attempts=1, reason=None,
-                     trace={"output": {"decision": "approved"}, "decided_by": str(decider)})
-        row.decided_by_user_id = decider
-        row.decided_at = now
-        _audit(db, execution, "workflow.execution.approved", {"step_id": step_id}, actor_id=decider)
-        _resume_queued(db, execution, step.get("next"))
-    else:
-        _record_step(db, execution, step, index, status="failed", attempts=1, reason=REASON_APPROVAL_REJECTED,
-                     trace={"decided_by": str(decider), "reason": (reason or "")[:500]})
-        row.decided_by_user_id = decider
-        row.decided_at = now
-        _finish(db, execution, WorkflowExecution.STATUS_FAILED, reason=REASON_APPROVAL_REJECTED, actor_id=decider)
+    decide_workflow_task(db, organization_id=organization_id, user_context=user_context, task_id=task.id,
+                         approve=approve, comment=reason)
     return execution
+
+
+def _find_task(db: Session, execution: WorkflowExecution, step_id: str) -> HumanTask | None:
+    return db.scalar(select(HumanTask).where(
+        HumanTask.organization_id == execution.organization_id,
+        HumanTask.workflow_execution_id == execution.id,
+        HumanTask.workflow_step_id == step_id,
+    ))
+
+
+def _fail_waiting(db: Session, execution: WorkflowExecution, step_id: str, reason: str,
+                  actor_id: UUID | None = None) -> None:
+    """End a run that waits on a step with a failure reason. The waiting step record is closed with the same reason."""
+    row = _step_rows(db, execution).get(step_id)
+    if row is not None:
+        row.status = "failed"
+        row.reason_code = reason
+        row.finished_at = _now()
+    _finish(db, execution, WorkflowExecution.STATUS_FAILED, reason=reason, actor_id=actor_id)
+
+
+def decide_workflow_task(db: Session, *, organization_id: UUID, user_context: CurrentUserContext, task_id: UUID,
+                         approve: bool, comment: str | None = None) -> tuple[HumanTask, bool]:
+    """Record a decision on a human task and resume or end its run. Returns ``(task, changed)``.
+
+    The task service checks the decider (active membership, permission, assignment, separation of duties) and the single final
+    outcome. A repeated decision changes nothing. A rejection ends the run; an approval queues it, and the run checks the approval
+    for the exact payload when it reaches the step.
+    """
+    decider = user_context.user.id
+    try:
+        task, changed = human_tasks.decide(db, organization_id=organization_id, actor_id=decider, task_id=task_id,
+                                           approve=approve, comment_text=comment)
+    except human_tasks.TaskError as error:
+        if error.reason == human_tasks.REASON_EXPIRED:
+            expired = db.get(HumanTask, task_id)
+            if expired is not None and expired.workflow_execution_id is not None:
+                execution = _lock_execution(db, organization_id=organization_id,
+                                            execution_id=expired.workflow_execution_id)
+                if (execution.status == WorkflowExecution.STATUS_WAITING_APPROVAL
+                        and execution.next_step_id == expired.workflow_step_id):
+                    _fail_waiting(db, execution, expired.workflow_step_id, "approval_expired")
+        raise ExecutionError(error.reason, error.problems, status=error.status) from error
+    if changed and task.workflow_execution_id is not None:
+        execution = _lock_execution(db, organization_id=organization_id, execution_id=task.workflow_execution_id)
+        if execution.status == WorkflowExecution.STATUS_WAITING_APPROVAL and execution.next_step_id == task.workflow_step_id:
+            if approve:
+                _resume_queued(db, execution, execution.next_step_id)
+            else:
+                _fail_waiting(db, execution, task.workflow_step_id, "approval_rejected", actor_id=decider)
+    return task, changed
+
+
+def cancel_workflow_task(db: Session, *, organization_id: UUID, user_context: CurrentUserContext, task_id: UUID,
+                         reason: str | None = None) -> HumanTask:
+    """Cancel a pending task. A run waiting on it ends with ``approval_cancelled``."""
+    try:
+        task = human_tasks.cancel(db, organization_id=organization_id, actor_id=user_context.user.id, task_id=task_id,
+                                  reason=reason)
+    except human_tasks.TaskError as error:
+        raise ExecutionError(error.reason, error.problems, status=error.status) from error
+    if task.workflow_execution_id is not None:
+        execution = _lock_execution(db, organization_id=organization_id, execution_id=task.workflow_execution_id)
+        if (execution.status == WorkflowExecution.STATUS_WAITING_APPROVAL
+                and execution.next_step_id == task.workflow_step_id):
+            _fail_waiting(db, execution, task.workflow_step_id, "approval_cancelled", actor_id=user_context.user.id)
+    return task
+
+
+def expire_workflow_tasks(db: Session, *, organization_id: UUID, now: datetime | None = None) -> int:
+    """Expire the pending tasks whose due time has passed, and end the runs waiting on them. Bounded per call."""
+    expired = human_tasks.expire_due(db, organization_id=organization_id, now=now)
+    for task in expired:
+        if task.workflow_execution_id is None:
+            continue
+        execution = _lock_execution(db, organization_id=organization_id, execution_id=task.workflow_execution_id)
+        if execution.status == WorkflowExecution.STATUS_WAITING_APPROVAL and execution.next_step_id == task.workflow_step_id:
+            _fail_waiting(db, execution, task.workflow_step_id, "approval_expired")
+    return len(expired)
+
+
+def _approval_spec(step: dict[str, Any]) -> dict[str, Any] | None:
+    """The approval a step needs before it runs: an explicit approval step, or a configured gate on a sensitive action."""
+    if step["type"] == "approval":
+        return {"approver_permission": step["approver_permission"],
+                "expires_after_seconds": step.get("expires_after_seconds", DEFAULT_APPROVAL_EXPIRY_SECONDS)}
+    gate = step.get("approval")
+    return dict(gate) if gate else None
+
+
+def _gate_payload(execution: WorkflowExecution, step: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """The exact payload an approval covers: this run, this step, the pinned version and the resolved arguments."""
+    return json.loads(json.dumps({"execution_id": str(execution.id), "step_id": step["id"],
+                                  "version_id": str(execution.version_id), "arguments": arguments},
+                                 sort_keys=True, default=str))
+
+
+def _pass_gate(db: Session, execution: WorkflowExecution, step: dict[str, Any], index: int, spec: dict[str, Any],
+               inputs: dict[str, Any], outputs: dict[str, dict[str, Any]], *, now: datetime) -> tuple[str, str | None]:
+    """Open, wait on, or pass the approval for this step. Returns ``(verdict, reason)``.
+
+    Verdicts: ``waiting`` (a task is open and undecided), ``failed`` (the reason ends the run), ``approved_step`` (an explicit
+    approval step passed), or ``proceed`` (a gated action may run now; its approval has been consumed).
+    """
+    arguments = {} if step["type"] == "approval" else {
+        name: resolve(value, inputs, outputs) for name, value in (step.get("arguments") or {}).items()}
+    payload = _gate_payload(execution, step, arguments)
+    task = _find_task(db, execution, step["id"])
+    if task is None:
+        expires = int(spec["expires_after_seconds"])
+        task, _created = human_tasks.create_task(
+            db,
+            organization_id=execution.organization_id,
+            requested_by_user_id=execution.run_as_user_id,
+            title=f"Approve step {step['id']}",
+            instructions=step.get("reason") or "Decide whether this workflow run may continue.",
+            required_permission=spec["approver_permission"],
+            due_at=now + timedelta(seconds=expires),
+            payload=payload,
+            capability_key=AUTOMATION_WORKFLOWS,
+            resource_type="workflow_execution",
+            resource_id=str(execution.id),
+            workflow_execution_id=execution.id,
+            workflow_step_id=step["id"],
+            now=now,
+        )
+        _record_step(db, execution, step, index, status="waiting_approval", attempts=1, reason=None,
+                     trace={"task_id": str(task.id), "approver_permission": spec["approver_permission"]})
+        return "waiting", None
+    if task.status == HumanTask.STATUS_PENDING:
+        if task.due_at is not None and now >= task.due_at:
+            human_tasks.expire_task(db, task, now=now)
+            return "failed", "approval_expired"
+        return "waiting", None
+    if task.status == HumanTask.STATUS_APPROVED:
+        approval = db.get(ApprovalRequest, task.approval_request_id)
+        if approval is None or approval.payload_hash != payload_hash(payload):
+            return "failed", "approval_mismatch"
+        try:
+            check_approval_for_execution(
+                db, organization_id=execution.organization_id, approval_id=task.approval_request_id,
+                capability_key=AUTOMATION_WORKFLOWS, resource_type="workflow_execution", resource_id=str(execution.id),
+                payload=payload, now=now)
+            consume_approval(db, organization_id=execution.organization_id, approval_id=task.approval_request_id,
+                             actor_user_id=execution.run_as_user_id, now=now)
+        except ApprovalError as error:
+            return "failed", error.reason_code
+        if step["type"] == "approval":
+            return "approved_step", None
+        return "proceed", None
+    mapping = {HumanTask.STATUS_REJECTED: "approval_rejected", HumanTask.STATUS_EXPIRED: "approval_expired",
+               HumanTask.STATUS_CANCELLED: "approval_cancelled"}
+    return "failed", mapping.get(task.status, "approval_unavailable")
 
 
 def resume_due_timers(db: Session, *, organization_id: UUID, now: datetime | None = None) -> int:
@@ -809,6 +974,8 @@ def request_cancel(db: Session, *, organization_id: UUID, user_context: CurrentU
     execution.cancel_requested_at = _now()
     if execution.status in (WorkflowExecution.STATUS_QUEUED, WorkflowExecution.STATUS_WAITING_APPROVAL,
                             WorkflowExecution.STATUS_WAITING_TIMER):
+        human_tasks.cancel_for_execution(db, organization_id=organization_id, workflow_execution_id=execution.id,
+                                         reason=REASON_CANCEL)
         for row in _step_rows(db, execution).values():
             if row.status in ("waiting_approval", "waiting_timer"):
                 row.status = "cancelled"

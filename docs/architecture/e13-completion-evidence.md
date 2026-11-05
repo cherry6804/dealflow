@@ -1824,3 +1824,94 @@ The architecture plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v
 - Scheduled timers and stale-run sweeps (DFR1-051) must run before workflows with delays or long runs are used in production.
 - The DFR1-019 AI blockers apply to any workflow step that calls an agent: AI actor key, AI resource store, AI rate rule, provider data-use approval and sandbox verification.
 - Organization-level run limits and the approval expiry policy are not built.
+
+## 33. DFR1-025 approvals and human tasks (E08)
+
+Branch: `feature/DFR1-E08-approvals-human-tasks`, cut from `origin/develop` at `f673200` (DFR1-024 merged as PR #164).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-025. Summary: Implement approval, human task and escalation nodes. Epic DFR1-E08. Sprint S4. Priority P0. Story points 5. Labels: automation, governance.
+- Scope: support exact-payload approvals, approver authorization, expiry, reject, revalidation and audit.
+- Acceptance criteria: any changed action payload requires fresh approval; sensitive actions require configured approvals; a human task can pause and resume a workflow.
+- Dependencies: DFR1-023 (workflow definitions) and DFR1-006 (approval model).
+- Escalation nodes named in the tracker title are not part of the scope text above and are not built in this story.
+
+### Dependency verification
+
+- DFR1-023: on `origin/develop` (PR #163).
+- DFR1-024: on `origin/develop` (PR #164, merge `f673200`). The workflow runtime, the approval step and the Runs panel are reused.
+- DFR1-006: the governance approval model (`app/governance/approvals.py`, `app/api/governance_controls.py`) is on develop and is the decision engine for every human task. The tracker records DFR1-006 as implemented, while its own dependencies (DFR1-002 and DFR1-005) remain open in the tracker. This is noted, not treated as a blocker for this story.
+
+### Design
+
+- The governance approval record is the decision. A human task is created for each gated step and points at exactly one approval record, which binds the payload by hash and enforces expiry, requester separation and single consumption. The task adds what a workflow needs: an assignee, a due time, comments, a single final outcome and an append-only history. No second approval mechanism exists.
+- Gated steps: a `crm_action` or `agent` step with an `approval` object (`approver_permission`, `expires_after_seconds`) opens a task on first reach and waits. Explicit `approval` steps use the same task path. Agent approvals (DFR1-019) are unchanged.
+- Exact payload: the payload covers the run, the step, the pinned version and the resolved arguments. On reaching the step again after approval, the run recomputes the payload hash, compares it with the approval, and consumes the approval. A change gives `approval_mismatch` and the run fails. A fresh approval is needed.
+- Resume: approval queues the run again under a fresh outbox key (`workflow-execution:<id>:<token>`). The start keeps its fixed key. An earlier defect, found while designing this story, used the same key for resume and start, so a resume after a wait was never delivered by the outbox. The tests had masked it, because they bypassed delivery state. A regression test now checks that the resume is queued under its own key.
+- Rejection ends the run with `approval_rejected`. Expiry ends it with `approval_expired`. Cancellation of the task ends it with `approval_cancelled`. Cancelling the run cancels its open tasks. A run that ended cannot resume.
+- Expiry: the task's due time equals its approval's expiry. A decision after the due time expires the task and refuses the decision (`task_expired`), and the expiry is committed. A sweep (`expire-due`) expires overdue tasks and ends their runs, bounded per call.
+
+### Authorization and separation of duties
+
+- Every decision is checked on the server: the decider is an active member (checked in the database), holds the task's permission, is the assignee when the task is assigned, and is not the member who asked for the decision. Refusals: `membership_inactive` (403), `permission_denied` (403), `not_assignee` (403), `self_approval_refused` (403).
+- Visibility: a task is visible to the requester, to its assignee, and to eligible members while it is unassigned. Any other member gets 404, including for a task assigned to someone else.
+- Assignment and cancellation need `human_tasks.manage` (granted to the Owner role). An assignee must be an active member who holds the task's permission (`assignee_not_eligible`, 422). Assignment uses the task version (`version_conflict`, 409).
+- Tenancy: another organization gets 404 for every task route, and cannot decide, comment, assign or cancel.
+- The governance decision route refuses an approval that a human task manages (409 `managed_by_human_task`), so a decision is recorded once, through the task.
+
+### Immutable history and idempotency
+
+- Task changes are recorded in `human_task_events` (created, assigned, reassigned, comment, approved, rejected, cancelled, expired). The table refuses UPDATE and DELETE through a PostgreSQL trigger, created by the migration and by the model, as the workflow versions table does. Tested.
+- A repeat of the same decision by the same member returns the stored task with `changed: false`. Any other repeat or conflicting decision is refused with `already_decided` (409), and the first decision stands.
+- Audit: creation, assignment, comments, decisions, cancellation and expiry write independent audit records with identifiers and statuses only. Comments and instructions are not written to the audit trail.
+- Notification: an assignee receives an in-app notification (`HUMAN_TASK_ASSIGNED`). No email or other delivery is claimed.
+
+### API
+
+- `GET /api/v1/human-tasks` (optional `status`, `limit`), `GET /api/v1/human-tasks/{id}` (with history), `POST /{id}/decision` (`approve` or `reject`, optional comment; 200 with `changed`), `POST /{id}/comments` (201), `POST /{id}/assignment` (`assignee_user_id`, `expected_version`), `POST /{id}/cancel`, `POST /expire-due` (`human_tasks.manage`).
+- Request models refuse unknown fields.
+- The existing run decision route from DFR1-024 (`/api/v1/automation/executions/{id}/steps/{step}/decision`) now goes through the same task.
+
+### Frontend
+
+- New page `/approvals` (`src/pages/ApprovalsPage.tsx`): a list of tasks (waiting or all), the selected task's instructions, required permission, due time and status, approve and reject for a pending task with an optional comment, a comment box, and the history. Loading, empty, error, permission-denied and closed states are shown. Refusal reasons are shown in plain language.
+- API client `src/services/humanTaskApi.ts`.
+
+### Migration
+
+- `e5a7c9d1f3b2_human_tasks` (down revision `d4f6b8c0e2a1`). Creates `human_tasks` and `human_task_events`, the immutability trigger, and registers and grants `human_tasks.manage` to the Owner role. Downgrade refuses while task rows exist.
+- Validated on a freshly created `dealflow` database on the isolated server (127.0.0.1:5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `e5a7c9d1f3b2`.
+
+### Files changed
+
+- Backend, new: `app/human_tasks/service.py`, `app/human_tasks/__init__.py`, `app/db/models/human_task.py`, `app/api/human_tasks.py`, `alembic/versions/e5a7c9d1f3b2_human_tasks.py`, `tests/test_human_tasks.py`.
+- Backend, changed: `app/workflows/runtime.py` (gate, resume key, decision and cancellation through tasks), `app/workflows/schema.py` (approval gate on crm_action and agent steps, explicit approval expiry), `app/governance/capabilities.py` (`automation.workflows` requires approval), `app/api/governance_controls.py` (refuses task-managed approvals), `app/authz/permissions.py` (`human_tasks.manage`), `app/db/models/__init__.py`, `app/governance/table_inventory.py`, `app/main.py`.
+- Frontend, new: `src/pages/ApprovalsPage.tsx`, `src/pages/ApprovalsPage.css`, `src/pages/ApprovalsPage.test.tsx`, `src/services/humanTaskApi.ts`. Changed: `src/app/routing/AppRouter.tsx` (route).
+- Documentation: this section and the DFR1-025 tracker row.
+
+### Test results (actual)
+
+- Focused: `tests/test_human_tasks.py` 21 passed. With `tests/test_workflow_runtime.py` (42) and `tests/test_workflow_definitions.py` (45): 108 passed, exit 0.
+- Full backend suite (`pytest tests -q`, from `backend/`, isolated database on 127.0.0.1:5438): 2,623 passed, 14 skipped, 0 failed, exit 0 (507.22 s). The 14 skips are the live-provider tests that are not configured here. 2,602 + 21 = 2,623.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0 with one new warning in `ApprovalsPage.tsx` (`set-state-in-effect` on the initial load), the same pattern as the existing pages. `vitest run`: 24 files, 156 tests passed, exit 0 (5 tests in `ApprovalsPage.test.tsx`). `npm run build` exit 0.
+- The Approvals page was not exercised in a live browser; it is verified by its unit tests and the build.
+
+### Test environment note
+
+- Tests ran on the isolated server on 127.0.0.1:5438 only. The shared servers on ports 5432 and 5433 were not used.
+
+### Known limitations
+
+- Escalation nodes are not built. The story's scope text covers approvals, expiry, reject, revalidation and audit.
+- Human tasks are created only by gated workflow steps. There is no standalone task creation endpoint in this release.
+- For a gated action, the decider is recorded on the task and the approval. The step record's `decided_by_user_id` is set for explicit approval steps only.
+- Expiry sweeps run only when `expire-due` is called. No scheduler calls it yet (DFR1-051).
+- The assignee notification is in-app only.
+- Comments are visible to anyone who can see the task. Comment length is limited to 1,000 characters.
+
+### Production blockers
+
+- Privacy export and deletion for `human_tasks` and `human_task_events` (DFR1-050). Both tables are listed as not covered in `table_inventory.py`.
+- A scheduler for `expire-due` and the workflow timer and stale-run sweeps (DFR1-051) before approvals are relied on in production.
+- Escalation nodes are not built.

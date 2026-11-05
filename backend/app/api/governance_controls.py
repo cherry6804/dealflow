@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.authz.dependencies import require_permission
 from app.db.models.approval_request import ApprovalRequest
 from app.db.models.channel_policy import ChannelPolicy
+from app.db.models.human_task import HumanTask
 from app.db.session import get_db_session
 from app.governance.approvals import (
     REASON_APPROVAL_EXPIRED,
@@ -125,6 +126,13 @@ def decide_approval_request(
     tenant: TenantContext = Depends(require_permission("governance.approvals.decide")),
     db: Session = Depends(get_db_session),
 ) -> ApprovalResponse:
+    # An approval that belongs to a human task is decided through that task, so its decision history is recorded once.
+    managed = db.scalar(select(HumanTask.id).where(
+        HumanTask.organization_id == tenant.organization_id,
+        HumanTask.approval_request_id == approval_id,
+    ))
+    if managed is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="managed_by_human_task")
     try:
         row = decide_approval(
             db,

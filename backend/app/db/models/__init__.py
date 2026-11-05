@@ -37,6 +37,7 @@ from app.db.models.lead_intake import LeadIntakeSubmission, LeadQualificationRes
 from app.db.models.next_best_action import NextBestActionRecommendation
 from app.db.models.workflow import WorkflowDefinition, WorkflowLifecycleEvent, WorkflowVersion
 from app.db.models.workflow_execution import WorkflowExecution, WorkflowExecutionStep
+from app.db.models.human_task import HumanTask, HumanTaskEvent
 from app.db.models.lead_priority import LeadPriorityCorrection, LeadPriorityScore
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.models.email_verification_token import EmailVerificationToken

@@ -75,6 +75,7 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("workflows.manage", "Create and edit workflow drafts and validate them."),
     ("workflows.publish", "Publish, pause, resume, roll back and archive workflows."),
     ("workflows.run", "Start, cancel and retry workflow runs, and resume due timers."),
+    ("human_tasks.manage", "Assign, cancel and expire human tasks."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)
