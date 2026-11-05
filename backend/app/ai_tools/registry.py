@@ -16,6 +16,10 @@ from app.governance.capabilities import CAPABILITY_BY_KEY, CapabilityCategory
 
 _KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}\.[a-z][a-z0-9_]{0,39}$")
 _PARAMETER_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+# Channel and voice tools are deferred with the communication hub (see the release plan). Their names and capabilities are
+# refused here so that no such tool can be registered by accident while they are out of scope.
+_DEFERRED_KEY_PARTS = frozenset({"whatsapp", "messenger", "instagram", "telephony", "voice", "sms", "email", "call", "channel"})
+_DEFERRED_CAPABILITY_KEYS = frozenset({"ai.voice"})
 
 
 class ToolRegistrationError(ValueError):
@@ -40,6 +44,15 @@ class ToolRegistry:
             raise ToolRegistrationError("The tool must be governed by an AI capability.")
         if not 1 <= definition.timeout_ms <= MAX_TIMEOUT_MS:
             raise ToolRegistrationError("The tool timeout is out of range.")
+        if definition.version < 1:
+            raise ToolRegistrationError("A tool version starts at 1.")
+        if _DEFERRED_KEY_PARTS & set(definition.key.split(".")) or definition.capability_key in _DEFERRED_CAPABILITY_KEYS:
+            raise ToolRegistrationError("Channel and voice tools are deferred and cannot be registered in this release.")
+        if not definition.output_fields or len(set(definition.output_fields)) != len(definition.output_fields):
+            raise ToolRegistrationError("A tool must declare its output fields, each once.")
+        for field_name in definition.output_fields:
+            if not _PARAMETER_PATTERN.fullmatch(field_name):
+                raise ToolRegistrationError("An output field name must be lower case letters, digits and underscores.")
         names = [parameter.name for parameter in definition.parameters]
         if len(set(names)) != len(names):
             raise ToolRegistrationError("Parameter names must be unique.")

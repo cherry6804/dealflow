@@ -2107,3 +2107,23 @@ Branch: `feature/DFR1-E04-verified-webhook-ingress`, cut from `origin/develop` a
 - Provider-specific verifiers and connection probes, pending DFR1-007.
 - Privacy export and deletion for the delivery records (DFR1-050).
 - A running outbox worker and a managed key provider in production.
+
+## 36. DFR1-018 typed tool registry: contract, versioning and attribution increment
+
+Branch: `feature/DFR1-018-typed-ai-tools`. Builds on section 26. Only the contract rules this increment adds are recorded here.
+
+What was added:
+
+- **Versions.** Each tool has a `version` (1). A caller may pin a version; a different one is refused before the handler runs (`unsupported_tool_version`).
+- **Availability.** A tool can be marked unavailable. Invoking it is refused before the gate and the handler run (`tool_unavailable`).
+- **Output contract.** Each tool declares `output_fields`. A result may only use declared top-level keys, and each value must be a JSON primitive or a flat object of primitives. Anything else is refused (`output_contract_violation`), the completed audit record says so, and no data is returned. The built-in tools declare `found` and their entity field.
+- **Deferred tools.** The registry refuses any tool whose key contains a channel or voice word (whatsapp, messenger, instagram, telephony, voice, sms, email, call, channel) and any tool governed by `ai.voice`. No such tool is registered.
+- **Attribution.** `invoke_tool` takes an optional `agent_execution_id`. It is written to the requested, denial and completed audit records, along with the tool version. The agent runtime's tool step passes its execution identifier.
+
+Verification (isolated database `dealflow_test` on 127.0.0.1:5438):
+
+- `tests/test_ai_tools.py`, `tests/test_ai_tools_crm.py`, `tests/test_ai_tools_contract.py`, `tests/test_agents_runtime.py`: 87 passed, 0 failed. Existing tests were updated where the contract changed: the datetime-in-result test now expects `output_contract_violation`.
+- `ruff check` passes on `app/ai_tools`, `app/agents/runtime.py` and the new test module.
+- Migration: none added.
+
+Not verified in this increment: the full backend suite was not re-run.

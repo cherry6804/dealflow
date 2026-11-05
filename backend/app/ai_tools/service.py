@@ -31,7 +31,12 @@ from sqlalchemy.orm import Session
 
 from app.ai_tools.definitions import MAX_RESULT_CHARACTERS, ToolDefinition
 from app.ai_tools.registry import DEFAULT_REGISTRY, ToolRegistry
-from app.ai_tools.validation import InvalidArgumentsError, validate_arguments
+from app.ai_tools.validation import (
+    InvalidArgumentsError,
+    OutputContractError,
+    validate_arguments,
+    validate_output,
+)
 from app.audit.attribution import (
     register_system_actor,
     system_attribution,
@@ -67,6 +72,9 @@ REASON_PERMISSION_DENIED = "permission_denied"
 REASON_TIMEOUT = "tool_timeout"
 REASON_FAILED = "tool_failed"
 REASON_RESULT_TOO_LARGE = "result_too_large"
+REASON_TOOL_UNAVAILABLE = "tool_unavailable"
+REASON_UNSUPPORTED_VERSION = "unsupported_tool_version"
+REASON_OUTPUT_INVALID = "output_contract_violation"
 
 
 class ToolExecutionError(RuntimeError):
@@ -97,11 +105,21 @@ def invoke_tool(
     arguments: dict[str, object],
     user_context: CurrentUserContext,
     registry: ToolRegistry = DEFAULT_REGISTRY,
+    tool_version: int | None = None,
+    agent_execution_id: UUID | None = None,
 ) -> ToolResult:
-    """Run one approved tool for one user in one organization. The caller commits or rolls back the session."""
+    """Run one approved tool for one user in one organization. The caller commits or rolls back the session.
+
+    ``tool_version`` pins the contract a caller was built against; None means the current version. ``agent_execution_id``
+    links the call to the agent run that asked for it, so the audit trail can follow the call back to that run.
+    """
     definition = registry.get(tool_key)
     if definition is None:
         return _refused(tool_key, REASON_NOT_REGISTERED)
+    if not definition.available:
+        return _refused(tool_key, REASON_TOOL_UNAVAILABLE)
+    if tool_version is not None and tool_version != definition.version:
+        return _refused(tool_key, REASON_UNSUPPORTED_VERSION)
 
     try:
         typed = validate_arguments(definition, arguments)
@@ -115,7 +133,14 @@ def invoke_tool(
         user_id=user_id,
         permission_key=definition.required_permission,
     ):
-        _record_denial(db, organization_id=organization_id, user_id=user_id, definition=definition, typed=typed)
+        _record_denial(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+            definition=definition,
+            typed=typed,
+            agent_execution_id=agent_execution_id,
+        )
         return _refused(tool_key, REASON_PERMISSION_DENIED)
 
     attribution = user_attribution(organization_id=organization_id, actor_user_id=user_id)
@@ -131,7 +156,7 @@ def invoke_tool(
         resource_type="ai_tool",
         resource_id=tool_key,
         correlation_id=correlation_id,
-        metadata=_metadata(definition, typed),
+        metadata=_metadata(definition, typed, agent_execution_id=agent_execution_id),
     )
 
     decision = evaluate_execution(
@@ -145,7 +170,7 @@ def invoke_tool(
         ),
     )
     if not decision.allowed or decision.ticket is None:
-        _complete(db, organization_id, user_id, requested, definition, "denied", decision.reason_code)
+        _complete(db, organization_id, user_id, requested, definition, "denied", decision.reason_code, agent_execution_id=agent_execution_id)
         return _refused(tool_key, decision.reason_code)
     ticket = decision.ticket
 
@@ -153,24 +178,30 @@ def invoke_tool(
         with db.begin_nested():
             db.execute(text(f"SET LOCAL statement_timeout = {int(definition.timeout_ms)}"))
             data = definition.handler(db, organization_id, typed)
-        serialized = json.dumps(data, sort_keys=True, default=str)
     except SQLAlchemyError as exc:
         settle_ticket(db, ticket, actual={})
         reason = REASON_TIMEOUT if getattr(exc.orig, "sqlstate", None) == POSTGRES_QUERY_CANCELED else REASON_FAILED
         logger.error("AI tool database work failed", extra={"tool": tool_key, "error_type": type(exc).__name__})
-        _complete(db, organization_id, user_id, requested, definition, "failed", reason)
+        _complete(db, organization_id, user_id, requested, definition, "failed", reason, agent_execution_id=agent_execution_id)
         return ToolResult(outcome="failed", reason_code=reason, tool_key=tool_key)
     except ToolExecutionError:
         settle_ticket(db, ticket, actual={})
-        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_FAILED)
+        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_FAILED, agent_execution_id=agent_execution_id)
         return ToolResult(outcome="failed", reason_code=REASON_FAILED, tool_key=tool_key)
 
     settle_ticket(db, ticket, actual={})
+    try:
+        checked = validate_output(definition, data)
+    except OutputContractError:
+        logger.error("AI tool result broke its output contract", extra={"tool": tool_key})
+        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_OUTPUT_INVALID, agent_execution_id=agent_execution_id)
+        return ToolResult(outcome="failed", reason_code=REASON_OUTPUT_INVALID, tool_key=tool_key)
+    serialized = json.dumps(checked, sort_keys=True)
     if len(serialized) > MAX_RESULT_CHARACTERS:
-        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_RESULT_TOO_LARGE)
+        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_RESULT_TOO_LARGE, agent_execution_id=agent_execution_id)
         return ToolResult(outcome="failed", reason_code=REASON_RESULT_TOO_LARGE, tool_key=tool_key)
 
-    _complete(db, organization_id, user_id, requested, definition, "succeeded", REASON_OK)
+    _complete(db, organization_id, user_id, requested, definition, "succeeded", REASON_OK, agent_execution_id=agent_execution_id)
     return ToolResult(outcome="succeeded", reason_code=REASON_OK, tool_key=tool_key, data=json.loads(serialized))
 
 
@@ -194,8 +225,9 @@ def _record_denial(
     user_id: UUID,
     definition: ToolDefinition,
     typed: dict[str, Any],
+    agent_execution_id: UUID | None,
 ) -> None:
-    metadata = _metadata(definition, typed, reason=REASON_PERMISSION_DENIED)
+    metadata = _metadata(definition, typed, reason=REASON_PERMISSION_DENIED, agent_execution_id=agent_execution_id)
     if _is_active_member(db, organization_id=organization_id, user_id=user_id):
         attribution = user_attribution(organization_id=organization_id, actor_user_id=user_id)
     else:
@@ -217,9 +249,21 @@ def _record_denial(
     )
 
 
-def _metadata(definition: ToolDefinition, typed: dict[str, Any], *, reason: str | None = None) -> dict[str, object]:
+def _metadata(
+    definition: ToolDefinition,
+    typed: dict[str, Any],
+    *,
+    reason: str | None = None,
+    agent_execution_id: UUID | None = None,
+) -> dict[str, object]:
     # Argument names only. Values are personal and operational data, and they stay out of the audit trail.
-    metadata: dict[str, object] = {"tool": definition.key, "argument_names": sorted(typed) if typed else []}
+    metadata: dict[str, object] = {
+        "tool": definition.key,
+        "tool_version": definition.version,
+        "argument_names": sorted(typed) if typed else [],
+    }
+    if agent_execution_id is not None:
+        metadata["agent_execution_id"] = str(agent_execution_id)
     if reason is not None:
         metadata["reason"] = reason
     return metadata
@@ -233,6 +277,8 @@ def _complete(
     definition: ToolDefinition,
     outcome: str,
     reason: str,
+    *,
+    agent_execution_id: UUID | None = None,
 ) -> None:
     """The completed record follows the requested record in the caller's transaction (WP3 pattern)."""
     db.add(
@@ -248,7 +294,16 @@ def _complete(
             permission_key=definition.required_permission,
             resource_type="ai_tool",
             resource_id=definition.key,
-            event_metadata=json.dumps({"tool": definition.key, "outcome": outcome, "reason": reason}, sort_keys=True),
+            event_metadata=json.dumps(
+                {
+                    "tool": definition.key,
+                    "tool_version": definition.version,
+                    "outcome": outcome,
+                    "reason": reason,
+                    "agent_execution_id": None if agent_execution_id is None else str(agent_execution_id),
+                },
+                sort_keys=True,
+            ),
         )
     )
     db.flush()

@@ -64,3 +64,31 @@ def validate_arguments(definition: ToolDefinition, raw: Mapping[str, object]) ->
             continue
         typed[name] = _check_value(parameter, raw[name])
     return typed
+
+
+class OutputContractError(ValueError):
+    """A handler returned data that does not match its declared output contract. The detail is never returned to a caller."""
+
+
+_PRIMITIVES: tuple[type, ...] = (str, int, float, bool, type(None))
+
+
+def validate_output(definition: ToolDefinition, data: object) -> dict[str, Any]:
+    """Check a handler result against the tool's output contract.
+
+    The result must be an object whose keys are all declared top-level fields. Each value is a JSON primitive, or a flat object
+    of JSON primitives. Nested lists, deeper objects and ORM objects are refused, so a handler cannot leak a row by accident.
+    """
+    if not isinstance(data, dict):
+        raise OutputContractError("Output must be an object.")
+    if not data or not set(data) <= set(definition.output_fields):
+        raise OutputContractError("Output fields do not match the contract.")
+    for name, value in data.items():
+        if isinstance(value, dict):
+            if not all(isinstance(key, str) for key in value):
+                raise OutputContractError(f"{name} has a non-string key.")
+            if not all(isinstance(item, _PRIMITIVES) for item in value.values()):
+                raise OutputContractError(f"{name} holds a non-primitive value.")
+        elif not isinstance(value, _PRIMITIVES):
+            raise OutputContractError(f"{name} holds a non-primitive value.")
+    return data

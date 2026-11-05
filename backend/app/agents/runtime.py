@@ -504,7 +504,7 @@ def _execute_step(db: Session, execution: AgentExecution, step: dict[str, Any], 
     if kind == "tool":
         arguments = {name: _resolve(value, execution.input_values, outputs) for name, value in step["arguments"].items()}
         result = invoke_tool(db, organization_id=execution.organization_id, tool_key=step["tool"],
-                             arguments=arguments, user_context=user_context)
+                             arguments=arguments, user_context=user_context, agent_execution_id=execution.id)
         execution.tool_calls += 1
         if result.outcome == "denied" and result.reason_code == REASON_PERMISSION_DENIED:
             return "stopped", "tool_permission_denied", None

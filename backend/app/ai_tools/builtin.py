@@ -134,6 +134,7 @@ BUILTIN_TOOLS: tuple[ToolDefinition, ...] = (
         capability_key=ASSISTANT_CAPABILITY,
         required_permission="contacts.read",
         parameters=(ToolParameter(name="contact_id", type=ParameterType.UUID),),
+        output_fields=("found", "contact"),
         handler=_contact_get,
     ),
     ToolDefinition(
@@ -142,6 +143,7 @@ BUILTIN_TOOLS: tuple[ToolDefinition, ...] = (
         capability_key=ASSISTANT_CAPABILITY,
         required_permission="leads.read",
         parameters=(ToolParameter(name="lead_id", type=ParameterType.UUID),),
+        output_fields=("found", "lead"),
         handler=_leads_get,
     ),
     ToolDefinition(
@@ -150,6 +152,7 @@ BUILTIN_TOOLS: tuple[ToolDefinition, ...] = (
         capability_key=ASSISTANT_CAPABILITY,
         required_permission="requirements.read",
         parameters=(ToolParameter(name="requirement_id", type=ParameterType.UUID),),
+        output_fields=("found", "requirement"),
         handler=_requirements_get,
     ),
     ToolDefinition(
@@ -158,6 +161,7 @@ BUILTIN_TOOLS: tuple[ToolDefinition, ...] = (
         capability_key=ASSISTANT_CAPABILITY,
         required_permission="properties.read",
         parameters=(ToolParameter(name="property_id", type=ParameterType.UUID),),
+        output_fields=("found", "property"),
         handler=_properties_get,
     ),
     ToolDefinition(
@@ -166,6 +170,7 @@ BUILTIN_TOOLS: tuple[ToolDefinition, ...] = (
         capability_key=ASSISTANT_CAPABILITY,
         required_permission="deals.read",
         parameters=(ToolParameter(name="deal_id", type=ParameterType.UUID),),
+        output_fields=("found", "deal"),
         handler=_deals_get,
     ),
 )

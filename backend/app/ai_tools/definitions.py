@@ -56,6 +56,13 @@ class ToolDefinition:
     handler: ToolHandler
     read_only: bool = True
     timeout_ms: int = DEFAULT_TIMEOUT_MS
+    # Contract version. A caller may pin a version; any other version is refused, so a changed contract never runs silently.
+    version: int = 1
+    # Top-level keys the handler may return (the "found" flag, then the entity). Every returned key must be declared, and every
+    # value must be a JSON primitive or a flat object of JSON primitives. Anything else is refused as an output contract violation.
+    output_fields: tuple[str, ...] = ()
+    # An unavailable tool stays in the catalogue for review but cannot be invoked through the registry.
+    available: bool = True
 
     def parameter(self, name: str) -> ToolParameter | None:
         return next((item for item in self.parameters if item.name == name), None)

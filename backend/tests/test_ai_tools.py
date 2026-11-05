@@ -124,6 +124,7 @@ def _counting_registry(handler, *, permission="contacts.read", parameters=(), ti
     registry.register(ToolDefinition(
         key="contacts.probe", description="test tool", capability_key=ASSISTANT,
         required_permission=permission, parameters=parameters, handler=handler, timeout_ms=timeout_ms,
+        output_fields=("text", "n", "when"),
     ))
     return registry
 
@@ -165,6 +166,7 @@ def test_the_registry_refuses_definitions_that_break_the_rules(changes, message)
     base = {
         "key": "contacts.probe", "description": "x", "capability_key": ASSISTANT,
         "required_permission": "contacts.read", "parameters": (), "handler": lambda db, o, a: {},
+        "output_fields": ("found",),
     }
     registry = ToolRegistry()
     with pytest.raises(ToolRegistrationError, match=message):
@@ -174,14 +176,15 @@ def test_the_registry_refuses_definitions_that_break_the_rules(changes, message)
 def test_the_registry_refuses_duplicate_keys_and_duplicate_parameters() -> None:
     registry = ToolRegistry()
     definition = ToolDefinition(key="contacts.probe", description="x", capability_key=ASSISTANT,
-                                required_permission="contacts.read", parameters=(), handler=lambda db, o, a: {})
+                                required_permission="contacts.read", parameters=(), handler=lambda db, o, a: {},
+                                output_fields=("found",))
     registry.register(definition)
     with pytest.raises(ToolRegistrationError, match="already registered"):
         registry.register(definition)
     dup = ToolDefinition(key="contacts.dup", description="x", capability_key=ASSISTANT,
                          required_permission="contacts.read",
                          parameters=(ToolParameter("a", ParameterType.STRING), ToolParameter("a", ParameterType.STRING)),
-                         handler=lambda db, o, a: {})
+                         handler=lambda db, o, a: {}, output_fields=("found",))
     with pytest.raises(ToolRegistrationError, match="unique"):
         registry.register(dup)
 
@@ -399,11 +402,13 @@ def test_an_oversized_result_is_refused_before_it_is_returned(world, monkeypatch
     assert result.data is None
 
 
-def test_the_tool_result_is_plain_json_only(world, monkeypatch) -> None:
+def test_the_tool_result_must_be_plain_json_only(world, monkeypatch) -> None:
+    # A datetime is not a JSON primitive, so the output contract refuses it rather than converting it silently.
     registry = _counting_registry(lambda db, o, a: {"when": datetime(2026, 1, 1, tzinfo=UTC), "n": 1})
     _enable_ai(monkeypatch, world.org_a, world.owner_a)
     _pass_resource(monkeypatch)
     result = _invoke(world, user=world.owner_a, organization=world.org_a, tool="contacts.probe",
                      registry=registry, arguments={})
-    assert result.succeeded
-    assert result.data == {"n": 1, "when": "2026-01-01 00:00:00+00:00"}
+    assert result.outcome == "failed"
+    assert result.reason_code == "output_contract_violation"
+    assert result.data is None
