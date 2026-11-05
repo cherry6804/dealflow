@@ -1126,3 +1126,137 @@ reconciliation (DFR1-053) is open, which this story does not need. Architecture:
    rule exist (existing gate behaviour), plus provider data-use approval and a sandbox verification.
 8. Per-step traces and the final output are not yet covered by export or deletion (see 1).
 9. The agents page is not in the workspace navigation menu, and it has no component-level tests (helper logic is tested).
+
+## 28. DFR1-020 explainable lead qualification and priority scoring (E09)
+
+Branch: `feature/DFR1-E09-story-020`, cut from `origin/develop` at `19ec43d` (DFR1-019 merged as PR #159).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Summary: Implement explainable lead qualification and priority scoring
+- Epic: DFR1-E09. Sprint S3 (Days 7-9). Priority P0. Story points 5. Labels: predictive, crm
+- Dependencies: DFR1-008, DFR1-015
+- Scope: Extract requirements and calculate initial explainable priority using configured rules/baselines, with evidence and confidence.
+- Acceptance criteria: Insufficient data is labelled rule-based/baseline; factors, timestamp and version visible; human corrections
+  captured for evaluation.
+
+Authoritative plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v2.docx), "Predictive AI": explainable lead priority; use
+rules or statistical baselines where data is insufficient; never label an unvalidated heuristic as a calibrated probability; store
+factors, confidence or uncertainty, source data references, rule or model version, timestamp, feedback and the eventual actual outcome.
+
+Related stories: DFR1-021 (lead intake and qualification agents) depends on DFR1-019 and DFR1-020. DFR1-022 (matching and next-best
+action) depends on DFR1-008 and DFR1-020. Neither is started here.
+
+### Dependency verification
+
+- DFR1-008 (CRM vertical slice): on `origin/develop` (merge of `e0b1582`, PR #157).
+- DFR1-015 (AI gateway core): on `origin/develop` (PR #154). Not used by this story: scoring reads recorded facts only.
+- DFR1-019 (predecessor, agent runtime): on `origin/develop` at `19ec43d` (PR #159).
+- No open PRs were visible to the tooling (GitHub CLI unauthenticated). Unmerged remote branches on `origin/develop` are the
+  pre-existing documentation branches (`docs/E06-ai-execution-decisions`, `docs/E13-post-merge-audit`,
+  `docs/E13-post-merge-verification-2`) and `main`. None was touched.
+
+### What already existed and was reused
+
+- Lead, contact, activity, follow-up and customer requirement models and services (`app/db/models/lead.py`,
+  `contact.py`, `activity.py`, `follow_up.py`, `customer_requirement*.py`), and the lead tenant checks (`app/leads/service.py`
+  pattern).
+- The permission checks `leads.read` and `leads.update`, the independent audit writer (`persist_independent_audit_event`) and user
+  attribution (`user_attribution`), and the composite lead foreign key `(lead_id, organization_id)` used by the CRM tables.
+- Nothing from the AI gateway, the tool registry, the agent runtime or the usage ledger was duplicated or used.
+
+### What was built
+
+- Scoring (`app/leads/priority.py`): seven rules, each reading one recorded fact. Interest (25 points), recent activity (20), stated
+  budget (15), preferred locations (10), property preferences (10), an upcoming pending follow-up (10), and contact details on file
+  (10). The maximum is 100 points.
+- Requirement extraction: the scoring reads the lead's active linked customer requirements (up to five). For each it records the budget,
+  the active locations and the active property preferences, each with its record identifier. Customer name, email and phone are not
+  extracted or returned.
+- Insufficient data: when fewer than four rules have a fact to read, the method is `rule_based_baseline` and `insufficient_data` is
+  true. Confidence is `high` at six or more known rules, `medium` at four or five, and `low` below four. A missing fact contributes no
+  points and is listed in `missing_factors`; it is never guessed.
+- Bands: high at 70 or more, medium at 40 or more, low below 40. The score is labelled as rule points, not a probability. No probability
+  field exists in the response, and the response carries the disclaimer.
+- Storage (`lead_priority_scores`): written once per calculation, never updated. It records the rule-set version (`priority-rules-v1`),
+  the computed time, the factors with their observed values, points and source references, the missing factors, the requirement
+  summary, the computing user, and a SHA-256 hash of the facts read.
+- Corrections (`lead_priority_corrections`): a human judgement against one score, with a corrected band or score (or both), a reason
+  of up to 500 characters, and an idempotency key. A correction does not change the score. It is kept for evaluation.
+- API (`app/api/lead_priority.py`, router registered in `app/main.py`):
+  - `POST /api/v1/leads/{lead_id}/priority` (leads.update): calculates and stores a new score (201).
+  - `GET /api/v1/leads/{lead_id}/priority` (leads.read): latest score and up to 50 earlier scores, newest first.
+  - `POST /api/v1/leads/{lead_id}/priority/{score_id}/corrections` (leads.update): records a correction (200 when repeated under the same
+    key, 201 otherwise). A key reused for another score is refused with 409.
+  - `GET /api/v1/leads/{lead_id}/priority/{score_id}/corrections` (leads.read).
+- Audit: each calculation writes `lead.priority.calculated` and each new correction writes `lead.priority.corrected`, attributed to the
+  acting user, holding identifiers, band, method, rule-set version and no contact details.
+
+### Acceptance criteria evidence
+
+| Criterion | Evidence |
+|---|---|
+| Insufficient data is labelled rule-based/baseline | `test_a_lead_with_little_recorded_data_is_labelled_a_baseline_and_missing_facts_are_listed` |
+| Factors visible | `test_a_lead_with_full_facts_is_scored_by_rules_with_each_factor_visible`; stored factors checked in `test_a_calculated_score_is_stored_with_version_timestamp_factors_and_attribution` |
+| Timestamp visible | `computed_at` stored and returned; asserted in the stored-score test |
+| Version visible | `ruleset_version` stored and returned; asserted in the stored-score and history tests |
+| Human corrections captured for evaluation | `test_a_correction_is_recorded_for_evaluation_and_the_score_is_unchanged`; idempotency and race tests |
+| Evidence and confidence | source references per factor; `confidence` and `insufficient_data` returned |
+| Never a calibrated probability | no probability field; disclaimer asserted |
+
+### Tests
+
+- `tests/test_lead_priority.py`: 18 tests. Full facts scored with each factor visible; sparse data labelled baseline; determinism of
+  score and input hash; won, lost and inactive leads refused; bands; storage with version, timestamp and attribution; history kept per
+  calculation; corrections recorded without changing the score; idempotent repeat; concurrent corrections with one key store exactly one
+  row; a key reused for another score refused; invalid corrections with named problems; reader can read but not calculate or correct;
+  another organization gets not found; a score cannot be corrected through another lead; calculation works with AI off; closed-lead
+  refusal with reason; correction audited to the acting user without contact details.
+- Regression: `tests/test_leads_api.py`, `tests/test_leads_lifecycle_api.py`, `tests/test_lead_activity_tracking_api.py` (existing):
+  passing together with the new file, 177 passed in one run.
+- Full backend suite (`pytest -q -p no:warnings`, from `backend/`): 2,433 passed, 14 skipped, 0 failed, exit 0 (700.96 s). The 14
+  skips are the pre-existing live-provider tests that are not configured in this environment, the same 14 as DFR1-019 (2,415 passed
+  before this story; 2,415 + 18 = 2,433).
+- Frontend: not run for this story because no frontend file changed.
+
+### Migration
+
+- `f3b9d2c7a1e4_lead_priority` (down revision `e2a8c4f1b9d7`): creates `lead_priority_scores` and `lead_priority_corrections`. No
+  permission is added. Downgrade refuses while rows exist.
+- Validation on a freshly created `dealflow` database (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0;
+  single head `f3b9d2c7a1e4`.
+
+### Files changed
+
+- New: `backend/app/leads/priority.py`, `backend/app/leads/priority_service.py`, `backend/app/api/lead_priority.py`,
+  `backend/app/db/models/lead_priority.py`, `backend/alembic/versions/f3b9d2c7a1e4_lead_priority.py`,
+  `backend/tests/test_lead_priority.py`.
+- Existing files changed: `backend/app/main.py` (router), `backend/app/db/models/__init__.py` (model registration),
+  `backend/app/governance/table_inventory.py` (two entries).
+- Documentation: this section and the DFR1-020 tracker row.
+- No frontend file changed.
+
+### Carried-forward findings from DFR1-019 (not owned by DFR1-020; left untouched)
+
+- Agent execution history not in privacy export or deletion. Owned by DFR1-050 (retention, export, deletion and privacy controls).
+  It remains a production-readiness blocker before production agent runs. The new lead priority tables are listed as not covered for DFR1-050 as well.
+- `expire_stale_running` is not scheduled. Resilience and concurrency validation belongs to DFR1-051; the scheduling is not built here.
+- Agents page not in workspace navigation. Owned by the agent configuration studio work (DFR1-037).
+- Agent approvals separate from governance approval requests. Owned by the approval and human-task nodes (DFR1-025).
+- Agent triggers manual only. Owned by the workflow trigger engine (DFR1-024).
+
+### Known limitations
+
+- The rule set is version-controlled in code as `priority-rules-v1`. Per-organization rule configuration (a configuration studio) is not
+  built, so "configured rules" means the versioned baseline rule set in this release.
+- Requirement extraction is deterministic from recorded CRM fields. AI extraction of requirements from conversations or documents is
+  not built here; it would depend on the production AI approvals.
+- Predicted outcomes and calibration are not computed. The stored corrections are the evaluation input; the evaluation pipeline is not
+  built (DFR1-045 owns the prediction feedback and model evaluation pipeline).
+- Leads with no linked requirement have fewer known facts and are labelled baseline by design.
+- Priority is not shown in the leads user interface yet. The acceptance criteria do not require it.
+
+### Production blockers
+
+- Privacy export and deletion for lead priority scores and corrections (DFR1-050), before production use of scoring with real customer data.
+- No production blocker from an external provider: scoring makes no provider call.

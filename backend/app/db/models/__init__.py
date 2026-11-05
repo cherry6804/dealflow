@@ -33,6 +33,7 @@ from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.document import Document
 from app.db.models.agent import Agent, AgentExecution, AgentExecutionStep, AgentVersion
 from app.db.models.document_review import DocumentReview
+from app.db.models.lead_priority import LeadPriorityCorrection, LeadPriorityScore
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.models.email_verification_token import EmailVerificationToken
 from app.db.models.follow_up import FollowUp
@@ -113,6 +114,8 @@ __all__ = [
     "DealStageHistory",
     "Document",
     "DocumentReview",
+    "LeadPriorityScore",
+    "LeadPriorityCorrection",
     "Agent",
     "AgentVersion",
     "AgentExecution",
