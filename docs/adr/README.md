@@ -257,5 +257,6 @@ Never silently rewrite architectural history.
 | 0030 | Environment and Configuration Standards | Proposed |
 | 0031 | AI API Namespace and Legacy Route Compatibility | Accepted |
 | 0032 | Provider Registry and Connection Lifecycle | Accepted |
+| 0033 | Release 1 communication provider strategy | Accepted |
 
 New ADRs should be added to this index when created.
