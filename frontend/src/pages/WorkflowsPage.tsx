@@ -4,7 +4,9 @@ import { ApiError } from "../lib/api";
 import {
   workflowApi,
   type LifecycleEvent,
+  type SimulationResult,
   type StepType,
+  type WorkflowTemplateList,
   type VersionSummary,
   type WorkflowConfiguration,
   type WorkflowDetail,
@@ -13,6 +15,8 @@ import {
   type WorkflowSummary,
 } from "../services/workflowApi";
 
+import WorkflowCanvas from "./WorkflowCanvas";
+import type { CanvasNode } from "./workflowCanvasModel";
 import WorkflowRunsPanel from "./WorkflowRunsPanel";
 
 import "./WorkflowsPage.css";
@@ -46,7 +50,19 @@ interface StepDraft {
   approver: string;
   reason: string;
   seconds: string;
+  expirySeconds: string;
+  gated: boolean;
+  gateApprover: string;
+  gateExpirySeconds: string;
+  failurePolicy: "stop" | "route";
+  routeTo: string;
+  retryAttempts: string;
+  retryBackoff: string;
+  timeoutSeconds: string;
 }
+
+const DEFAULT_EXPIRY_SECONDS = "259200";
+const DEFAULT_GATE_EXPIRY_SECONDS = "3600";
 
 interface Editor {
   name: string;
@@ -82,6 +98,9 @@ function emptyStep(id = "step_1"): StepDraft {
     id, type: "crm_action", next: "", action: CRM_ACTIONS[0], argumentsText: '{\n  "lead_id": "$input.lead_id"\n}',
     left: "", operator: "eq", right: "", then: "", elseStep: "", agentId: "", agentArgumentsText: "{}",
     approver: APPROVERS[0], reason: "", seconds: "60",
+    expirySeconds: DEFAULT_EXPIRY_SECONDS, gated: false, gateApprover: APPROVERS[0],
+    gateExpirySeconds: DEFAULT_GATE_EXPIRY_SECONDS, failurePolicy: "stop", routeTo: "", retryAttempts: "1",
+    retryBackoff: "1", timeoutSeconds: "60",
   };
 }
 
@@ -113,6 +132,15 @@ function editorFrom(detail: WorkflowDetail): Editor {
       approver: step.approver_permission ?? APPROVERS[0],
       reason: step.reason ?? "",
       seconds: step.seconds === undefined ? "60" : String(step.seconds),
+      expirySeconds: String(step.expires_after_seconds ?? DEFAULT_EXPIRY_SECONDS),
+      gated: step.approval !== undefined,
+      gateApprover: step.approval?.approver_permission ?? APPROVERS[0],
+      gateExpirySeconds: String(step.approval?.expires_after_seconds ?? DEFAULT_GATE_EXPIRY_SECONDS),
+      failurePolicy: step.on_failure?.policy === "route" ? "route" : "stop",
+      routeTo: step.on_failure?.route_to ?? "",
+      retryAttempts: String(step.retry?.max_attempts ?? 1),
+      retryBackoff: String(step.retry?.backoff_seconds ?? 1),
+      timeoutSeconds: String(step.timeout_seconds ?? 60),
     })),
     maxSteps: String(limits.max_steps ?? ""),
     maxDuration: String(limits.max_duration_seconds ?? ""),
@@ -130,6 +158,22 @@ function parseJsonObject(text: string, path: string): Record<string, string> {
   return parsed as Record<string, string>;
 }
 
+/** Failure policy, retry, timeout and an approval gate. Each is sent exactly as the step holds it, so a reload shows the same values. */
+function policyFields(draft: StepDraft): Partial<WorkflowStep> {
+  if (draft.type === "condition") return {};
+  const fields: Partial<WorkflowStep> = {
+    timeout_seconds: Number(draft.timeoutSeconds),
+    on_failure: draft.failurePolicy === "route" ? { policy: "route", route_to: draft.routeTo } : { policy: "stop" },
+  };
+  if (draft.type !== "delay") {
+    fields.retry = { max_attempts: Number(draft.retryAttempts), backoff_seconds: Number(draft.retryBackoff) };
+  }
+  if ((draft.type === "crm_action" || draft.type === "agent") && draft.gated) {
+    fields.approval = { approver_permission: draft.gateApprover, expires_after_seconds: Number(draft.gateExpirySeconds) };
+  }
+  return fields;
+}
+
 function buildConfiguration(editor: Editor): WorkflowConfiguration {
   const steps: WorkflowStep[] = editor.steps.map((draft) => {
     const base: WorkflowStep = { id: draft.id, type: draft.type };
@@ -143,6 +187,7 @@ function buildConfiguration(editor: Editor): WorkflowConfiguration {
       };
     }
     if (draft.next) base.next = draft.next;
+    Object.assign(base, policyFields(draft));
     if (draft.type === "crm_action") {
       return { ...base, action: draft.action, arguments: parseJsonObject(draft.argumentsText, `Step ${draft.id} arguments`) };
     }
@@ -150,7 +195,12 @@ function buildConfiguration(editor: Editor): WorkflowConfiguration {
       return { ...base, agent_id: draft.agentId, arguments: parseJsonObject(draft.agentArgumentsText, `Step ${draft.id} inputs`) };
     }
     if (draft.type === "approval") {
-      return { ...base, approver_permission: draft.approver, reason: draft.reason };
+      return {
+        ...base,
+        approver_permission: draft.approver,
+        reason: draft.reason,
+        expires_after_seconds: Number(draft.expirySeconds),
+      };
     }
     return { ...base, seconds: Number(draft.seconds) };
   });
@@ -191,6 +241,11 @@ export default function WorkflowsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
+  const [templates, setTemplates] = useState<WorkflowTemplateList | null>(null);
+  const [newTemplate, setNewTemplate] = useState("");
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+  const [sampleInput, setSampleInput] = useState("{}");
+  const [simulation, setSimulation] = useState<SimulationResult | null>(null);
 
   const loadList = useCallback(async () => {
     try {
@@ -222,6 +277,12 @@ export default function WorkflowsPage() {
   }, [loadList]);
 
   useEffect(() => {
+    workflowApi.templates().then(setTemplates).catch((caught: unknown) => setError(messageFor(caught)));
+  }, []);
+
+  useEffect(() => {
+    setSimulation(null);
+    setSelectedStep(null);
     if (selectedId) void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
 
@@ -251,10 +312,38 @@ export default function WorkflowsPage() {
     const name = newName.trim();
     if (!name) return;
     await run(async () => {
-      const created = await workflowApi.create({ name });
+      const created = newTemplate
+        ? await workflowApi.createFromTemplate(newTemplate, name)
+        : await workflowApi.create({ name });
       setNewName("");
+      setNewTemplate("");
       setSelectedId(created.id);
-    }, "Draft workflow created.");
+    }, newTemplate ? "Draft created from the template. Nothing runs until it is published." : "Draft workflow created.");
+  }
+
+  async function simulateDraft() {
+    if (!detail) return;
+    let input: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(sampleInput || "{}");
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("The sample input must be a JSON object.");
+      input = parsed as Record<string, unknown>;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The sample input is not valid JSON.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setSimulation(await workflowApi.simulate(detail.id, input));
+      setNotice("Simulation finished. Nothing was run.");
+    } catch (caught) {
+      setSimulation(null);
+      setError(messageFor(caught));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function updateEditor(patch: Partial<Editor>) {
@@ -307,6 +396,15 @@ export default function WorkflowsPage() {
             <label>
               Name
               <input value={newName} onChange={(event) => setNewName(event.target.value)} maxLength={120} required />
+            </label>
+            <label>
+              Start from
+              <select value={newTemplate} onChange={(event) => setNewTemplate(event.target.value)}>
+                <option value="">A blank draft</option>
+                {(templates?.items ?? []).map((item) => (
+                  <option key={item.key} value={item.key} title={item.description}>{item.title}</option>
+                ))}
+              </select>
             </label>
             <button type="submit" className="workflows-button" disabled={busy}>Create draft</button>
           </form>
@@ -449,9 +547,29 @@ export default function WorkflowsPage() {
             {stepIds.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </label>
+        <WorkflowCanvas
+          nodes={editor.steps.map((step): CanvasNode => ({
+            id: step.id,
+            type: step.type,
+            next: step.next,
+            then: step.type === "condition" ? step.then : "",
+            elseStep: step.elseStep,
+          }))}
+          entry={editor.entry}
+          selectedIndex={selectedStep}
+          onSelect={(index) => {
+            setSelectedStep(index);
+            document.getElementById(`workflow-step-${index}`)?.focus();
+          }}
+        />
         <ol className="workflows-steps">
           {editor.steps.map((step, index) => (
-            <li key={`${step.id}-${index}`} className="workflows-step">
+            <li
+              key={`${step.id}-${index}`}
+              id={`workflow-step-${index}`}
+              tabIndex={-1}
+              className={selectedStep === index ? "workflows-step workflows-step-selected" : "workflows-step"}
+            >
               <div className="workflows-grid">
                 <label>Step id<input value={step.id} onChange={(event) => updateStep(index, { id: event.target.value })} disabled={!editable} /></label>
                 <label>
@@ -541,6 +659,60 @@ export default function WorkflowsPage() {
                 </div>
               ) : null}
 
+              {step.type === "crm_action" || step.type === "agent" ? (
+                <div className="workflows-grid">
+                  <label className="workflows-check">
+                    <input type="checkbox" checked={step.gated} onChange={(event) => updateStep(index, { gated: event.target.checked })} disabled={!editable} />
+                    Needs approval before this step runs
+                  </label>
+                  {step.gated ? (
+                    <>
+                      <label>
+                        Approver permission
+                        <select value={step.gateApprover} onChange={(event) => updateStep(index, { gateApprover: event.target.value })} disabled={!editable}>
+                          {APPROVERS.map((item) => <option key={item} value={item}>{item}</option>)}
+                        </select>
+                      </label>
+                      <label>Decision open for (seconds)<input type="number" min={60} max={604800} value={step.gateExpirySeconds} onChange={(event) => updateStep(index, { gateExpirySeconds: event.target.value })} disabled={!editable} /></label>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {step.type === "approval" ? (
+                <div className="workflows-grid">
+                  <label>Decision open for (seconds)<input type="number" min={60} max={604800} value={step.expirySeconds} onChange={(event) => updateStep(index, { expirySeconds: event.target.value })} disabled={!editable} /></label>
+                </div>
+              ) : null}
+
+              {step.type !== "condition" ? (
+                <div className="workflows-grid">
+                  <label>
+                    If this step fails
+                    <select value={step.failurePolicy} onChange={(event) => updateStep(index, { failurePolicy: event.target.value as "stop" | "route" })} disabled={!editable}>
+                      <option value="stop">Stop the run</option>
+                      <option value="route">Continue at another step</option>
+                    </select>
+                  </label>
+                  {step.failurePolicy === "route" ? (
+                    <label>
+                      Step to continue at
+                      <select value={step.routeTo} onChange={(event) => updateStep(index, { routeTo: event.target.value })} disabled={!editable}>
+                        <option value="">Choose a step</option>
+                        {stepIds.filter((item) => item !== step.id).map((item) => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+                  <label>Timeout (seconds)<input type="number" min={1} max={900} value={step.timeoutSeconds} onChange={(event) => updateStep(index, { timeoutSeconds: event.target.value })} disabled={!editable} /></label>
+                  {step.type !== "delay" ? (
+                    <>
+                      <label>Attempts<input type="number" min={1} max={3} value={step.retryAttempts} onChange={(event) => updateStep(index, { retryAttempts: event.target.value })} disabled={!editable} /></label>
+                      <label>Wait between attempts (seconds)<input type="number" min={1} max={300} value={step.retryBackoff} onChange={(event) => updateStep(index, { retryBackoff: event.target.value })} disabled={!editable} /></label>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
               {editable ? (
                 <button type="button" className="workflows-link" onClick={() => updateEditor({ steps: editor.steps.filter((_, position) => position !== index) })}>
                   Remove step
@@ -573,6 +745,54 @@ export default function WorkflowsPage() {
           </div>
         ) : null}
       </form>
+
+      <section className="workflows-panel" aria-labelledby="workflow-simulate-title">
+        <h2 id="workflow-simulate-title">Simulate the draft</h2>
+        <p className="workflows-subtle">
+          Shows the path a run would take for a sample input. Nothing is run, no CRM record changes, no approval is requested and no
+          message is sent.
+        </p>
+        <label>
+          Sample input (JSON object)
+          <textarea value={sampleInput} onChange={(event) => setSampleInput(event.target.value)} rows={3} />
+        </label>
+        <div className="workflows-row">
+          <button type="button" className="workflows-button workflows-button-secondary" disabled={busy || !detail} onClick={() => void simulateDraft()}>
+            Simulate
+          </button>
+        </div>
+        {simulation ? (
+          <div aria-live="polite">
+            <p>{simulation.valid ? "The draft can be simulated." : "The draft has problems, so no path was built."}</p>
+            {simulation.problems.length > 0 ? (
+              <ul className="workflows-problems">
+                {simulation.problems.map((item) => <li key={`${item.path}-${item.message}`}>{item.path}: {item.message}</li>)}
+              </ul>
+            ) : null}
+            {simulation.valid ? (
+              <ol className="workflows-plan">
+                {simulation.plan.map((entry, index) => (
+                  <li key={`${entry.step_id}-${index}`}>
+                    <strong>{entry.step_id}</strong> ({entry.type}) · {entry.outcome.replace(/_/g, " ")}
+                    {entry.target ? ` · ${entry.target}` : ""}
+                    {entry.assumes ? ` · assumes ${entry.assumes}` : ""}
+                    {entry.taken ? ` · ${entry.taken === "either" ? "either branch" : `${entry.taken} branch`}` : ""}
+                    {entry.branch !== "main" ? ` · on ${entry.branch}` : ""}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {simulation.valid ? (
+              <>
+                <h3>Not performed</h3>
+                <ul className="workflows-subtle">
+                  {simulation.not_performed.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
 
       <section className="workflows-panel" aria-labelledby="workflow-lifecycle-title">
         <h2 id="workflow-lifecycle-title">Publish and lifecycle</h2>

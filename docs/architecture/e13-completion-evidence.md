@@ -1915,3 +1915,102 @@ Branch: `feature/DFR1-E08-approvals-human-tasks`, cut from `origin/develop` at `
 - Privacy export and deletion for `human_tasks` and `human_task_events` (DFR1-050). Both tables are listed as not covered in `table_inventory.py`.
 - A scheduler for `expire-due` and the workflow timer and stale-run sweeps (DFR1-051) before approvals are relied on in production.
 - Escalation nodes are not built.
+
+## 34. DFR1-026 visual workflow editor and template catalogue (E08)
+
+Branch: `feature/DFR1-E08-workflow-templates-simulation`, cut from `origin/develop` at `2c11642` (DFR1-025 merged as PR #165).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-026. Summary: Build visual workflow editor and template catalogue. Epic DFR1-E08. Sprint S4 (Days 10-12). Priority P0. Story points 8 (the tracker had 5; corrected here). Labels: frontend, builder.
+- Scope: provide node canvas, configuration panels, validation, simulation and templates for new lead, missed call, follow-up and site visit.
+- Acceptance criteria: saved graph reloads accurately; invalid flows cannot publish; test mode does not send real communications; keyboard/accessibility basics.
+- Dependencies: DFR1-023 (on `origin/develop`, PR #163).
+- Related but not in this story: DFR1-056 (replay and advanced debugging, P1, depends on DFR1-024 and DFR1-026).
+
+The architecture plan names a visual drag/drop editor, templates, simulation, validation, draft/publish and versioning, and a dry-run that must not send messages, place calls, mutate CRM or use external side effects. It names `POST /api/v1/automation/workflows/{id}/validate|simulate|publish`.
+
+### Dependency verification
+
+- DFR1-023 (schema, draft and immutable versions, publish checks) is on `origin/develop`.
+- DFR1-024 (runtime) and DFR1-025 (approval gates and human tasks) are on `origin/develop` (PR #164 and PR #165). The editor reuses their gate configuration.
+
+### Acceptance criteria mapping
+
+- **Saved graph reloads accurately.** Done, with a defect fixed. The editor previously dropped `approval`, `on_failure`, `retry`, `timeout_seconds` and an approval step's expiry on save, so a reload lost them. The editor now carries them through (`policyFields` and the approval expiry in `buildConfiguration`). A backend test saves a configuration with a gate, a route policy, retries and a timeout, and checks that the reloaded draft equals the saved one. A frontend test checks what is sent on save. Every template round-trips through the canonical schema unchanged.
+- **Invalid flows cannot publish.** Done, unchanged from DFR1-023. A draft is checked by the schema on every save and by the publish checks (agent references, CRM actions, entitlement, permissions) on publish. A test publishes a draft with an unknown agent: publish is refused and no version is created.
+- **Test mode does not send real communications.** Done as a dry run. `POST /api/v1/automation/workflows/{id}/simulate` reads the draft and returns the path a run would take. It never calls the runtime, the CRM runner, an agent, the outbox, the approval gate, a provider or a communication channel, and it creates no run, task or record. Every result carries `executed: false` and lists what was not performed. Tests replace the CRM runner with one that fails, and count runs, outbox events, approval tasks and versions before and after.
+- **Keyboard and accessibility basics.** Partly done. Canvas nodes are native buttons with `aria-pressed`, selection moves focus to the step's settings, every field has a label, and the simulation result is a polite live region. Not verified with a screen reader or in a live browser.
+
+### Templates
+
+- `new_lead`: on `lead.created`, recalculates the lead's priority.
+- `missed_call`: manual. The platform emits no missed-call event, and the template's purpose says so. It waits 15 minutes, then recalculates the priority.
+- `follow_up`: on `lead.updated`, a member confirms the follow-up (approval step, `leads.update`), then the priority is recalculated.
+- `site_visit`: on `site_visit.scheduled`, recalculates the priority.
+- A template creates a draft through the same normalisation and storage as any draft, and is audited (`workflow.created_from_template`). It cannot publish, run or change another draft. Publishing still needs `workflows.publish` and passes every publish check. Tests check that a drafter without publish permission is refused.
+- The catalogue offers only choices the schema accepts. `qualification.record` is excluded because workflows may not record qualification results.
+
+### Editor
+
+- The page keeps its structured form (the same state and save path as before) and adds a node canvas above the step settings. The canvas shows each step with its type, its start marker and its outgoing connections. Selecting a node selects the step whose settings the form shows.
+- Gated `crm_action` and `agent` steps: a checkbox, the approver permission and the decision window. Approval steps: the decision window. All non-condition steps: the failure policy (stop, or continue at a named step), timeout, and for non-delay steps the attempts and wait between them.
+- A "Start from" choice on the new-workflow form creates a draft from a template.
+- A "Simulate the draft" panel takes a sample JSON object and shows problems, the planned steps (each marked as would run, would wait for approval, would wait, or branch taken or unknown), and what was not performed.
+
+### Simulation rules
+
+- A draft with problems (schema, publish checks, or a sample input that names an undeclared input or omits a required one) returns `valid: false` and no path.
+- A condition on a supplied input is evaluated. Otherwise both branches are shown.
+- A gate or approval step is shown as waiting, and the steps after it are shown as assuming the approval is granted. No decision is made.
+- Arguments show the sample value, or that the input was not supplied, or that the value comes from an earlier step at run time.
+- The audit record holds the draft's revision, validity and the names of the input fields, never their values.
+- Plan length is capped at 100 entries, and the response says when it was truncated.
+
+### API
+
+- `GET /api/v1/automation/workflow-templates` (`workflows.read`): the template summaries and the catalogue.
+- `POST /api/v1/automation/workflow-templates/{key}/workflows` (`workflows.manage`, 201): creates a draft. 404 `template_not_found` for an unknown key.
+- `POST /api/v1/automation/workflows/{id}/simulate` (`workflows.manage`): the dry run. Body `{ "input": {} }`. Refuses unknown fields.
+- No new permission. No new table.
+
+### Files changed
+
+- Backend, new: `app/workflows/templates.py`, `app/workflows/simulation.py`, `app/workflows/editor_service.py`, `app/api/workflow_editor.py`, `tests/test_workflow_editor.py`.
+- Backend, changed: `app/main.py` (router).
+- Frontend, new: `src/pages/WorkflowCanvas.tsx`, `src/pages/WorkflowCanvas.css`, `src/pages/workflowCanvasModel.ts`, `src/pages/WorkflowEditing.test.tsx`.
+- Frontend, changed: `src/pages/WorkflowsPage.tsx` (canvas, templates, simulation, gate and policy fields, round-trip fix), `src/pages/WorkflowsPage.test.tsx` (mock), `src/services/workflowApi.ts` (template, creation and simulation calls and types).
+- Documentation: this section and the DFR1-026 tracker row.
+
+### Migration
+
+- None. The story adds no table or column and no permission. Alembic head remains `e5a7c9d1f3b2` (DFR1-025). The upgrade, downgrade and re-upgrade checks are therefore not applicable to this story.
+
+### Test results (actual)
+
+- Focused: `tests/test_workflow_editor.py` 16 passed. With `test_workflow_definitions.py`, `test_workflow_runtime.py` and `test_human_tasks.py`: 124 passed, exit 0.
+- Full backend suite (`pytest tests -q`, from `backend/`, isolated database on 127.0.0.1:5438): 2,639 passed, 14 skipped, 0 failed, exit 0 (879.53 s). The 14 skips are the live-provider tests that are not configured here. 2,623 + 16 = 2,639.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0; the new files add no warnings. `vitest run`: 25 files, 163 tests passed, exit 0 (7 new tests in `WorkflowEditing.test.tsx`). `npm run build` exit 0.
+- The editor was not exercised in a live browser; it is verified by its unit tests and the build.
+
+### Security and tenant isolation
+
+- Every route is scoped to the verified organization. Another organization gets 404 for a draft's simulation (tested).
+- Authorization: reading the catalogue needs `workflows.read`; creating from a template and simulating need `workflows.manage`; publishing still needs `workflows.publish` (tested for a drafter).
+- Templates are copied on use, so a caller cannot change the catalogue (tested).
+- Untrusted input: request models refuse unknown fields; the configuration is normalised on every save; sample input is limited to declared names (tested).
+- No unintended side effects: the simulation path reads only the draft and the publish-check data, and writes only its audit line (tested with a CRM runner that fails and with counts of runs, outbox events, tasks and versions).
+
+### Known limitations
+
+- The canvas is an ordered graph view with buttons, not a drag-and-drop canvas. Connections are set in the step form. The story's acceptance criteria are met without drag and drop, but this is a narrower interpretation of "visual editor" than the architecture's wording.
+- Simulation reads the draft, not the published version, and does not follow `$steps` references (shown as known only at run time).
+- The missed-call template is manual because no missed-call event exists.
+- The editor's form controls are native elements, as on the existing page, not Quark components. Migrating them to Quark is deferred.
+- No undo or history in the editor.
+- Keyboard and screen-reader behaviour has not been checked in a browser.
+- DFR1-056 (replay and advanced debugging) is not built.
+
+### Production blockers
+
+- None introduced by this story. The existing blockers from DFR1-024 and DFR1-025 (privacy coverage of run and task records, scheduled sweeps) still apply.

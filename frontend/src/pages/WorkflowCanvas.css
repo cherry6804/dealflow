@@ -1,0 +1,67 @@
+.workflows-canvas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.workflows-canvas-item {
+  min-width: 12rem;
+  max-width: 16rem;
+}
+
+.workflows-node {
+  display: grid;
+  width: 100%;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid #98a2b3;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.workflows-node[aria-pressed="true"] {
+  border: 2px solid #0b5ed7;
+}
+
+.workflows-node:focus-visible {
+  outline: 3px solid #0b5ed7;
+  outline-offset: 2px;
+}
+
+.workflows-node-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.workflows-node-type,
+.workflows-node-tag {
+  font-size: 0.85rem;
+}
+
+.workflows-node-tag {
+  justify-self: start;
+  padding: 0 0.4rem;
+  border-radius: 4px;
+  background: #e8f1ff;
+}
+
+.workflows-step-selected {
+  outline: 2px solid #0b5ed7;
+  outline-offset: 4px;
+}
+
+.workflows-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.workflows-plan {
+  padding-inline-start: 1.25rem;
+}

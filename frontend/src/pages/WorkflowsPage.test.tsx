@@ -25,6 +25,9 @@ vi.mock("../services/workflowApi", () => ({
     cancelRun: vi.fn(),
     retryRun: vi.fn(),
     decideStep: vi.fn(),
+    templates: vi.fn(),
+    createFromTemplate: vi.fn(),
+    simulate: vi.fn(),
   },
 }));
 
@@ -69,6 +72,17 @@ describe("WorkflowsPage", () => {
     vi.mocked(workflowApi.versions).mockResolvedValue({ items: [] });
     vi.mocked(workflowApi.history).mockResolvedValue({ items: [] });
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ items: [] });
+    vi.mocked(workflowApi.templates).mockResolvedValue({
+      items: [{ key: "new_lead", title: "New lead", description: "When a lead is created." }],
+      catalogue: {
+        step_types: ["crm_action", "condition", "agent", "approval", "delay"],
+        crm_actions: ["lead.calculate_priority"],
+        approver_permissions: ["leads.update"],
+        trigger_events: ["lead.created"],
+        condition_operators: ["eq"],
+        categories: ["sales"],
+      },
+    });
   });
 
   it("lists workflows with their status and opens a draft", async () => {
