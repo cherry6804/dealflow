@@ -15,6 +15,8 @@ export interface WorkflowStep {
   timeout_seconds?: number;
   retry?: { max_attempts: number; backoff_seconds: number };
   on_failure?: { policy: "stop" | "route"; route_to?: string | null };
+  approval?: { approver_permission: string; expires_after_seconds: number };
+  expires_after_seconds?: number;
   action?: string;
   arguments?: Record<string, string>;
   condition?: { left: string; operator: string; right?: unknown };
@@ -127,6 +129,48 @@ export interface WorkflowRun {
 
 const BASE = "/automation/workflows";
 
+export interface WorkflowTemplateSummary {
+  key: string;
+  title: string;
+  description: string;
+}
+
+export interface WorkflowTemplateList {
+  items: WorkflowTemplateSummary[];
+  catalogue: {
+    step_types: StepType[];
+    crm_actions: string[];
+    approver_permissions: string[];
+    trigger_events: string[];
+    condition_operators: string[];
+    categories: string[];
+  };
+}
+
+export interface SimulationEntry {
+  step_id: string;
+  type: StepType;
+  branch: string;
+  outcome: "would_run" | "would_wait_for_approval" | "would_wait" | "branch_taken" | "branch_unknown";
+  target?: string | null;
+  arguments?: Record<string, { value: unknown; source: string }>;
+  approver_permission?: string;
+  expires_after_seconds?: number;
+  seconds?: number;
+  taken?: "then" | "else" | "either";
+  assumes?: string;
+}
+
+export interface SimulationResult {
+  valid: boolean;
+  problems: WorkflowProblem[];
+  executed: false;
+  plan: SimulationEntry[];
+  plan_truncated: boolean;
+  not_performed: string[];
+  revision: number;
+}
+
 export const workflowApi = {
   list() {
     return api.get<{ items: WorkflowSummary[] }>(BASE);
@@ -195,5 +239,17 @@ export const workflowApi = {
       `/automation/executions/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/decision`,
       { decision, reason },
     );
+  },
+  templates() {
+    return api.get<WorkflowTemplateList>("/automation/workflow-templates");
+  },
+  createFromTemplate(templateKey: string, name: string) {
+    return api.post<{ id: string; name: string; status: string; revision: number }>(
+      `/automation/workflow-templates/${encodeURIComponent(templateKey)}/workflows`,
+      { name },
+    );
+  },
+  simulate(workflowId: string, input: Record<string, unknown>) {
+    return api.post<SimulationResult>(`${BASE}/${encodeURIComponent(workflowId)}/simulate`, { input });
   },
 };
