@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import delete, select
 
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.notification import Notification
 from app.db.models.organization_usage_budget import OrganizationUsageBudget
@@ -51,6 +52,7 @@ def org_with_admin() -> Iterator[tuple[UUID, UUID, UUID]]:
     with SessionLocal() as db:
         db.execute(delete(Notification).where(Notification.organization_id == organization.id))
         db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == organization.id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization.id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization.id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization.id))
         db.commit()
@@ -146,6 +148,7 @@ def test_alert_with_no_administrator_is_dead_lettered_not_reported_delivered(han
     finally:
         with SessionLocal() as db:
             db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == organization.id))
+            db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization.id))
             db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization.id))
             db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization.id))
             db.commit()

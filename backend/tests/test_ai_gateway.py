@@ -41,6 +41,7 @@ from app.ai_gateway.tasks import TaskType
 from app.api.ai_gateway import router as ai_gateway_router
 from app.auth.dependencies import CurrentUserContext
 from app.config import get_settings
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_task_route import AiTaskRoute
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
@@ -99,6 +100,7 @@ def live_settings(monkeypatch, keyring) -> Iterator[None]:
 
 def _cleanup(organization_id: uuid.UUID) -> None:
     with SessionLocal() as db:
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
         db.execute(delete(AiTaskRoute).where(AiTaskRoute.organization_id == organization_id))
@@ -572,7 +574,7 @@ def test_a_settlement_failure_withholds_the_answer(enabled, live_settings, monke
     provider = _Provider(_ok_text("Answer the provider produced", prompt=5, completion=5))
     _use_provider(monkeypatch, provider)
 
-    def expired(db, ticket, actual):
+    def expired(db, ticket, actual, **_settlement_fields):
         raise ReservationExpiredError("expired")
 
     monkeypatch.setattr(gateway, "settle_ticket", expired)

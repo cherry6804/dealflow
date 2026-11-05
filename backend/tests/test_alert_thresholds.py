@@ -19,6 +19,7 @@ from sqlalchemy import delete, select
 
 from app.api.governance import router as governance_router
 from app.auth.dependencies import CurrentUserContext, get_current_user_context
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
 from app.db.models.notification import Notification
@@ -68,6 +69,7 @@ def _cleanup(organization_id: UUID) -> None:
     with SessionLocal() as db:
         db.execute(delete(Notification).where(Notification.organization_id == organization_id))
         db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == organization_id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
         db.execute(delete(OrganizationUsageAlertSettings).where(

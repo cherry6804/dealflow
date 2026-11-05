@@ -26,6 +26,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.notification import Notification
 from app.db.models.organization import Organization
@@ -96,6 +97,7 @@ def organization_id() -> Generator[UUID]:
     yield org_id
     with SessionLocal() as db:
         db.execute(delete(Notification).where(Notification.organization_id == org_id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == org_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == org_id))
         db.execute(delete(OutboxReplayRecord).where(OutboxReplayRecord.organization_id == org_id))
         db.execute(delete(OutboxEvent).where(OutboxEvent.organization_id == org_id))

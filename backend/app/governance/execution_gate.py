@@ -58,6 +58,7 @@ from app.audit.independent import (
 )
 from app.auth.dependencies import CurrentUserContext
 from app.authz.permissions import OWNER_ONLY_PERMISSION_KEYS, OWNER_ROLE_NAME
+from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.membership import Membership
 from app.db.models.membership_role import MembershipRole
 from app.db.models.permission import Permission
@@ -93,6 +94,7 @@ from app.governance.usage_ledger import (
     BudgetExceededError,
     BudgetNotConfiguredError,
     IdempotencyConflictError,
+    UsageAttribution,
     UsageUnit,
     release,
     reserve,
@@ -203,6 +205,8 @@ class ExecutionRequest:
     consent: ConsentSubject | None = None
     # Resource type of the approved action, when the approval binds one.
     resource_type: str | None = None
+    # Who or what caused the usage: agent, workflow, execution, task and provider. Stored on the usage entry as given.
+    attribution: UsageAttribution | None = None
 
 
 def _deny(request: ExecutionRequest, outcomes: list[GateOutcome], gate: str, reason: str) -> ExecutionDecision:
@@ -422,7 +426,7 @@ def _reserve_budget(
         for unit, quantity in request.budget_units:
             # Use the unit value, so the stored key does not depend on how the enum formats itself.
             key = f"{base_key}:{UsageUnit(unit).value}"
-            reserve(
+            entry = reserve(
                 db,
                 organization_id=request.organization_id,
                 unit=UsageUnit(unit),
@@ -432,7 +436,16 @@ def _reserve_budget(
                 user_id=request.user_context.user.id if request.user_context is not None else None,
                 correlation_id=request.correlation_id,
                 capability_key=request.capability_key,
+                agent_id=request.attribution.agent_id if request.attribution else None,
+                workflow_id=request.attribution.workflow_id if request.attribution else None,
+                execution_id=request.attribution.execution_id if request.attribution else None,
+                task_type=request.attribution.task_type if request.attribution else None,
+                provider=request.attribution.provider if request.attribution else None,
+                model=request.attribution.model if request.attribution else None,
             )
+            if request.attribution is not None and request.attribution.workflow_step_id is not None:
+                entry.workflow_step_id = request.attribution.workflow_step_id
+                db.flush()
             reservations.append((unit, key))
     except BudgetNotConfiguredError:
         _release_all(db, request.organization_id, reservations)
@@ -585,13 +598,32 @@ def evaluate_execution(db: Session, request: ExecutionRequest, *, now: datetime 
     return decision
 
 
-def settle_ticket(db: Session, ticket: ExecutionTicket, actual: dict[str, int]) -> None:
-    """Settle each reservation with its actual usage. Units not in ``actual`` are released."""
+def settle_ticket(
+    db: Session,
+    ticket: ExecutionTicket,
+    actual: dict[str, int],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, AiUsageEvent]:
+    """Settle each reservation with its actual usage. Units not in ``actual`` are released.
+
+    Returns the settled usage entries by unit, so the caller can record their cost.
+    """
+    settled: dict[str, AiUsageEvent] = {}
     for unit, key in ticket.reservation_keys:
         if unit in actual:
-            settle(db, organization_id=ticket.organization_id, idempotency_key=key, actual_quantity=actual[unit])
+            settled[unit] = settle(
+                db,
+                organization_id=ticket.organization_id,
+                idempotency_key=key,
+                actual_quantity=actual[unit],
+                provider=provider,
+                model=model,
+            )
         else:
             release(db, organization_id=ticket.organization_id, idempotency_key=key)
+    return settled
 
 
 def release_ticket(db: Session, ticket: ExecutionTicket) -> None:

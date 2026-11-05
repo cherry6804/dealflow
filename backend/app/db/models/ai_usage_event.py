@@ -77,6 +77,7 @@ class AiUsageEvent(Base):
     )
     agent_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     workflow_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    workflow_step_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     execution_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     correlation_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)

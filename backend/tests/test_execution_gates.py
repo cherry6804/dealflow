@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 
 from app.audit.attribution import AuditAttributionError
 from app.audit.independent import AuditPersistenceError
+from app.db.models.ai_pricing import AiProviderCostEntry
 from app.db.models.ai_usage_event import AiUsageEvent
 from app.db.models.audit_event import AuditEvent
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
@@ -67,6 +68,7 @@ def _gate_check(function, *args):
 def _cleanup(organization_id: UUID) -> None:
     with SessionLocal() as db:
         db.execute(delete(AuditEvent).where(AuditEvent.organization_id == organization_id))
+        db.execute(delete(AiProviderCostEntry).where(AiProviderCostEntry.organization_id == organization_id))
         db.execute(delete(AiUsageEvent).where(AiUsageEvent.organization_id == organization_id))
         db.execute(delete(OrganizationUsageBudget).where(OrganizationUsageBudget.organization_id == organization_id))
         db.execute(delete(OrganizationCapabilitySetting).where(
