@@ -19,6 +19,12 @@ vi.mock("../services/workflowApi", () => ({
     rollback: vi.fn(),
     versions: vi.fn(),
     history: vi.fn(),
+    listRuns: vi.fn(),
+    getRun: vi.fn(),
+    startRun: vi.fn(),
+    cancelRun: vi.fn(),
+    retryRun: vi.fn(),
+    decideStep: vi.fn(),
   },
 }));
 
@@ -62,6 +68,7 @@ describe("WorkflowsPage", () => {
     vi.mocked(workflowApi.get).mockResolvedValue(detail);
     vi.mocked(workflowApi.versions).mockResolvedValue({ items: [] });
     vi.mocked(workflowApi.history).mockResolvedValue({ items: [] });
+    vi.mocked(workflowApi.listRuns).mockResolvedValue({ items: [] });
   });
 
   it("lists workflows with their status and opens a draft", async () => {

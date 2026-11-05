@@ -13,6 +13,8 @@ import {
   type WorkflowSummary,
 } from "../services/workflowApi";
 
+import WorkflowRunsPanel from "./WorkflowRunsPanel";
+
 import "./WorkflowsPage.css";
 
 const CRM_ACTIONS = [
@@ -631,6 +633,8 @@ export default function WorkflowsPage() {
           ))}
         </ol>
       </section>
+
+      <WorkflowRunsPanel workflowId={detail.id} canStart={detail.status === "published"} />
     </main>
   );
 }

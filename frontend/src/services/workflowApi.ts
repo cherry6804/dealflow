@@ -78,6 +78,53 @@ export interface LifecycleEvent {
   created_at: string | null;
 }
 
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "waiting_timer"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "stopped"
+  | "timed_out"
+  | "dead_letter";
+
+export interface RunStep {
+  step_id: string;
+  step_index: number;
+  type: StepType;
+  status: string;
+  attempts: number;
+  reason_code: string | null;
+  trace: Record<string, unknown> | null;
+  wake_at: string | null;
+  decided_at: string | null;
+  finished_at: string | null;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow_id: string;
+  status: RunStatus;
+  version_id: string;
+  version_number: number;
+  trigger: { type: "manual" | "event"; event: string | null; event_key: string | null; source_execution_id: string | null };
+  retry_of_execution_id: string | null;
+  run_as_user_id: string;
+  initiated_by_user_id: string | null;
+  failure_reason: string | null;
+  steps_completed: number;
+  next_step_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  deadline_at: string | null;
+  output: Record<string, unknown> | null;
+  steps?: RunStep[];
+  pending_approval?: { step_id: string; approver_permission: string | null; reason: string | null } | null;
+}
+
 const BASE = "/automation/workflows";
 
 export const workflowApi = {
@@ -124,5 +171,29 @@ export const workflowApi = {
   },
   history(workflowId: string) {
     return api.get<{ items: LifecycleEvent[] }>(`${BASE}/${encodeURIComponent(workflowId)}/history`);
+  },
+  startRun(workflowId: string, input: Record<string, unknown>, idempotencyKey: string) {
+    return api.post<WorkflowRun & { created: boolean }>(`${BASE}/${encodeURIComponent(workflowId)}/executions`, {
+      input,
+      idempotency_key: idempotencyKey,
+    });
+  },
+  listRuns(workflowId: string) {
+    return api.get<{ items: WorkflowRun[] }>(`${BASE}/${encodeURIComponent(workflowId)}/executions`);
+  },
+  getRun(runId: string) {
+    return api.get<WorkflowRun>(`/automation/executions/${encodeURIComponent(runId)}`);
+  },
+  cancelRun(runId: string) {
+    return api.post<WorkflowRun>(`/automation/executions/${encodeURIComponent(runId)}/cancel`, {});
+  },
+  retryRun(runId: string) {
+    return api.post<WorkflowRun & { created: boolean }>(`/automation/executions/${encodeURIComponent(runId)}/retry`, {});
+  },
+  decideStep(runId: string, stepId: string, decision: "approve" | "reject", reason?: string) {
+    return api.post<WorkflowRun>(
+      `/automation/executions/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/decision`,
+      { decision, reason },
+    );
   },
 };

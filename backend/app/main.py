@@ -34,6 +34,7 @@ from app.api.lead_qualification import router as lead_qualification_router
 from app.api.leads import router as leads_router
 from app.api.notifications import router as notifications_router
 from app.api.property_matching import router as property_matching_router
+from app.api.workflow_runtime import router as workflow_runtime_router
 from app.api.workflows import router as workflows_router
 from app.api.organizations import router as organizations_router
 from app.api.payment_milestones import router as payment_milestones_router
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     application.include_router(lead_qualification_router)
     application.include_router(property_matching_router)
     application.include_router(workflows_router)
+    application.include_router(workflow_runtime_router)
     application.include_router(team_router)
     application.include_router(ai_governance_router)
     application.include_router(governance_router)

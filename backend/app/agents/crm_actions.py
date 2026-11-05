@@ -10,7 +10,7 @@ qualification service. No action writes a lead's own fields, so an agent cannot 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -23,7 +23,6 @@ from app.agents.crm_action_catalogue import (
     MATCHING_EVALUATE,
     QUALIFICATION_RECORD,
 )
-from app.db.models.agent import AgentExecution
 from app.governance.execution_gate import actor_permission_granted
 from app.leads.intake import decide_match
 from app.leads.intake_service import (
@@ -45,6 +44,24 @@ REASON_INVALID_ARGUMENT = "invalid_crm_argument"
 REASON_FAILED = "crm_action_failed"
 
 CRM_ACTION_OK = "succeeded"
+REASON_NOT_SUPPORTED = "crm_action_not_supported_for_caller"
+
+
+class CrmCaller(Protocol):
+    """Who a CRM action runs for. An agent execution satisfies it, and so does a workflow execution (DFR1-024).
+
+    ``id`` is the agent execution the action belongs to. A workflow execution has no agent execution, so it is ``None``, and the
+    actions that record provenance against an agent execution are refused for it.
+    """
+
+    @property
+    def organization_id(self) -> UUID: ...
+
+    @property
+    def initiated_by_user_id(self) -> UUID: ...
+
+    @property
+    def id(self) -> UUID | None: ...
 
 
 def _uuid(value: object) -> UUID | None:
@@ -54,7 +71,7 @@ def _uuid(value: object) -> UUID | None:
         return None
 
 
-def _intake_process(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+def _intake_process(db: Session, execution: CrmCaller, arguments: dict[str, Any]) -> dict[str, Any]:
     submission = process_submission(db, organization_id=execution.organization_id, actor_id=execution.initiated_by_user_id,
                                     submission_id=arguments["submission_id"])
     return {
@@ -65,7 +82,7 @@ def _intake_process(db: Session, execution: AgentExecution, arguments: dict[str,
     }
 
 
-def _intake_resolve_identity(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+def _intake_resolve_identity(db: Session, execution: CrmCaller, arguments: dict[str, Any]) -> dict[str, Any]:
     # Read only: the outcome is computed and returned, and nothing is stored or written to the CRM.
     submission = get_submission(db, organization_id=execution.organization_id, submission_id=arguments["submission_id"])
     if submission.normalized_payload is None:
@@ -75,7 +92,7 @@ def _intake_resolve_identity(db: Session, execution: AgentExecution, arguments: 
             "candidate_count": len(candidates)}
 
 
-def _lead_calculate_priority(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+def _lead_calculate_priority(db: Session, execution: CrmCaller, arguments: dict[str, Any]) -> dict[str, Any]:
     row = calculate_and_store(db, organization_id=execution.organization_id, actor_id=execution.initiated_by_user_id,
                               lead_id=arguments["lead_id"])
     return {
@@ -89,7 +106,7 @@ def _lead_calculate_priority(db: Session, execution: AgentExecution, arguments: 
     }
 
 
-def _qualification_record(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+def _qualification_record(db: Session, execution: CrmCaller, arguments: dict[str, Any]) -> dict[str, Any]:
     suggestion = arguments.get("suggestion")
     row, created = record_qualification(
         db,
@@ -103,7 +120,7 @@ def _qualification_record(db: Session, execution: AgentExecution, arguments: dic
     return {"qualification_id": str(row.id), "requires_review": row.requires_review, "created": created}
 
 
-def _matching_evaluate(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+def _matching_evaluate(db: Session, execution: CrmCaller, arguments: dict[str, Any]) -> dict[str, Any]:
     run, created = evaluate_requirement(db, organization_id=execution.organization_id,
                                         actor_id=execution.initiated_by_user_id, requirement_id=arguments["requirement_id"])
     return {"run_id": str(run.id), "created": created, "ruleset_version": run.ruleset_version}
@@ -120,13 +137,15 @@ _HANDLERS = {
 _UUID_ARGUMENTS = frozenset({"submission_id", "lead_id", "score_id", "requirement_id"})
 
 
-def run_crm_action(db: Session, execution: AgentExecution, action_key: str,
+def run_crm_action(db: Session, execution: CrmCaller, action_key: str,
                    arguments: dict[str, Any]) -> tuple[str, str | None, dict[str, object] | None]:
     """Run one CRM action. Returns ``(status, reason, trace)`` in the runtime's step vocabulary."""
     spec = CRM_ACTIONS.get(action_key)
     handler = _HANDLERS.get(action_key)
     if spec is None or handler is None:
         return "failed", REASON_UNKNOWN_ACTION, None
+    if action_key == QUALIFICATION_RECORD and execution.id is None:
+        return "failed", REASON_NOT_SUPPORTED, None
     for permission in spec.permissions:
         if not actor_permission_granted(db, organization_id=execution.organization_id,
                                         user_id=execution.initiated_by_user_id, permission_key=permission):

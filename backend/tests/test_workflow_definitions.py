@@ -83,7 +83,7 @@ def _cleanup(organization_ids) -> None:
 @pytest.fixture
 def orgs(monkeypatch) -> Iterator[SimpleNamespace]:
     allow_organization_entitlements(monkeypatch)
-    monkeypatch.setattr("app.governance.policy.verify_entitlement", lambda *args, **kwargs: EntitlementVerdict(True, "allowed"))
+    monkeypatch.setattr("app.governance.policy.organization_entitlement_verdict", lambda db, **kwargs: EntitlementVerdict(True, "allowed"))
     owner, org = create_owner_manager(permissions=OWNER_PERMISSIONS)
     other, other_org = create_owner_manager(permissions=OWNER_PERMISSIONS)
     editor = create_user_in(org, permissions=EDITOR)
@@ -384,8 +384,8 @@ def test_publishing_is_refused_when_an_action_permission_is_missing_for_the_publ
 
 def test_publishing_fails_closed_when_the_entitlement_cannot_be_verified(orgs, monkeypatch):
     workflow_id = _create(orgs)
-    monkeypatch.setattr("app.governance.policy.verify_entitlement",
-                        lambda *args, **kwargs: EntitlementVerdict(False, "entitlement_unverified"))
+    monkeypatch.setattr("app.governance.policy.organization_entitlement_verdict",
+                        lambda db, **kwargs: EntitlementVerdict(False, "entitlement_unverified"))
     with SessionLocal() as db, pytest.raises(WorkflowError) as error:
         service.publish(db, organization_id=orgs.org.id, actor_id=orgs.owner.id, workflow_id=workflow_id)
     assert error.value.reason == "publish_blocked"
@@ -486,14 +486,14 @@ def test_pause_and_resume_change_the_status_and_are_checked_again_on_resume(orgs
         service.pause(db, organization_id=orgs.org.id, actor_id=orgs.owner.id, workflow_id=workflow_id, reason="Review.")
         db.commit()
     assert _row(workflow_id).status == "paused"
-    monkeypatch.setattr("app.governance.policy.verify_entitlement",
-                        lambda *args, **kwargs: EntitlementVerdict(False, "entitlement_unverified"))
+    monkeypatch.setattr("app.governance.policy.organization_entitlement_verdict",
+                        lambda db, **kwargs: EntitlementVerdict(False, "entitlement_unverified"))
     with SessionLocal() as db, pytest.raises(WorkflowError) as blocked:
         service.resume(db, organization_id=orgs.org.id, actor_id=orgs.owner.id, workflow_id=workflow_id)
     assert blocked.value.reason == "publish_blocked"
     assert _row(workflow_id).status == "paused"
-    monkeypatch.setattr("app.governance.policy.verify_entitlement",
-                        lambda *args, **kwargs: EntitlementVerdict(True, "allowed"))
+    monkeypatch.setattr("app.governance.policy.organization_entitlement_verdict",
+                        lambda db, **kwargs: EntitlementVerdict(True, "allowed"))
     with SessionLocal() as db:
         service.resume(db, organization_id=orgs.org.id, actor_id=orgs.owner.id, workflow_id=workflow_id)
         db.commit()

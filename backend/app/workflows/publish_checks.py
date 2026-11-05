@@ -13,9 +13,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.crm_action_catalogue import CRM_ACTIONS
+from app.agents.crm_action_catalogue import CRM_ACTIONS, QUALIFICATION_RECORD
 from app.auth.dependencies import CurrentUserContext
 from app.db.models.agent import Agent, AgentVersion
+from app.governance import policy as governance_policy
 from app.governance.capabilities import AUTOMATION_WORKFLOWS
 from app.governance.execution_gate import actor_permission_granted
 from app.governance.policy import (
@@ -27,6 +28,7 @@ from app.governance.policy import (
 
 # Entitlement reasons that mean the product is not licensed or cannot be verified. Switch states do not block publishing: a
 # definition can be prepared while automation is off. Execution is still gated by the switches in DFR1-024.
+WORKFLOW_ENTITLEMENT = "workflow_automation"
 NON_BLOCKING_ENTITLEMENT_REASONS = (REASON_ALLOWED, REASON_MASTER_DISABLED, REASON_CAPABILITY_DISABLED)
 
 
@@ -54,6 +56,10 @@ def publish_problems(db: Session, *, organization_id: UUID, actor_id: UUID, conf
     """Problems that stop this configuration from being published or run by this member now. Empty when it may be."""
     problems: list[dict[str, str]] = []
     for step in configuration.get("steps", []):
+        if step["type"] == "crm_action" and step["action"] == QUALIFICATION_RECORD:
+            # Qualification results belong to an agent execution. A workflow has none to record against.
+            problems.append({"path": f"steps.{step['id']}.action",
+                             "message": "This action records against an agent run and cannot be used in a workflow."})
         if step["type"] == "crm_action":
             spec = CRM_ACTIONS[step["action"]]
             for permission in spec.permissions:
@@ -68,11 +74,18 @@ def publish_problems(db: Session, *, organization_id: UUID, actor_id: UUID, conf
         if step["type"] == "agent":
             problems.extend(_agent_problems(db, organization_id=organization_id, step=step))
 
-    decision = evaluate_capability(db, organization_id=organization_id, capability_key=AUTOMATION_WORKFLOWS,
-                                   user_context=user_context)
-    if decision.reason_code not in NON_BLOCKING_ENTITLEMENT_REASONS:
+    # The organization snapshot is checked first, before the switches: a switched-off capability must not hide an unverified licence.
+    verdict = governance_policy.organization_entitlement_verdict(
+        db, organization_id=organization_id, feature_key=WORKFLOW_ENTITLEMENT)
+    if not verdict.allowed:
         problems.append({"path": "entitlement",
-                         "message": f"Workflow automation cannot be verified for this organization ({decision.reason_code})."})
+                         "message": f"Workflow automation cannot be verified for this organization ({verdict.reason_code})."})
+    else:
+        decision = evaluate_capability(db, organization_id=organization_id, capability_key=AUTOMATION_WORKFLOWS,
+                                       user_context=user_context)
+        if decision.reason_code not in NON_BLOCKING_ENTITLEMENT_REASONS:
+            problems.append({"path": "entitlement",
+                             "message": f"Workflow automation cannot be verified for this organization ({decision.reason_code})."})
     return problems
 
 

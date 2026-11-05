@@ -1692,3 +1692,135 @@ Every future execution must reference the exact version it uses. This story prov
 - Privacy export and deletion for lifecycle events (DFR1-050). The table is listed as not covered in `table_inventory.py`.
 - Workflow runs must not start for an organization until DFR1-024 provides the run gates (switches, entitlement, permissions per step, budgets). Nothing in this story starts a run.
 - Scheduled stale-run sweep (DFR1-051) applies when runs exist.
+
+## 32. DFR1-024 workflow runtime and event trigger engine (E08)
+
+Branch: `feature/DFR1-E08-workflow-runtime-event-engine`, cut from `origin/develop` at `a2c2a56` (DFR1-023 merged as PR #163).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-024. Summary: Implement workflow runtime and event trigger engine. Epic DFR1-E08. Sprint S4 (Days 10-12). Priority P0.
+  Story points 8. Labels: automation, runtime. Status To Do at the start of this work.
+- User story / scope: Execute published workflows from domain/channel events with conditions, branches, timers and durable state.
+- Acceptance criteria: Idempotent execution; bounded concurrency; timeout/retry/dead-letter; event replay safe; disabled workflow stops new runs.
+- Dependencies: DFR1-023 (workflow definitions and immutable versions) and DFR1-013 (transactional outbox foundation).
+- Related: DFR1-025 (approvals and human tasks) and DFR1-026 (editor) are not part of this story.
+
+The architecture plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v2.docx, section 9) requires that a run's state and each step's state are durable, that a disabled workflow blocks new runs at the backend, that retries are only for transient failures with bounded backoff, and that every run references the exact version used.
+
+### Dependency verification
+
+- DFR1-023: on `origin/develop` (PR #163, merge `a2c2a56`).
+- DFR1-013: the outbox is on develop (`app/outbox/`). Workflow execution requests and events are delivered through it.
+- DFR1-019: the agent runtime is on develop and is reused for agent steps.
+
+### Runtime architecture
+
+- `app/workflows/runtime.py`: starting a run (manual and event), the run loop, revalidation at every boundary, approvals, timers, cancellation, retry, timeouts and stale-run expiry.
+- `app/workflows/triggers.py`: declared events, the outbox event publication, and the handler that starts runs for eligible workflows.
+- `app/workflows/handlers.py`: the outbox handler that runs a queued run or resumes it after an approval or a delay.
+- `app/db/models/workflow_execution.py`: `workflow_executions` (one row per run, pinned to a version) and `workflow_execution_steps` (one record per step).
+- `app/api/workflow_runtime.py`: routes under `/api/v1/automation`.
+- The run loop is the same pattern as the agent runtime: a run is queued in the caller's transaction with an outbox event, the worker runs its steps, and each step is recorded before the next starts. A waiting run stores its wake time or the approval it needs and returns; it resumes from the stored next step.
+- Reused, not duplicated: the outbox (enqueue, delivery, retries, dead-letter), the agent runtime for agent steps, the CRM action runner shared with agents, the publish checks from DFR1-023, the governance capability policy, the audit writer, and the membership and permission checks.
+
+### Execution and state model
+
+- Statuses: queued, running, waiting_approval, waiting_timer, succeeded, failed, cancelled, stopped, timed_out, dead_letter. Terminal: all except the first four. Steps: running, succeeded, failed, waiting_approval, waiting_timer, cancelled.
+- Each run stores the version it started with (identifier and number), the trigger, the run-as member, the initiating member (manual runs), the correlation identifier, the input values and their hash, the deadline, the wake time, the next step, the steps completed, the failure reason and the output.
+- Pinning: a run always executes the version it started with. A later publish, pause, rollback or edit does not change it (tested).
+- Interrupted step: a step recorded as running when the run is picked up again is failed with `interrupted_step`, not repeated, because its effect is unknown (tested).
+
+### Step handlers
+
+- `crm_action`: runs the shared CRM action runner as the run-as member. Permissions are checked before the action and again by the services. `qualification.record` is refused in workflows, at publish and at run time, because it records against an agent execution.
+- `condition`: a fixed comparison (eq, neq, in, not_in, exists, gt, gte, lt, lte) of a reference against a literal. Branches to `then` or `else`; only the chosen branch runs (tested). Nothing is evaluated as code.
+- `agent`: creates an agent execution as the run-as member (its own gates apply: switches, entitlement, provider, budget, consent, permissions), runs it, and records its output. An agent that needs approval fails the step with `agent_waiting_approval`; workflows do not wait on agent approvals in this release. Budget and permission refusals are mapped to the step's reason (tested with the refusal path).
+- `approval`: waits. The decider needs the step's approver permission (leads.update, requirements.update or agents.approve) and must not be the run-as member. Approve resumes the run; reject fails it with `approval_rejected` (tested, including self-approval and missing permission).
+- `delay`: waits until a stored wake time. A timer call resumes runs whose time has come, bounded per call, per organization (tested with a time before and after the wake time).
+
+### Triggers and event handling
+
+- Manual: `POST /api/v1/automation/workflows/{id}/executions` with an input object and an idempotency key (needs `workflows.run`).
+- Declared events: `lead.created`, `lead.updated`, `site_visit.scheduled`, `deal.created`. A workflow declares one event as its trigger. Only `lead.created` is emitted by existing code, from the manual lead-creation endpoint, in the same transaction. The others are declared but do not fire until their emitting code exists; this is stated in the code and not claimed as operational.
+- Delivery: the emit writes an outbox event with a key made of the organization, the event type and the event key. The handler starts one run per eligible published workflow of the same organization, keyed by event type, event key and workflow. A duplicate delivery finds the run and starts nothing (tested: one outbox row and one run for two publishes and two deliveries).
+- Loops: a run's own events carry the run as their source, and events with a source never start runs (tested). Current CRM actions emit no events, so a run cannot start a run through them.
+- Event input: values for the workflow's declared inputs are taken from the event data by name. A missing or invalid input skips the run and is audited; it is not retried.
+- Tenancy: an event starts only the workflows of the organization that emitted it (tested).
+
+### Authorization and governance
+
+- Starting, cancelling, retrying and resuming timers need `workflows.run`, a new permission granted to the Owner role. Reading needs `workflows.read`. Approvals need the step's approver permission.
+- The run-as member is the starter for manual runs and retries, and the publisher of the version for event runs. Every boundary checks that member's active membership, and every CRM action checks its permissions (tested: revoked membership stops a waiting run; a lost CRM permission stops the run).
+- Start checks, at every start and retry: the workflow is published (not paused or archived), the run-as member is active, the automation capability is allowed (switches on, entitlement verified), the version's actions and agents are still valid for that member, and concurrency and hourly limits are not exceeded. Any failed check refuses the start, and nothing is queued (tested for paused, unpublished, disabled automation, unverified entitlement, and missing CRM permission).
+- Entitlement for event runs (no signed-in session): the workflow capability reads the organization's SIBVO snapshot, as the AI gateway does. The organization snapshot path is limited to `automation.workflows`; the deal-created automation capability keeps the session-attested path, so its behaviour is unchanged (an earlier, broader change broke 82 existing tests and was reverted).
+- Publishing checks the entitlement before the switches, so a switched-off automation cannot hide an unverified licence (tested).
+- Disabled automation: new starts are refused. In-flight runs stop with `automation_disabled` at their next boundary and do not run further steps (the path is the same as for paused and archived workflows).
+- Audit: queueing, starting, waiting, resuming, approving, rejecting, cancelling and finishing write independent audit records. The member recorded is the one who acted (the decider or canceller) or the run-as member. When the run-as member has left the organization, the record is written under a system actor. No input values are written to the audit trail (tested).
+- Tenancy: another organization gets 404 for every run and workflow route, and cannot start, read or cancel another organization's run (tested).
+
+### Reliability
+
+- Idempotency: starts are keyed per organization; a repeat with the same input returns the stored run, and a repeat with different input is refused (tested). Event runs are keyed by event and workflow. Retries are keyed by the original run, so a repeated retry returns the same new run (tested).
+- Bounded concurrency: active runs per workflow are capped by `max_concurrent_runs`; runs started per workflow per hour are capped by `max_runs_per_hour` (tested for both).
+- Retry: only transient database failures in CRM steps are retried, up to the step's `max_attempts` (at most 3) with a linear backoff. Exhausted retries end the run as `dead_letter` with `transient_failure_exhausted` (tested for success on the third attempt and for dead-lettering).
+- Timeout: the run's duration (`max_duration_seconds`) is checked at every boundary and the run ends as `timed_out` (tested). A run left running past its deadline is expired by the stale sweep (tested).
+- Cancellation: a queued or waiting run is cancelled at once; a running run is cancelled at its next boundary (both tested). A finished run cannot be cancelled.
+- Output size: the run's output is limited to 16 KB; a larger output fails the run with `output_too_large` (tested). Trace records are bounded per step.
+- Step count: the runtime refuses to run past `max_steps` as a defence, although the schema already caps the step count.
+- Failure reasons: every failure, stop, cancellation and timeout carries a reason code, shown in the API and the UI.
+- Recovery: an interrupted step fails the run instead of repeating it (tested). Queued work is delivered by the outbox with its existing retries.
+- Retry as a new run: a failed, dead-lettered, timed-out or stopped run can be retried. The retry is a new run from the same pinned version and input, checked again for the member who asks, and it links to the original (tested).
+
+### API
+
+- `POST /api/v1/automation/workflows/{id}/executions` (202 new, 200 repeated), `GET /api/v1/automation/workflows/{id}/executions`, `GET /api/v1/automation/executions/{id}` (steps, pending approval, trigger, version), `POST .../cancel`, `POST .../retry` (201 new, 200 repeated), `POST .../steps/{step_id}/decision`, `POST /api/v1/automation/executions/resume-due`, `POST /api/v1/automation/executions/expire-stale`.
+- Request models refuse unknown fields.
+
+### Frontend
+
+- The Workflows page gets a "Runs" panel: start a run with a JSON input (only for published workflows), the run list with status and trigger, the selected run's steps and failure reason, approve or reject for a pending approval with the required permission shown, cancel for an active run, and retry for a retryable run. Everything shown comes from the API.
+
+### Files changed
+
+- Backend, new: `app/workflows/runtime.py`, `app/workflows/triggers.py`, `app/workflows/handlers.py`, `app/db/models/workflow_execution.py`, `app/api/workflow_runtime.py`, `alembic/versions/d4f6b8c0e2a1_workflow_runtime.py`, `tests/test_workflow_runtime.py`.
+- Backend, changed: `app/agents/crm_actions.py` (a caller protocol so workflows can use the runner; agents unchanged), `app/workflows/publish_checks.py` (refuses `qualification.record`; checks the organization snapshot first), `app/governance/entitlement.py` and `app/governance/policy.py` (organization snapshot path for the workflow capability only), `app/authz/permissions.py` (`workflows.run`), `app/api/leads.py` (emits `lead.created`), `app/outbox/runtime.py` (registers the workflow handlers), `app/db/models/__init__.py`, `app/governance/table_inventory.py`, `app/main.py`, `tests/test_workflow_definitions.py` (entitlement patch point).
+- Frontend, new: `src/pages/WorkflowRunsPanel.tsx`, `src/pages/WorkflowRunsPanel.test.tsx`. Changed: `src/pages/WorkflowsPage.tsx` (panel), `src/pages/WorkflowsPage.test.tsx` (mocks), `src/services/workflowApi.ts` (run calls).
+- Documentation: this section and the DFR1-024 tracker row.
+
+### Migration
+
+- `d4f6b8c0e2a1_workflow_runtime` (down revision `c3e5a7b9d1f0`). Creates `workflow_executions` and `workflow_execution_steps`, and registers and grants `workflows.run` to the Owner role. Downgrade refuses while run rows exist.
+- Validated on a freshly created `dealflow` database on the isolated server (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `d4f6b8c0e2a1`.
+
+### Test results (actual)
+
+- Focused: `tests/test_workflow_runtime.py` (42 tests) and `tests/test_workflow_definitions.py` (45 tests): 87 passed, exit 0.
+- Full backend suite (`pytest tests -q -p no:warnings`, from `backend/`, isolated database on 127.0.0.1:5438): 2,602 passed, 14 skipped, 0 failed, exit 0 (434.36 s). The 14 skips are the live-provider tests that are not configured here. 2,560 + 42 = 2,602.
+- A first full run had 82 failures in the existing deal-created automation and usage-reservation tests, caused by widening the organization snapshot path to `workflow_automation`. The path is now limited to the workflow capability, the two affected files pass (115 with the workflow tests), and the rerun above is the result reported.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0 (the new warnings follow the existing page pattern). `vitest run`: 23 files, 151 tests passed, exit 0 (includes 4 tests in `WorkflowRunsPanel.test.tsx`). `npm run build` exit 0.
+- The runs panel was not exercised in a live browser; it is verified by its unit tests and the build.
+
+### Test environment note
+
+- Tests ran on the isolated server on 127.0.0.1:5438 only. The shared servers on ports 5432 and 5433 were not used.
+
+### Known limitations
+
+- Per-step timeouts are declared in the schema (`timeout_seconds`) but are not enforced separately; only the run's overall duration is enforced. A slow CRM step is bounded by the run deadline, not its own timeout.
+- Approvals do not expire. A run waiting for an approval waits until someone decides it.
+- Agent steps do not wait for agent approvals; an agent that needs approval fails the step.
+- Timers are resumed by calling `resume-due` for an organization. No scheduler calls it yet; scheduling belongs to operations (DFR1-051).
+- Stale runs are expired by calling `expire-stale`. The same scheduling applies.
+- Only `lead.created` is emitted by existing code. The other declared events do not fire.
+- Limits are per workflow. There is no organization-wide concurrency or run limit for workflows yet.
+- Event runs are not retried by the trigger handler on business refusals (no matching permission, disabled workflow, invalid input). They are skipped and audited. Transient database errors are retried by the outbox.
+- Run output is English text where it contains reasons; the reason codes are stable.
+- The runs panel is a structured view; there is no step-by-step visual progress graph.
+
+### Production blockers
+
+- Privacy export and deletion for runs, step records and their traces (DFR1-050). The tables are listed as not covered in `table_inventory.py`.
+- Scheduled timers and stale-run sweeps (DFR1-051) must run before workflows with delays or long runs are used in production.
+- The DFR1-019 AI blockers apply to any workflow step that calls an agent: AI actor key, AI resource store, AI rate rule, provider data-use approval and sandbox verification.
+- Organization-level run limits and the approval expiry policy are not built.

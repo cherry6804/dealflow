@@ -32,6 +32,9 @@ ELIGIBLE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
 # Features checked against the organization-level snapshot (WS5). Every other feature is checked
 # against the user's session snapshot, as before.
 ORG_SNAPSHOT_FEATURES = frozenset({"ai_gateway"})
+# Capabilities whose entitlement is read from the organization snapshot, so background callers (outbox events, scheduled
+# timers) can run them without a signed-in session. Other automation keeps the session-attested path.
+ORG_SNAPSHOT_CAPABILITIES = frozenset({"automation.workflows"})
 EXPIRED_SUBSCRIPTION_STATUSES = frozenset({"expired", "trial_expired"})
 
 REASON_ENTITLEMENT_UNVERIFIED = "entitlement_unverified"

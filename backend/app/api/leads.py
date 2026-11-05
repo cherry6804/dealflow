@@ -32,6 +32,7 @@ from app.leads.service import (
 )
 from app.notifications.service import create_notification
 from app.tenant.dependencies import TenantContext
+from app.workflows.triggers import publish_event
 
 
 router = APIRouter(
@@ -99,6 +100,14 @@ def create_lead_endpoint(
         title="New lead created",
         message="A new lead has been created.",
         event_key=f"lead:{lead.id}:created",
+    )
+    # Declared workflow event (DFR1-024). It is recorded in this transaction and delivered by the outbox.
+    publish_event(
+        db,
+        organization_id=tenant_context.organization_id,
+        event_type="lead.created",
+        event_key=str(lead.id),
+        data={"lead_id": str(lead.id)},
     )
 
     db.commit()
