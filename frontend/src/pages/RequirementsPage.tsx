@@ -25,6 +25,8 @@ import {
   type RequirementPropertyMatchResult,
   type RequirementShortlistItem,
 } from "../services/requirementApi";
+import RequirementMatchPanel from "./RequirementMatchPanel";
+
 import "./RequirementsPage.css";
 import {
   propertiesApi,
@@ -2064,6 +2066,17 @@ export default function RequirementsPage() {
                     )}
                   </section>
 
+
+                  <h3 className="requirements-form-section-title">
+                    Property matching
+                  </h3>
+
+                  {requirement ? (
+                    <RequirementMatchPanel
+                      requirementId={requirement.id}
+                      transactionType={requirement.transaction_type}
+                    />
+                  ) : null}
 
                   <h3 className="requirements-form-section-title">
                     Possession and parking

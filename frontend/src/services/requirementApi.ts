@@ -30,6 +30,7 @@ export interface CustomerRequirement {
   organization_id: string;
   status: RequirementStatus;
   is_active: boolean;
+  transaction_type?: "SALE" | "RENT" | "LEASE" | null;
   budget_min: string | number | null;
   budget_max: string | number | null;
   budget_currency: string | null;

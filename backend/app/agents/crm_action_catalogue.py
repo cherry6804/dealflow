@@ -16,6 +16,7 @@ INTAKE_PROCESS = "intake.process"
 INTAKE_RESOLVE_IDENTITY = "intake.resolve_identity"
 LEAD_CALCULATE_PRIORITY = "lead.calculate_priority"
 QUALIFICATION_RECORD = "qualification.record"
+MATCHING_EVALUATE = "matching.evaluate"
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,13 @@ CRM_ACTIONS: dict[str, CrmActionSpec] = {
         key=LEAD_CALCULATE_PRIORITY,
         permissions=("leads.update",),
         required_arguments=("lead_id",),
+        optional_arguments=(),
+        writes=True,
+    ),
+    MATCHING_EVALUATE: CrmActionSpec(
+        key=MATCHING_EVALUATE,
+        permissions=("requirements.update",),
+        required_arguments=("requirement_id",),
         optional_arguments=(),
         writes=True,
     ),

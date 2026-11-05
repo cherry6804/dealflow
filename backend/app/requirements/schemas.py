@@ -47,6 +47,7 @@ class CustomerRequirementResponse(BaseModel):
     organization_id: UUID
     status: RequirementStatus
     is_active: bool
+    transaction_type: Literal["SALE", "RENT", "LEASE"] | None = None
 
     budget_min: Decimal | None
     budget_max: Decimal | None
@@ -430,6 +431,7 @@ class CustomerRequirementResponse(BaseModel):
     organization_id: UUID
     status: RequirementStatus
     is_active: bool
+    transaction_type: Literal["SALE", "RENT", "LEASE"] | None = None
 
     budget_min: Decimal | None
     budget_max: Decimal | None

@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     DateTime,
+    String,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -81,6 +82,10 @@ class RequirementMatchRun(Base):
         JSON,
         nullable=False,
     )
+
+    # Added in DFR1-022. NULL on runs made before it.
+    ruleset_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     total_candidates: Mapped[int] = mapped_column(
         Integer,
