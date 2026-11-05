@@ -71,6 +71,9 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("agents.publish", "Publish, pause, resume, roll back and archive agents."),
     ("agents.run", "Start an agent execution."),
     ("agents.approve", "Approve or reject an agent's approval step."),
+    ("workflows.read", "View workflow definitions, versions and lifecycle history."),
+    ("workflows.manage", "Create and edit workflow drafts and validate them."),
+    ("workflows.publish", "Publish, pause, resume, roll back and archive workflows."),
 )
 
 PERMISSION_DESCRIPTIONS: dict[str, str] = dict(PERMISSION_CATALOG)

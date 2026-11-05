@@ -1561,3 +1561,134 @@ Each recommendation is created once per run and category (unique). Categories an
 - Privacy export and deletion do not cover the recommendations (DFR1-050). The table is listed as not covered in `table_inventory.py`.
 - Agent runs still need the DFR1-019 AI approvals (AI actor key, AI resource store, AI rate rule, provider data-use approval, sandbox verification). The deterministic matching itself needs no AI.
 - Scheduled stale-run sweep (DFR1-051): not built; staleness is computed on read.
+
+## 31. DFR1-023 workflow definition schema and version lifecycle (E08)
+
+Branch: `feature/DFR1-E08-workflow-definition-schema`, cut from `origin/develop` at `ddf5aff` (DFR1-022 merged as PR #162).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-023. Summary: Implement workflow definition schema and version lifecycle. Epic DFR1-E08. Sprint S4 (Days 10-12). Priority P0.
+  Story points 5. Labels: automation, backend. Status To Do at the start of this work.
+- User story / scope: Define typed triggers, conditions, branches, actions, agent nodes, delays, approvals, retries and publish lifecycle.
+- Acceptance criteria: Draft/test/publish/pause/rollback; immutable published versions; schema validation; tenant ownership enforced.
+- Dependencies: DFR1-013 (transactional outbox foundation, on develop as `app/outbox/`), DFR1-019 (agent definitions and runtime).
+- Related stories: DFR1-024 (workflow runtime and event trigger engine, depends on DFR1-023 and DFR1-013) executes workflows; DFR1-026 (visual editor and template catalogue, depends on DFR1-023) builds the editor on this schema.
+
+The architecture plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v2.docx, section 9, "Workflow builder specification") defines the node contract (stable type and version, typed input and output schema, configuration validation, timeout, retry, idempotency, permission requirement), the trigger contract (source event, tenant scope, event schema version, filters, deduplication key), immutable published versions, and the run states.
+
+### Scope boundary with DFR1-024
+
+This story defines and versions workflows. It does not execute them. The following are not built here and belong to DFR1-024: the run and step state machine, the trigger engine that fires on events, timers, the dispatch of steps to the outbox, idempotent execution, concurrency enforcement at run time, and the enforcement of "disabled workflow stops new runs". The `paused` status is recorded and checked at publish or resume time, but no run exists yet to stop. Execution limits are stored and validated but not enforced until DFR1-024.
+
+### Dependency verification
+
+- DFR1-013: the outbox service, worker and handler registry are on `origin/develop` (`app/outbox/`). This story does not add an outbox event: a lifecycle change is recorded as a lifecycle event row and an audit event, in the same transaction.
+- DFR1-019: agent definitions and their published version pointer are on `origin/develop`. Workflows reference agents by identifier and read them at publish time only.
+- DFR1-022 is on `origin/develop` (PR #162).
+
+### Existing implementation reused
+
+- The agent versioning pattern (draft plus immutable published versions plus a current pointer, `app/db/models/agent.py`, `app/agents/service.py`), and the same permission-registration migration pattern.
+- The CRM action catalogue `app/agents/crm_action_catalogue.py`, shared with agents, so a workflow can only name an action agents may also name.
+- The capability policy `evaluate_capability` (`app/governance/policy.py`) with the entitlement feature `workflow_automation`, and the automation master switch.
+- The independent audit writer and user attribution. The authorization helper `actor_permission_granted`.
+- The existing automation rules module (`app/automation_rules/`) is a narrow deal-created precursor. It is not extended: workflows are a separate definition system, as the story requires.
+
+### Architecture
+
+- `app/workflows/schema.py` (pure): the `workflow.v1` schema, validation and canonicalisation. No database access.
+- `app/workflows/publish_checks.py`: the checks that need the database, run at publish, resume and rollback: the publisher's permissions for every CRM action and approval step, the existence and published state of every referenced agent and its required inputs, and the entitlement check.
+- `app/workflows/service.py`: draft creation and editing, validation, publish, pause, resume, rollback, archive, history, versions. Every mutation locks the definition row.
+- `app/db/models/workflow.py`: `workflow_definitions` (mutable draft and current pointer), `workflow_versions` (immutable), `workflow_lifecycle_events` (append-only).
+- `app/api/workflows.py`: routes under `/api/v1/automation/workflows`, as the plan proposes.
+
+### Schema (`workflow.v1`)
+
+- Identity: name (1 to 120 characters) and description (up to 1000) on the definition. Organization ownership: every row carries `organization_id`, and names are unique per organization.
+- Category (sales, operations or research) and purpose (up to 500 characters).
+- Trigger: `manual`, or `event` with one of the declared events (`lead.created`, `lead.updated`, `site_visit.scheduled`, `deal.created`). Declaring an event is allowed; an event trigger does not fire until DFR1-024.
+- Inputs: up to 10, each with a name, a type (uuid, string, integer or boolean) and a required flag.
+- Entry step: an explicit step identifier.
+- Steps: at most 50. Each has an explicit identifier and one of five types:
+  - `crm_action`: one key from the catalogue (`intake.process`, `intake.resolve_identity`, `lead.calculate_priority`, `qualification.record`, `matching.evaluate`), arguments as references, required arguments enforced.
+  - `condition`: a left reference, one operator from a fixed list (eq, neq, in, not_in, exists, gt, gte, lt, lte), a literal right value, and explicit `then` and `else` targets. A condition has no retry, timeout or next step.
+  - `agent`: a published agent of the same organization (checked at publish), with inputs given as references.
+  - `approval`: an approver permission from a fixed list (leads.update, requirements.update, agents.approve) and a reason.
+  - `delay`: seconds, from 1 to 604,800.
+- Common to non-condition steps: an optional `next`, a timeout (1 to 900 seconds, default 60), a retry policy (1 to 3 attempts, backoff 1 to 300 seconds, default one attempt; a delay is not retried), and a failure policy (`stop`, or `route` to a named step).
+- Outputs: up to 10 named references. Each step type has an output contract: CRM actions list their output fields, approvals output `decision`, agents accept any field because their output schema belongs to the agent version, and conditions and delays output nothing.
+- Limits: maximum steps (up to 50), maximum duration (up to 86,400 seconds), maximum concurrent runs (1 to 10), maximum runs per hour (1 to 10,000). Publishing requires every limit to be set.
+- Metadata: labels only.
+
+Rejected at every level: unknown fields (including `script`, `expression`, `code`, `jitter` and `schema_version` mismatches), a branch to a missing step, a cycle, an unreachable step, a reference to a later step or to a field the step does not output, a reference to an undeclared input, a literal where a reference is required, a CRM action outside the catalogue, a missing required argument, a missing reason, a delay without seconds or with retries, an unknown operator (for example `eval`), a non-scalar comparison value, an unknown trigger event, and a manual trigger with an event.
+
+No expression language, code, SQL, shell, template string or dynamic import exists in the schema. Operators and fields are fixed lists.
+
+### Lifecycle
+
+- Draft: created with a name and an optional configuration (a draft may be incomplete). Edits require the revision the edit was based on; a stale revision is refused (409 `revision_conflict`). A draft is validated before it is stored, so an invalid draft is never saved.
+- Validate: returns every problem as a path and a message, without changing anything. Publishing runs the same checks.
+- Publish: requires a complete configuration, the publisher's permissions for every action, valid agent references, and an entitlement that can be verified (see below). It writes a new immutable version with the next version number, a content hash, the required permissions and the agent references. Publishing an unchanged draft writes nothing and returns the current version (200 instead of 201).
+- Immutable versions: the service has no path that changes a version. The database also refuses UPDATE and DELETE on `workflow_versions` through a trigger (created by the migration and by the model metadata for PostgreSQL), so a direct write fails too.
+- Draft edits after publishing change only the draft. The current version is unchanged; `has_unpublished_changes` reports the difference by content hash.
+- Pause: published to paused. Publishing a new version while paused keeps it paused, because pausing is an explicit decision.
+- Resume: paused to published, after the publish checks run again on the current version. A permission or entitlement lost since publish blocks the resume.
+- Rollback: points the workflow at an earlier version after the publish checks pass for that version now. No version is created or changed. Rolling back to the current version, or to a missing version, is refused.
+- Archive: any state except archived becomes archived. An archived workflow cannot be edited or published. The current pointer is kept for history.
+- History: every transition writes a lifecycle event (created, draft_saved, published, paused, resumed, rolled_back, archived) with the from and to status, the version identifiers, the actor and the reason. Each transition also writes an independent audit record with identifiers and statuses only; the configuration body is never written to the audit trail (tested).
+
+Every future execution must reference the exact version it uses. This story provides the version identifier and content hash for that; DFR1-024 records them on each run.
+
+### Authorization, governance and tenancy
+
+- New permissions `workflows.read`, `workflows.manage` (drafts and validation) and `workflows.publish` (publish, pause, resume, rollback, archive). Registered by migration and granted to the system Owner role only.
+- Publishing checks, for the member doing it: each CRM action's permissions, each approval step's approver permission, each referenced agent exists in the organization, is published and has a valid version, and provides the inputs it requires. A workflow never grants a permission to anyone.
+- Entitlement: a new capability `automation.workflows` (entitlement `workflow_automation`, under the automation master). Publishing, resuming and rolling back fail closed unless the entitlement verifies. A switched-off automation master or capability does not block publishing a definition, because a definition can be prepared while automation is off; execution is gated by the switches in DFR1-024.
+- The signed-in session's attested context is passed to the entitlement check on publish, resume, rollback and validation.
+- Tenancy: every read and write is scoped to the verified organization. Another organization sees an empty list and gets 404 for any workflow identifier, including history and versions. A name can be reused in another organization.
+- No workflow definition is shared across organizations. Organization-specific configuration is the definition itself. Reusable templates are not built (DFR1-026).
+
+### Frontend
+
+- `/workflows` (`src/pages/WorkflowsPage.tsx`): a list of workflows with status, a new-draft form, and a definition editor with header fields, execution limits, inputs, the entry step, and a step list whose fields depend on the step type. Save sends the revision it was based on. Validate lists each problem with its path. Publish, pause, resume, archive, make-current (rollback) and the version and history panels are shown with the current state. Invalid argument JSON is reported before any request is sent.
+- The editor edits the fields it knows and keeps the rest of the stored configuration as it was (outputs, retry and timeout values are carried, not edited).
+
+### Migration
+
+- `c3e5a7b9d1f0_workflow_definitions` (down revision `b8d4f0a2c6e1`). Creates the three tables, the immutability trigger, the three permissions and the Owner grants. Downgrade refuses while workflow rows exist, and removes the trigger, function, tables and permissions otherwise.
+- Validated on a freshly created `dealflow` database on the isolated server (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `c3e5a7b9d1f0`; the trigger and the three permissions exist after migration.
+
+### Tests
+
+- `tests/test_workflow_definitions.py`: 45 tests, all passing. Schema: a complete definition is accepted and canonicalised; unknown fields at each level; branch to a missing step; cycle; unreachable step; reference to a later step, to an undeclared field, and to an undeclared input; literal arguments; actions outside the catalogue; missing required arguments and reasons; delays; conditions with retries; unsafe operators and values; event triggers; limits; incomplete drafts; schema version. Lifecycle: draft revision check; invalid edits refused with nothing changed; publish creates immutable versions and unchanged drafts publish nothing new; draft edits never change a published version; the database refuses UPDATE and DELETE of a version; publish refused for a publisher lacking an action permission, a missing agent reference, an unverifiable entitlement, and an incomplete draft; validation changes nothing. Rollback: points back without creating a version; refused for the current or a missing version; needs publish permission; permissions and entitlement checked again. Pause and resume: status changes; resume blocked by lost entitlement and unblocked later; a version published while paused stays paused; pausing a draft refused. Archive: archived workflows cannot be edited or published. History order. Names unique within an organization only. Permissions: readers cannot draft or publish; drafters cannot publish, pause or archive. Tenancy: another organization cannot list, read, edit, publish or read history. The API refuses unknown fields and returns problem paths. Publish returns 201, then 200 for an unchanged draft. Audit without configuration content.
+
+### Test results (actual)
+
+- Focused: `tests/test_workflow_definitions.py`: 45 passed, exit 0.
+- Full backend suite (`pytest tests -q -p no:warnings`, from `backend/`, isolated database on 127.0.0.1:5438): 2,560 passed, 14 skipped, 0 failed, exit 0 (550.24 s). The 14 skips are the live-provider tests that are not configured here. 2,515 + 45 = 2,560.
+- A first full run had 65 errors and 6 failures. Cause: the immutability trigger was registered for every database dialect, and the unit tests that use SQLite failed on it. The trigger is now created only for PostgreSQL. The rerun above is the result reported.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0 (the new warnings follow the existing page pattern). `vitest run`: 22 files, 147 tests passed, exit 0 (includes 4 tests in `WorkflowsPage.test.tsx`). `npm run build` exit 0.
+
+### Test environment note
+
+- Tests ran on the isolated server on 127.0.0.1:5438 only. The shared servers on 5432 and 5433 were not used.
+- The test database still has to be built from the models for the trigger to exist: an existing test table created before the trigger was added keeps its old definition. The test database was rebuilt for the workflow tables during this story.
+
+### Known limitations
+
+- Workflows do not execute. Runs, timers, event dispatch, idempotent execution, dead-letter handling and the enforcement of limits at run time are DFR1-024.
+- Event triggers are declared, not fired.
+- Simulation and dry-run are not built (the plan requires them with DFR1-024 or DFR1-026).
+- Agent output fields are not checked against the agent's output schema until a workflow runs.
+- Condition operands are typed only by reference; the schema does not check that a referenced field's value type matches the operator beyond the operator's own rules.
+- The editor is a structured form, not a visual canvas; the visual editor is DFR1-026.
+- No template catalogue (DFR1-026).
+- Lifecycle history and published versions are not covered by privacy export or deletion; deleting a published version needs a privileged procedure that does not exist yet (DFR1-050).
+- Workflow automation entitlement depends on the SIBVO entitlement snapshot being verifiable for the signed-in session; in tests this is stubbed.
+
+### Production blockers
+
+- Privacy export and deletion for lifecycle events (DFR1-050). The table is listed as not covered in `table_inventory.py`.
+- Workflow runs must not start for an organization until DFR1-024 provides the run gates (switches, entitlement, permissions per step, budgets). Nothing in this story starts a run.
+- Scheduled stale-run sweep (DFR1-051) applies when runs exist.
