@@ -50,6 +50,7 @@ AI_MASTER = "ai.master"
 AI_GATEWAY_ENTITLEMENT = "ai_gateway"
 AUTOMATION_MASTER = "automation.master"
 AUTOMATION_DEAL_CREATED_RULES = "automation.deal_created_rules"
+AUTOMATION_WORKFLOWS = "automation.workflows"
 
 
 CAPABILITIES: tuple[CapabilityDefinition, ...] = (
@@ -86,6 +87,12 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     ),
     CapabilityDefinition(
         AUTOMATION_DEAL_CREATED_RULES,
+        CapabilityCategory.AUTOMATION,
+        AUTOMATION_MASTER,
+        entitlement_feature="workflow_automation",
+    ),
+    CapabilityDefinition(
+        AUTOMATION_WORKFLOWS,
         CapabilityCategory.AUTOMATION,
         AUTOMATION_MASTER,
         entitlement_feature="workflow_automation",
