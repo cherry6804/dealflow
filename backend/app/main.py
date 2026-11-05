@@ -35,6 +35,8 @@ from app.api.leads import router as leads_router
 from app.api.notifications import router as notifications_router
 from app.api.property_matching import router as property_matching_router
 from app.api.human_tasks import router as human_tasks_router
+from app.api.webhook_ingress import admin_router as webhook_admin_router
+from app.api.webhook_ingress import receiver_router as webhook_receiver_router
 from app.api.workflow_editor import router as workflow_editor_router
 from app.api.workflow_runtime import router as workflow_runtime_router
 from app.api.workflows import router as workflows_router
@@ -140,6 +142,8 @@ def create_app() -> FastAPI:
     application.include_router(workflow_runtime_router)
     application.include_router(human_tasks_router)
     application.include_router(workflow_editor_router)
+    application.include_router(webhook_receiver_router)
+    application.include_router(webhook_admin_router)
     application.include_router(team_router)
     application.include_router(ai_governance_router)
     application.include_router(governance_router)

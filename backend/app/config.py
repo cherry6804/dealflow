@@ -157,6 +157,8 @@ class Settings(BaseSettings):
     outbox_operator_allowlist: str = Field(default="", max_length=1000)
     # Background worker runtime (``python -m app.outbox.worker --serve``).
     outbox_worker_probe_host: str = Field(default="127.0.0.1", max_length=255)
+    # Inbound webhooks: how old a signed timestamp may be before the delivery is refused as stale (DFR1-012).
+    inbound_webhook_replay_window_seconds: int = Field(default=300, ge=30, le=3600)
     outbox_worker_probe_port: int = Field(default=8081, ge=1, le=65535)
     # A loop without a heartbeat for this long makes liveness fail.
     outbox_worker_stale_seconds: float = Field(default=120.0, gt=0, le=3600)

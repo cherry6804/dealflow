@@ -320,9 +320,11 @@ def serve(
     from app.governance.alert_delivery import register_governance_handlers
     from app.knowledge.handlers import register_knowledge_handlers
     from app.providers.verification import register_provider_handlers
+    from app.webhooks.handlers import register_webhook_handlers
     from app.workflows.triggers import register_workflow_handlers
 
     register_governance_handlers()
+    register_webhook_handlers()
     register_provider_handlers()
     register_knowledge_handlers()
     register_agent_handlers()

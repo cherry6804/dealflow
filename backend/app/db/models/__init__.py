@@ -76,6 +76,7 @@ from app.db.models.approval_request import ApprovalRequest
 from app.db.models.channel_policy import ChannelPolicy, ContactDoNotDisturb
 from app.db.models.organization_capability_setting import OrganizationCapabilitySetting
 from app.db.models.execution_rate_limit_window import ExecutionRateLimitWindow
+from app.db.models.inbound_webhook import InboundWebhookDelivery, InboundWebhookEndpoint
 from app.db.models.provider_credential import ProviderCredential
 from app.db.models.team_member_removal import TeamMemberRemoval
 from app.db.models.site_visit import SiteVisit

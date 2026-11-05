@@ -150,6 +150,8 @@ TABLE_INVENTORY: dict[str, TableEntry] = {
     "email_verification_tokens": TableEntry(DISPOSITION_NEVER_EXPORTED, reason="Single-use token material."),
     "password_reset_tokens": TableEntry(DISPOSITION_NEVER_EXPORTED, reason="Single-use token material."),
     "provider_connections": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Connection metadata that references encrypted credentials. Never exported."),
+    "inbound_webhook_endpoints": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Inbound webhook endpoint configuration with an encrypted signing secret. Never exported; the secret is shown once at creation or rotation."),
+    "inbound_webhook_deliveries": TableEntry(DISPOSITION_NOT_COVERED, reason="Inbound webhook delivery records with redacted envelopes for accepted deliveries and hashes only for refused ones. Not yet covered by export or deletion (DFR1-050)."),
     "provider_credentials": TableEntry(DISPOSITION_NEVER_EXPORTED, category="security.credentials", reason="Encrypted provider secret material. Never exported or returned."),
     "provider_verification_attempts": TableEntry(DISPOSITION_GOVERNANCE_RECORD, reason="Verification outcomes and reason codes only. Kept as evidence."),
     "organization_entitlement_snapshots": TableEntry(DISPOSITION_SIBVO_OWNED, reason="Entitlement snapshot received from SIBVO. Dealsflo does not change it (D6)."),
