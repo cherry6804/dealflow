@@ -35,6 +35,7 @@ from app.governance.capabilities import (
     ancestry,
 )
 from app.governance.entitlement import (
+    ORG_SNAPSHOT_CAPABILITIES,
     ORG_SNAPSHOT_FEATURES,
     REASON_ENTITLEMENT_DISABLED,
     REASON_ENTITLEMENT_MISSING,
@@ -167,6 +168,7 @@ def evaluate_capability(
     if (
         definition.entitlement_feature is not None
         and definition.entitlement_feature not in ORG_SNAPSHOT_FEATURES
+        and definition.key not in ORG_SNAPSHOT_CAPABILITIES
     ):
         verdict = verify_entitlement(
             user_context,
@@ -226,7 +228,7 @@ def evaluate_capability(
                 correlation_id, provider_readiness=provider.code.value,
             )
 
-    if definition.entitlement_feature in ORG_SNAPSHOT_FEATURES:
+    if definition.entitlement_feature in ORG_SNAPSHOT_FEATURES or definition.key in ORG_SNAPSHOT_CAPABILITIES:
         # Organization-level SIBVO snapshot (WS5). Valid for background and synchronous callers alike.
         org_verdict = organization_entitlement_verdict(
             db,
