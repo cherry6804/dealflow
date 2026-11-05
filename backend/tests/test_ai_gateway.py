@@ -572,7 +572,7 @@ def test_a_settlement_failure_withholds_the_answer(enabled, live_settings, monke
     provider = _Provider(_ok_text("Answer the provider produced", prompt=5, completion=5))
     _use_provider(monkeypatch, provider)
 
-    def expired(db, ticket, actual):
+    def expired(db, ticket, actual, **_settlement_fields):
         raise ReservationExpiredError("expired")
 
     monkeypatch.setattr(gateway, "settle_ticket", expired)

@@ -65,7 +65,7 @@ from app.governance.execution_gate import (
     release_ticket,
     settle_ticket,
 )
-from app.governance.usage_ledger import UsageError
+from app.governance.usage_ledger import UsageAttribution, UsageError
 from app.provider_secrets.errors import (
     ProviderSecretsConfigurationError,
     ProviderSecretsDecryptionError,
@@ -125,6 +125,7 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
             # Each call reserves under its own key. A shared key would make every later call for the same capability conflict.
             idempotency_key=str(uuid.uuid4()),
             budget_units=_budget_units(request),
+            attribution=_reserve_attribution(request, route.provider_key, route.model),
         ),
     )
     if not decision.allowed or decision.ticket is None:
@@ -156,7 +157,7 @@ def execute(db: Session, request: GatewayRequest, *, sleep: Sleep = time.sleep) 
         return result
 
     try:
-        settle_ticket(db, ticket, actual=call.usage)
+        settle_ticket(db, ticket, actual=call.usage, provider=provider_key, model=model)
     except UsageError:
         # The provider has answered, but its usage cannot be recorded against the reservation. The answer is withheld,
         # so nothing is returned that was not metered. The caller must roll back this session.
@@ -361,6 +362,19 @@ def _validate_multimodal(request: GatewayRequest) -> str | None:
         if not image_matches_type(image.mime_type, image.data):
             return "An image's bytes do not match its stated type."
     return None
+
+
+def _reserve_attribution(request: GatewayRequest, provider_key: str, model: str) -> UsageAttribution:
+    """The attribution known before the call. The provider and model are the planned route; settlement records the one that answered."""
+    base = request.attribution or UsageAttribution()
+    return UsageAttribution(
+        agent_id=base.agent_id,
+        workflow_id=base.workflow_id,
+        execution_id=base.execution_id,
+        task_type=request.task.value,
+        provider=provider_key,
+        model=model,
+    )
 
 
 def _budget_units(request: GatewayRequest) -> tuple[tuple[str, int], ...]:

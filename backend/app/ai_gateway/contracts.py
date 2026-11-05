@@ -12,6 +12,7 @@ from uuid import UUID
 
 from app.ai_gateway.tasks import TaskType
 from app.auth.dependencies import CurrentUserContext
+from app.governance.usage_ledger import UsageAttribution
 
 Outcome = Literal["succeeded", "denied", "failed"]
 
@@ -78,6 +79,8 @@ class GatewayRequest:
     output_schema: dict[str, str] | None = None
     resource_id: str | None = None
     images: tuple[ImageInput, ...] = ()
+    # Agent, workflow and execution that caused this call, when there is one. Provider and model are filled in by the gateway.
+    attribution: UsageAttribution | None = None
 
 
 @dataclass(frozen=True)

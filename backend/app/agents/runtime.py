@@ -59,6 +59,7 @@ from app.db.models.agent import Agent, AgentExecution, AgentExecutionStep, Agent
 from app.db.models.membership import Membership
 from app.governance.execution_gate import actor_permission_granted
 from app.governance.policy import evaluate_capability
+from app.governance.usage_ledger import UsageAttribution
 from app.knowledge.service import retrieve
 from app.outbox.service import enqueue_event
 
@@ -352,6 +353,7 @@ def _run_model_step(db: Session, execution: AgentExecution, step: dict[str, Any]
                 output_schema=step["output_schema"],
                 max_output_tokens=512,
                 input_token_estimate=len(prompt) // 4 + 1,
+                attribution=UsageAttribution(agent_id=str(execution.agent_id), execution_id=str(execution.id)),
             ),
             sleep=sleep,
         )

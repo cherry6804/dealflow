@@ -146,6 +146,18 @@ class BudgetPeriod:
 
 
 @dataclass(frozen=True)
+class UsageAttribution:
+    """Who or what caused a usage entry. Every field is optional and is stored as given. Nothing is inferred."""
+
+    agent_id: str | None = None
+    workflow_id: str | None = None
+    execution_id: str | None = None
+    task_type: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class ReservationReapResult:
     expired: int
     skipped: int
@@ -482,6 +494,8 @@ def settle(
     idempotency_key: str,
     actual_quantity: int,
     now: datetime | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> AiUsageEvent:
     """RESERVED -> RECORDED. Repeating with the same quantity returns the entry unchanged.
 
@@ -518,6 +532,11 @@ def settle(
     _free_reservation(budget, event)
     budget.consumed_quantity += actual_quantity
     event.quantity = actual_quantity
+    # The provider and model that actually answered replace the planned ones chosen at reservation.
+    if provider is not None:
+        event.provider = provider
+    if model is not None:
+        event.model = model
     event.status = AiUsageEvent.STATUS_RECORDED
     db.flush()
     _announce_threshold(db, budget=budget)

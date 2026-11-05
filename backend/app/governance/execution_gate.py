@@ -93,6 +93,7 @@ from app.governance.usage_ledger import (
     BudgetExceededError,
     BudgetNotConfiguredError,
     IdempotencyConflictError,
+    UsageAttribution,
     UsageUnit,
     release,
     reserve,
@@ -203,6 +204,8 @@ class ExecutionRequest:
     consent: ConsentSubject | None = None
     # Resource type of the approved action, when the approval binds one.
     resource_type: str | None = None
+    # Who or what caused the usage: agent, workflow, execution, task and provider. Stored on the usage entry as given.
+    attribution: UsageAttribution | None = None
 
 
 def _deny(request: ExecutionRequest, outcomes: list[GateOutcome], gate: str, reason: str) -> ExecutionDecision:
@@ -432,6 +435,12 @@ def _reserve_budget(
                 user_id=request.user_context.user.id if request.user_context is not None else None,
                 correlation_id=request.correlation_id,
                 capability_key=request.capability_key,
+                agent_id=request.attribution.agent_id if request.attribution else None,
+                workflow_id=request.attribution.workflow_id if request.attribution else None,
+                execution_id=request.attribution.execution_id if request.attribution else None,
+                task_type=request.attribution.task_type if request.attribution else None,
+                provider=request.attribution.provider if request.attribution else None,
+                model=request.attribution.model if request.attribution else None,
             )
             reservations.append((unit, key))
     except BudgetNotConfiguredError:
@@ -585,11 +594,25 @@ def evaluate_execution(db: Session, request: ExecutionRequest, *, now: datetime 
     return decision
 
 
-def settle_ticket(db: Session, ticket: ExecutionTicket, actual: dict[str, int]) -> None:
+def settle_ticket(
+    db: Session,
+    ticket: ExecutionTicket,
+    actual: dict[str, int],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> None:
     """Settle each reservation with its actual usage. Units not in ``actual`` are released."""
     for unit, key in ticket.reservation_keys:
         if unit in actual:
-            settle(db, organization_id=ticket.organization_id, idempotency_key=key, actual_quantity=actual[unit])
+            settle(
+                db,
+                organization_id=ticket.organization_id,
+                idempotency_key=key,
+                actual_quantity=actual[unit],
+                provider=provider,
+                model=model,
+            )
         else:
             release(db, organization_id=ticket.organization_id, idempotency_key=key)
 
