@@ -15,6 +15,7 @@ from app.agents.crm_action_catalogue import (
     INTAKE_PROCESS,
     INTAKE_RESOLVE_IDENTITY,
     LEAD_CALCULATE_PRIORITY,
+    MATCHING_EVALUATE,
     QUALIFICATION_RECORD,
 )
 
@@ -22,6 +23,7 @@ RECEPTIONIST = "lead_receptionist"
 IDENTITY_RESOLVER = "identity_resolver"
 LEAD_SCORING = "lead_scoring"
 QUALIFICATION = "lead_qualification"
+PROPERTY_MATCHING = "property_matching"
 
 _LIMITS: dict[str, int] = {
     "max_duration_seconds": 120,
@@ -40,7 +42,7 @@ def _template(*, key: str, title: str, purpose: str, instructions: str, inputs: 
         "key": key,
         "title": title,
         "configuration": {
-            "category": "operations" if key != QUALIFICATION else "sales",
+            "category": "sales" if key in (QUALIFICATION, PROPERTY_MATCHING) else "operations",
             "purpose": purpose,
             "instructions": instructions,
             "language": "en",
@@ -58,6 +60,16 @@ def _template(*, key: str, title: str, purpose: str, instructions: str, inputs: 
 
 
 TEMPLATES: dict[str, dict[str, Any]] = {
+    PROPERTY_MATCHING: _template(
+        key=PROPERTY_MATCHING,
+        title="Property matching",
+        purpose="Evaluate one customer requirement against available inventory and record the ranked matches and next actions.",
+        instructions="Run the deterministic property matching for the requirement. Report what the rules stored. Do not add, "
+                     "change or invent any property.",
+        inputs=[{"name": "requirement_id", "type": "uuid", "required": True}],
+        steps=[{"kind": "crm_action", "action": MATCHING_EVALUATE, "arguments": {"requirement_id": "$input.requirement_id"}}],
+        tools=[],
+    ),
     RECEPTIONIST: _template(
         key=RECEPTIONIST,
         title="Lead receptionist",

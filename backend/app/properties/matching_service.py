@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.customer_requirement import CustomerRequirement
@@ -19,8 +18,8 @@ from app.db.models.property import Property
 from app.properties.schemas import (
     PropertyMatchCriterionResult,
     PropertyMatchResult,
+    PropertySearchResult,
 )
-from app.properties.schemas import PropertySearchResult
 
 
 def _normalise(value: str | None) -> str | None:
@@ -140,6 +139,77 @@ def _matches_budget(
     return True
 
 
+def _matches_transaction_type(
+    requirement: CustomerRequirement,
+    property_record: Property,
+) -> bool:
+    """A requirement that records sale, rent or lease excludes properties of another type. Missing types are excluded."""
+    if requirement.transaction_type is None:
+        return True
+    return property_record.transaction_type == requirement.transaction_type
+
+
+def _apply_recorded_data_rules(
+    criteria: list[PropertyMatchCriterionResult],
+    *,
+    requirement: CustomerRequirement,
+    property_record: Property,
+    locations: list[CustomerRequirementLocation],
+    preferences: list[CustomerRequirementPropertyPreference],
+) -> list[PropertyMatchCriterionResult]:
+    """Refine criteria for missing inventory data and add the transaction-type criterion.
+
+    A property that lacks a field needed to check a criterion is UNKNOWN, not MISMATCH: it is not eligible, and the explanation says
+    the data is missing rather than that the property does not fit. The transaction-type criterion appears only when the
+    requirement records one, so requirements without it keep the criteria they always had.
+    """
+    refined: list[PropertyMatchCriterionResult] = []
+    for criterion in criteria:
+        if criterion.criterion == "LOCATION" and criterion.status == "MISMATCH" and (
+            _normalise(property_record.city) is None or _normalise(property_record.locality) is None
+        ):
+            criterion = PropertyMatchCriterionResult(
+                criterion="LOCATION",
+                status="UNKNOWN",
+                explanation="The property city or locality is not recorded, so its location cannot be checked.",
+            )
+        elif criterion.criterion == "PROPERTY_TYPE_AND_BHK" and criterion.status == "MISMATCH" and (
+            _normalise(property_record.property_type) is None
+            or (
+                property_record.bhk is None
+                and any(
+                    item.bhk_min is not None or item.bhk_max is not None
+                    for item in preferences
+                    if _normalise(item.property_type) == _normalise(property_record.property_type)
+                )
+            )
+        ):
+            criterion = PropertyMatchCriterionResult(
+                criterion="PROPERTY_TYPE_AND_BHK",
+                status="UNKNOWN",
+                explanation="The property type or BHK is not recorded, so it cannot be checked against the preferences.",
+            )
+        refined.append(criterion)
+
+    if requirement.transaction_type is not None:
+        property_type = property_record.transaction_type
+        if property_type is None or property_type not in (
+            Property.TRANSACTION_TYPE_SALE,
+            Property.TRANSACTION_TYPE_RENT,
+            Property.TRANSACTION_TYPE_LEASE,
+        ):
+            status = "UNKNOWN"
+            explanation = "The property transaction type is not recorded, so it cannot be checked against the requirement."
+        elif property_type == requirement.transaction_type:
+            status = "MATCH"
+            explanation = f"The property is for {property_type.lower()} and the requirement is for {requirement.transaction_type.lower()}."
+        else:
+            status = "MISMATCH"
+            explanation = f"The property is for {property_type.lower()} but the requirement is for {requirement.transaction_type.lower()}."
+        refined.append(PropertyMatchCriterionResult(criterion="TRANSACTION_TYPE", status=status, explanation=explanation))
+    return refined
+
+
 def get_matching_properties(
     db: Session,
     *,
@@ -201,6 +271,7 @@ def get_matching_properties(
         if _matches_location(property_record, locations)
         and _matches_property_preference(property_record, preferences)
         and _matches_budget(requirement, property_record)
+        and _matches_transaction_type(requirement, property_record)
     ]
 
     return matches
@@ -399,6 +470,14 @@ def get_property_match_results(
                     explanation=budget_explanation,
                 )
             )
+
+        criteria = _apply_recorded_data_rules(
+            criteria,
+            requirement=requirement,
+            property_record=property_record,
+            locations=locations,
+            preferences=preferences,
+        )
 
         overall_match = all(
             criterion.status in ("MATCH", "NOT_CONFIGURED")

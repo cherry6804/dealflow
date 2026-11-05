@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -57,6 +58,10 @@ class CustomerRequirement(Base):
             ["customer_profile_id", "organization_id"],
             ["customer_profiles.id", "customer_profiles.organization_id"],
             name="fk_customer_requirements_customer_profile_tenant",
+        ),
+        CheckConstraint(
+            "transaction_type IS NULL OR transaction_type IN ('SALE', 'RENT', 'LEASE')",
+            name="ck_customer_requirements_transaction_type",
         ),
     )
 
@@ -121,6 +126,12 @@ class CustomerRequirement(Base):
 
     budget_currency: Mapped[str | None] = mapped_column(
         String(3),
+        nullable=True,
+    )
+
+    # What the customer wants to do. NULL means not recorded: it does not restrict matching, and it is reported as missing.
+    transaction_type: Mapped[str | None] = mapped_column(
+        String(10),
         nullable=True,
     )
 

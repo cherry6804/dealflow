@@ -1443,3 +1443,121 @@ Metrics: `GET /api/v1/agents/{id}/metrics` (agents.read) returns counts by execu
 - DFR1-019 blockers still apply to any agent run: AI actor key, AI resource store, AI rate rule, provider data-use approval and sandbox
   verification. The qualification template also needs a routed text model.
 - Scheduled stale-run sweep is not wired (DFR1-051), as before.
+
+## 30. DFR1-022 property matching and next-best-action recommendations (E09)
+
+Branch: `feature/DFR1-E09-property-matching-next-best-action`, cut from `origin/develop` at `7f824b6` (DFR1-021 merged as PR #161).
+
+### Exact backlog scope (Dealsflo_Release1_Jira_Backlog_v2.xlsx, sheet "Jira Backlog")
+
+- Issue key DFR1-022. Summary: Deliver property matching and next-best-action recommendations. Epic DFR1-E09. Sprint S3 (Days 7-9). Priority P0.
+  Story points 5. Labels: predictive, matching. Status To Do at the start of this work.
+- User story / scope: Match customer requirements to available inventory using hard constraints then explainable ranking.
+- Acceptance criteria: Only active/available properties; match explanation and mismatch reasons; recommendation feedback captured; no invented inventory.
+- Dependencies: DFR1-008, DFR1-020.
+
+The architecture plan (Dealsflo_Release1_Master_Architecture_and_Delivery_Plan_v2.docx) describes property matching that proposes available inventory and explains fit. It requires that a probability is never claimed for an unvalidated heuristic. Recommendations must come from CRM facts and matching outcomes, and no external communication or booking is made without authorization.
+
+### Dependency verification
+
+- DFR1-008 (CRM vertical slice): on `origin/develop` (PR #157).
+- DFR1-020 (lead priority): on `origin/develop` (PR #160).
+- DFR1-021 (lead intake and qualification agents): on `origin/develop` (PR #161, merge `7f824b6`).
+- DFR1-018 and DFR1-019 (tool registry and agent runtime): on `origin/develop`.
+
+### Existing implementation reused
+
+- The matching engine `app/properties/matching_service.py` (`get_matching_properties`, `get_property_match_results`): available properties only, location, property type and BHK, and budget with currency checks. It was extended, not replaced.
+- The run history `app/requirements/match_history_service.py` (`create_requirement_match_run`, the DF-109 immutable runs and results): reused for storing each evaluation.
+- Shortlists (`RequirementPropertyShortlist`), lead follow-ups (`FollowUp`), customer requirements and their history, the agent runtime, the crm-action step kind from DFR1-021, and the independent audit writer.
+- Permissions `requirements.read`, `requirements.update`, `properties.read`. No permission was added.
+
+### Matching engine changes
+
+- Transaction type: a requirement that records SALE, RENT or LEASE gets a `TRANSACTION_TYPE` criterion. A requirement with no recorded type keeps the criteria it always had, because the criterion is not added. Existing results and tests are unchanged.
+- Missing data: a property whose city, locality, property type or BHK (when the preference has BHK bounds) is not recorded is UNKNOWN for that criterion, not MISMATCH. An UNKNOWN criterion makes the property not eligible. A property is never eligible because a field is missing.
+- A property with no recorded transaction type, while the requirement has one, is UNKNOWN and not eligible.
+- The filtering used by `GET .../matches` also excludes properties of another transaction type.
+
+### Classification, explanation and ranking (`app/requirements/match_rules.py`, rules `property-match-v1`)
+
+- Each property is classified as `eligible` (all criteria MATCH or NOT_CONFIGURED), `excluded` (any MISMATCH) or `insufficient_data` (any UNKNOWN and no MISMATCH).
+- Each result carries matched factors, unmatched factors, missing information and exclusion reasons, all with their criterion names.
+- Ranking applies to eligible properties only, in this order: more configured criteria matched, then more budget headroom (for sale and rent, as a fraction below the budget ceiling), then the newer listing, then the property identifier. Rank 1 is the best. The stored `ranking_basis` names the rule and the order. Rank is an ordering, never a probability.
+- Reproducibility: the run stores an input fingerprint (SHA-256 over the requirement, its active criteria and every available property in the organization). The same fingerprint gives the same ranking. A change to any of those inputs changes the fingerprint.
+
+### Evaluation, staleness and concurrency (`app/requirements/match_evaluation_service.py`)
+
+- `POST /api/v1/customer-requirements/{id}/match-evaluations` (requirements.update): locks the requirement row, computes the fingerprint, and returns the stored run (200) when the latest run has the same fingerprint, or stores a new run (201). Concurrent requests produce one run (tested with threads).
+- A run is stale when its fingerprint differs from the current one, or when it predates these rules. `GET .../match-evaluations/latest` (requirements.read) returns the latest run with a `stale` flag. Stale results and recommendations are shown as stale, and decisions on them are refused (409 `recommendation_stale`).
+- The evaluation, its results and its recommendations are written in one transaction. A failure while recording recommendations leaves no run (tested).
+- No background job or retry is created. Re-evaluation is requested by a member.
+
+### Next-best-action recommendations (`app/db/models/next_best_action.py`, rules `next-best-action-v1`)
+
+Each recommendation is created once per run and category (unique). Categories and their basis:
+
+| Category | Basis | Created when |
+|---|---|---|
+| `request_missing_information` | missing_information | the requirement lacks a transaction type, budget, location or property preference |
+| `review_property` | deterministic_match | up to three eligible, not shortlisted properties (rank order) |
+| `arrange_site_visit` | deterministic_match | an eligible property is on the requirement's shortlist. It is a recommendation only; nothing is booked |
+| `follow_up_lead` | verified_fact | the requirement has a lead, the lead has eligible properties, and no pending follow-up is recorded |
+| `escalate_to_human` | missing_information or deterministic_match | no property is eligible (missing data, or no match at all) |
+
+- Every recommendation keeps its facts (ranks, counts, source record identifiers) and its basis. No recommendation in this release is an AI-generated suggestion; the basis value exists for later use and is not produced here.
+- Feedback: `POST /api/v1/next-best-actions/{id}/feedback` (requirements.update). Transitions: open to accepted or dismissed, accepted to done or dismissed. Other transitions are refused (409 `invalid_transition`). The decision, the reason and the member are appended to the history. The facts and summary are never rewritten.
+- A duplicate evaluation adds no recommendations.
+
+### Agent integration
+
+- New crm action `matching.evaluate` (permission `requirements.update` of the initiating member), which calls the same `evaluate_requirement`. No model is called and no business rule is in a prompt.
+- New template `property_matching` (one crm-action step). It is a draft like any other, and it is refused while AI is switched off.
+
+### Transaction type on the requirement
+
+- `customer_requirements.transaction_type` (nullable; NULL means not recorded). Set through `PUT /api/v1/customer-requirements/{id}/transaction-type` (requirements.update), which writes a history snapshot. Historical records are not rewritten.
+- The requirement response now includes `transaction_type`.
+
+### Frontend
+
+- `RequirementsPage` gets a "Property matching" section (`src/pages/RequirementMatchPanel.tsx`): transaction-type selector, evaluate button, ranked eligible properties with matched factors, excluded and missing-data properties with reasons, next actions with basis, stale notice, accept, mark done and dismiss with an optional reason, decision history, and the disclaimer. Stale results cannot be decided.
+- The existing match, run-history and shortlist features on the page are unchanged.
+
+### Migration
+
+- `b8d4f0a2c6e1_property_matching_recommendations` (down revision `a7c3e9d1f2b4`). Adds `customer_requirements.transaction_type` (with a check constraint), `requirement_match_runs.ruleset_version` and `input_hash`, `requirement_match_run_results.rank`, `eligibility` and `ranking_basis`, and creates `next_best_action_recommendations`. Downgrade refuses while recommendations exist.
+- Validated on a freshly created `dealflow` database on the isolated server (port 5438): upgrade head exit 0; downgrade one step exit 0; re-upgrade exit 0; single head `b8d4f0a2c6e1`.
+
+### Tests
+
+- `tests/test_property_match_evaluation.py`: 43 tests, all passing. They cover sale, rent and lease compatibility; a requirement without a type keeping its old behaviour; missing data (type, city, BHK, lease budget) as not eligible; budget exclusion; unavailable properties; explanations; ranking, its basis and reproducibility; run storage and the fingerprint; repeat evaluation; requirement change, property status change and property update making runs stale; concurrent evaluation (one run); failure rollback; inactive requirements; each recommendation category; feedback transitions and history; stale recommendations refused; no duplicate recommendations; reader permissions; cross-organization 404s; the transaction-type endpoint and its use by the next evaluation; matching with AI disabled; the agent run, and its refusal while AI is off.
+- Existing matching tests (`tests/test_property_matching.py`, `tests/test_property_matching_api.py`, `tests/test_requirement_history_api.py`) pass unchanged.
+
+### Test results (actual)
+
+- Focused: the four files above together: 74 passed, exit 0 (25.12 s).
+- Full backend suite (`pytest tests -q -p no:warnings`, from `backend/`, isolated database on 127.0.0.1:5438): 2,515 passed, 14 skipped, 0 failed, exit 0 (735.98 s). The 14 skips are the live-provider tests that are not configured here. 2,472 + 43 = 2,515.
+- Frontend: `tsc -b` exit 0. `npm run lint` exit 0 (the new warnings follow existing page patterns). `vitest run`: 21 files, 143 tests passed, exit 0 (includes 4 tests in `RequirementMatchPanel.test.tsx`). `npm run build` exit 0.
+- The matching panel was not exercised in a live browser; it is verified by its unit tests and the build.
+
+### Test environment note
+
+- Tests ran against the isolated server on port 5438, which is the disposable instance. The shared servers on ports 5432 and 5433 were not used for this story. The test connection uses `127.0.0.1`: `localhost` took 5 to 10 seconds per connection on that server because of IPv6 fallback, which made the first run time out.
+
+### Known limitations
+
+- Ranking uses counts of configured criteria and budget headroom only. Soft preferences such as locality versus city are not weighted, and there is no learned ranking.
+- Amenities and configuration are not matched: the CRM does not record them on properties or requirements. Only location, property type and BHK, budget, transaction type and availability are matched.
+- Currency is compared exactly, as before. A requirement and property in different currencies are UNKNOWN, not converted.
+- Recommendation text is English and not translated. The category and basis codes are stable.
+- No AI-generated suggestion is produced. The optional agent step is deterministic.
+- Re-evaluation is manual. Stale results are shown as stale. There is no event-driven re-evaluation and no background job.
+- Lead-level matching (for example on the leads page) is not built; matching is on the requirement.
+- Feedback records decisions and reasons. No outcome measurement (whether a visit happened, whether the customer bought) is recorded yet; that belongs to the prediction feedback work (DFR1-045).
+
+### Production blockers
+
+- Privacy export and deletion do not cover the recommendations (DFR1-050). The table is listed as not covered in `table_inventory.py`.
+- Agent runs still need the DFR1-019 AI approvals (AI actor key, AI resource store, AI rate rule, provider data-use approval, sandbox verification). The deterministic matching itself needs no AI.
+- Scheduled stale-run sweep (DFR1-051): not built; staleness is computed on read.

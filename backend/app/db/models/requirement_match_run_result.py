@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     JSON,
+    String,
     Uuid,
     UniqueConstraint,
 )
@@ -72,6 +73,11 @@ class RequirementMatchRunResult(Base):
     overall_match: Mapped[bool] = mapped_column(
         nullable=False,
     )
+
+    # Added in DFR1-022. NULL on runs made before it. Rank is 1 for the best eligible result.
+    rank: Mapped[int | None] = mapped_column(nullable=True)
+    eligibility: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    ranking_basis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     property_snapshot: Mapped[dict[str, Any]] = mapped_column(
         JSON,

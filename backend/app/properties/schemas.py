@@ -247,6 +247,7 @@ class PropertyMatchCriterionResult(BaseModel):
         "LOCATION",
         "PROPERTY_TYPE_AND_BHK",
         "BUDGET",
+        "TRANSACTION_TYPE",
     ]
     status: Literal["MATCH", "MISMATCH", "UNKNOWN", "NOT_CONFIGURED"]
     explanation: str

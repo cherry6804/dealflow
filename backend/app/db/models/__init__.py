@@ -34,6 +34,7 @@ from app.db.models.document import Document
 from app.db.models.agent import Agent, AgentExecution, AgentExecutionStep, AgentVersion
 from app.db.models.document_review import DocumentReview
 from app.db.models.lead_intake import LeadIntakeSubmission, LeadQualificationResult
+from app.db.models.next_best_action import NextBestActionRecommendation
 from app.db.models.lead_priority import LeadPriorityCorrection, LeadPriorityScore
 from app.db.models.email_outbox_message import EmailOutboxMessage
 from app.db.models.email_verification_token import EmailVerificationToken
@@ -119,6 +120,7 @@ __all__ = [
     "LeadPriorityCorrection",
     "LeadIntakeSubmission",
     "LeadQualificationResult",
+    "NextBestActionRecommendation",
     "Agent",
     "AgentVersion",
     "AgentExecution",

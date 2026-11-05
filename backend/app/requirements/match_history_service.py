@@ -13,6 +13,7 @@ from app.db.models.requirement_match_run import RequirementMatchRun
 from app.db.models.requirement_match_run_result import RequirementMatchRunResult
 from app.properties.matching_service import get_property_match_results
 from app.requirements.history_service import build_customer_requirement_snapshot
+from app.requirements.match_rules import MATCH_RULESET_VERSION, compute_input_hash, rank
 
 
 def _json_value(value: Any) -> Any:
@@ -71,6 +72,9 @@ def create_requirement_match_run(
         requirement_id=requirement_id,
     )
 
+    # DFR1-022: the same results are classified and ranked, and the run records the rule version and input fingerprint.
+    ranked = rank(requirement, match_results)
+
     run = RequirementMatchRun(
         organization_id=organization_id,
         customer_requirement_id=requirement_id,
@@ -80,6 +84,8 @@ def create_requirement_match_run(
         matched_candidates=sum(
             1 for result in match_results if result.overall_match
         ),
+        ruleset_version=MATCH_RULESET_VERSION,
+        input_hash=compute_input_hash(db, organization_id=organization_id, requirement=requirement),
     )
 
     db.add(run)
@@ -87,7 +93,7 @@ def create_requirement_match_run(
 
     saved_results: list[RequirementMatchRunResult] = []
 
-    for result in match_results:
+    for result, classification, position, basis in ranked:
         saved = RequirementMatchRunResult(
             organization_id=organization_id,
             match_run_id=run.id,
@@ -95,6 +101,9 @@ def create_requirement_match_run(
             overall_match=result.overall_match,
             property_snapshot=_json_value(result.property),
             criteria_results_snapshot=_json_value(result.criteria),
+            rank=position,
+            eligibility=classification.eligibility,
+            ranking_basis=_json_value(dict(basis, **classification.as_dict())),
         )
         db.add(saved)
         saved_results.append(saved)

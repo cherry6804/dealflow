@@ -20,6 +20,7 @@ from app.agents.crm_action_catalogue import (
     INTAKE_PROCESS,
     INTAKE_RESOLVE_IDENTITY,
     LEAD_CALCULATE_PRIORITY,
+    MATCHING_EVALUATE,
     QUALIFICATION_RECORD,
 )
 from app.db.models.agent import AgentExecution
@@ -33,6 +34,10 @@ from app.leads.intake_service import (
 )
 from app.leads.priority_service import PriorityError, calculate_and_store
 from app.leads.qualification import QualificationError, record_qualification
+from app.requirements.match_evaluation_service import (
+    EvaluationError,
+    evaluate_requirement,
+)
 
 REASON_UNKNOWN_ACTION = "unknown_crm_action"
 REASON_PERMISSION_DENIED = "crm_permission_denied"
@@ -98,14 +103,21 @@ def _qualification_record(db: Session, execution: AgentExecution, arguments: dic
     return {"qualification_id": str(row.id), "requires_review": row.requires_review, "created": created}
 
 
+def _matching_evaluate(db: Session, execution: AgentExecution, arguments: dict[str, Any]) -> dict[str, Any]:
+    run, created = evaluate_requirement(db, organization_id=execution.organization_id,
+                                        actor_id=execution.initiated_by_user_id, requirement_id=arguments["requirement_id"])
+    return {"run_id": str(run.id), "created": created, "ruleset_version": run.ruleset_version}
+
+
 _HANDLERS = {
+    MATCHING_EVALUATE: _matching_evaluate,
     INTAKE_PROCESS: _intake_process,
     INTAKE_RESOLVE_IDENTITY: _intake_resolve_identity,
     LEAD_CALCULATE_PRIORITY: _lead_calculate_priority,
     QUALIFICATION_RECORD: _qualification_record,
 }
 
-_UUID_ARGUMENTS = frozenset({"submission_id", "lead_id", "score_id"})
+_UUID_ARGUMENTS = frozenset({"submission_id", "lead_id", "score_id", "requirement_id"})
 
 
 def run_crm_action(db: Session, execution: AgentExecution, action_key: str,
@@ -135,7 +147,7 @@ def run_crm_action(db: Session, execution: AgentExecution, action_key: str,
     try:
         with db.begin_nested():
             output = handler(db, execution, typed)
-    except (IntakeError, PriorityError, QualificationError) as error:
+    except (IntakeError, PriorityError, QualificationError, EvaluationError) as error:
         if error.reason == "permission_denied":
             return "stopped", REASON_PERMISSION_DENIED, None
         return "failed", error.reason, None
