@@ -2249,3 +2249,64 @@ The same defect applies in production. A reservation whose budget was removed wo
 - The shared test database still contains the orphaned reservation for organization `858fcb2c`. It was left by a prior killed run. It has not been deleted here, and it no longer affects the tests.
 - The two pre-existing Ruff findings in `tests/test_usage_reservations.py` remain.
 - Not verified: behaviour under concurrent cleanup workers beyond the existing lock-skip tests; and CI behaviour, since the local runs used the `127.0.0.1` database URL.
+
+## 42. DFR1-036 organization AI and automation settings: acceptance-criteria verification
+
+Branch: `feature/DFR1-036-organization-ai-automation-settings`, cut from `origin/develop` at `d06a5ac`. Backlog entry: epic DFR1-E11, sprint S5, P0, 5 points, labels `settings,governance`. Dependencies DFR1-006, DFR1-017, DFR1-019 and DFR1-023, all merged on `develop`.
+
+Acceptance criteria (backlog, verbatim): "Defaults disabled; SIBVO entitlement + org enablement + connection + activation + permissions + consent/budget required; manual CRM remains usable."
+
+### What already existed and was reused
+
+- **Capability catalogue and policy** (`app/governance/capabilities.py`, `policy.py`): AI and automation master switches, child capabilities, and channel capabilities that fail closed. Default-off is enforced in code and tested (`test_every_capability_is_disabled_by_default`).
+- **Switch state and audit** (`app/governance/service.py`, `set_capability_enabled`): row-locked, versioned, audited with the acting member.
+- **Switch API** (`app/api/governance.py`): `GET` and `PATCH` on the governance capability routes. Reads require `governance.capabilities.read`, changes require `governance.capabilities.manage` (owner-only). Tested for permission, persistence and audit (`test_governance_api.py`).
+- **Execution gate** (`app/governance/execution_gate.py`): entitlement, switches, provider readiness, actor, resource, consent, approval, rate and budget gates. The AI gateway, the agent runtime and the workflow runtime all call it.
+- **Entitlement** (`app/governance/org_entitlement.py`): fails closed when SIBVO is unavailable or the snapshot is invalid (`test_sibvo_unavailable_fails_closed`, `test_org_entitlement_snapshot.py`).
+- **Consent and budget** (`_gate_consent`, usage ledger): a consent requirement denies while no consent model exists, and budget hard stops are enforced (`test_exhausted_budget_stops_the_model_step_and_no_provider_is_called`).
+- **Manual CRM continuity**: `test_manual_crm_work_is_unaffected_when_every_optional_capability_is_off`, and `test_denied_automation_never_blocks_manual_deal_creation`.
+- **Agent activation** (`app/agents/service.py`, `pause` and `resume`): the agent runtime re-checks the agent's status at every step, and stops an in-flight run as `agent_paused` (`test_pausing_the_agent_in_flight_stops_new_work`).
+- **Workflow activation** (`app/workflows/service.py`, `pause` and `resume`; `app/api/workflows.py`): runs and event triggers refuse a paused workflow (`test_a_paused_or_unpublished_workflow_starts_no_run`, `test_a_paused_workflow_does_not_start_on_events`). Pause and resume are checked again on resume, and cross-tenant and permission cases are tested (`test_workflow_definitions.py`).
+- **Frontend**: `GovernancePage` and `CapabilitiesPanel` for the switches (with `GovernancePage.test.tsx`), and pause and resume controls on `AgentsPage` and `WorkflowsPage` (with `WorkflowsPage.test.tsx`).
+
+### What this story added
+
+The one functional gap was test coverage for agent activation. `backend/tests/test_organization_ai_automation_settings.py` adds five tests:
+- `test_a_paused_agent_refuses_new_work_with_a_stable_reason`: a paused agent refuses new executions with `agent_not_active`.
+- `test_resuming_creates_no_version_and_no_execution`: resume changes only the status.
+- `test_a_repeated_request_after_resume_returns_the_stored_execution`: the idempotency key still returns the stored execution after a pause and resume.
+- `test_pause_and_resume_over_http_need_the_publish_permission`: the routes return 403 without `agents.publish`.
+- `test_another_organization_cannot_pause_or_resume_an_agent`: the routes return 404 across organizations.
+
+No application code was changed.
+
+### Tests executed in this step
+
+- New module: `tests/test_organization_ai_automation_settings.py`, **5 passed, 0 failed**.
+- Agent suites with the new module (`test_agents_api.py`, `test_agents_definitions.py`, `test_agents_runtime.py`): **66 passed, 0 failed**, 15.66 seconds.
+- Regression run (`pytest`, exit 0), **556 passed, 0 failed**, 55.79 seconds, over: the new module; `test_agents_api.py`, `test_agents_definitions.py`, `test_agents_runtime.py`; `test_workflow_runtime.py`, `test_workflow_definitions.py`; `test_capability_policy_gates.py`, `test_governance_policy.py`, `test_governance_entitlement.py`, `test_governance_api.py`, `test_governance_enforcement.py`, `test_governance_execution_gate.py`; `test_org_entitlement_client_and_gate.py`, `test_org_entitlement_snapshot.py`; `test_tenant_dependencies.py`; `test_ai_tools.py`, `test_ai_tools_crm.py`, `test_ai_tools_contract.py`; `test_usage_reservations.py`; `test_ai_gateway.py`. Log: `scratchpad/dfr1-036-regression.txt`.
+- Ruff check and format on the new module: pass. `git diff --check`: pass.
+- No migration was added. No frontend file was changed, so no frontend build or test was run for this story.
+
+### Criterion-by-criterion status
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Defaults disabled | Verified | Default-off policy test; catalogue defaults |
+| SIBVO entitlement required | Verified | Entitlement gate; fail-closed tests |
+| Organization enablement (master and child) | Verified | Master-blocks-children tests; switch API |
+| Connection (provider readiness) required | Verified | Org entitlement client and gate tests (ready provider required) |
+| Activation (agent and workflow) | Verified | New agent activation tests; workflow pause tests |
+| Permissions required | Verified | Owner-only switch changes; publish-permission tests for agents and workflows |
+| Consent required | Verified | Consent gate denies while no consent model exists |
+| Budget required | Verified | Budget hard-stop test on the model path |
+| Manual CRM remains usable | Verified | Manual CRM continuity tests |
+| Channel controls | Deferred (E) | Product decision: communication-channel controls are deferred |
+
+### Limitations
+
+- The agents and workflows pause controls use the existing publish permissions (`agents.publish` and `workflows.publish`), not a separate settings permission. This matches the existing role model.
+- No dedicated frontend test covers the `AgentsPage` pause control. It is recorded as a frontend testing improvement, not a blocker.
+- The new tests were run against the isolated test database at `127.0.0.1:5438`. They were not run in CI.
+- Governance settings and agent and workflow activation history are not covered by privacy export or deletion. This falls under DFR1-050, which remains a pilot readiness gate.
+- Channel controls remain deferred. The existing channel policy endpoints are unchanged.
