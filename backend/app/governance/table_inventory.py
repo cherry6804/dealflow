@@ -96,7 +96,7 @@ TABLE_INVENTORY: dict[str, TableEntry] = {
     "notification_preferences": _exported("messaging.notifications"),
     # The uploaded file is exported and removed under documents.files. The batch row is kept, because
     # imported contacts reference it. This is reported as partial, never as a full deletion.
-    "import_batches": _not_covered("Uploaded file: exported and removed under documents.files. Batch row kept: imported contacts reference it (DFR1-050)."),
+    "import_batches": _not_covered("Partially covered. The uploaded file is exported and removed under documents.files. The file name, the error summary and any personal text are cleared. Only a minimal technical record is kept: identifiers, organization, source format, content type, file size, status, row counts and timestamps. The row stays because imported contacts reference it with ON DELETE RESTRICT (DFR1-050)."),
     "team_member_removals": _exported("team.invitations"),
     "automation_executions": _exported("automation.rule_runs"),
     "contact_consent_records": _exported("crm.contacts"),

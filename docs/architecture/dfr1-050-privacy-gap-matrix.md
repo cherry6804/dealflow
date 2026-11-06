@@ -16,7 +16,7 @@ The per-table section at the end is generated from `backend/app/governance/table
 
 3. **Import batch rows: resolved, minimum technical record.** A batch that holds a stored file, a file name, or a per-row error summary is cleared. The file is removed. The source name is replaced with `Redacted`. The error summary, which can echo row values, is set to null. The batch keeps only: id, organization, source format, content type, file size, status, row counts, timestamps, and an empty storage reference. The row is kept because contacts reference it with `ON DELETE RESTRICT`. A batch whose file was removed earlier is still cleared. Other organizations' batches are untouched. Outcome: `deleted_partial`.
 
-4. **Requirement history and requirement tables: resolved, kept, evidence recorded.** Every string column on the five requirement tables was reviewed against the models: `customer_requirements` (status, budget currency, transaction type), `customer_requirement_locations` (city, locality: the places the requirement depends on), `customer_requirement_property_preferences` (property type), `customer_requirement_possession_parking_preferences` (preference codes), and `customer_requirement_history` (change type). None is free text about a person. History snapshots hold the requirement's business fields and locations. They are kept for version integrity. The test `test_requirement_string_columns_are_the_reviewed_codes_and_places_only` fails if a string column is added without review. Deletion of `crm.requirements` reports `not_executed` with `no_free_text_fields`, and the history survives it.
+4. **Requirement history and requirement tables: resolved, corrected in review.** Every string column on the five requirement tables was reviewed against the models. Status, budget, transaction type, property type, possession and parking codes and change type are business terms or codes, and they are kept. City and locality are place names that a customer asked for. Once linked to an identifiable customer through the lead or profile, they reveal where that person wants to live, so they are personal data. Deletion replaces them with the placeholder on the current location rows and inside the location entries of history snapshots. Version, change type and timestamps are kept. Budget and property preferences are kept as the commercial terms of the requirement. That is a judgment the product owner should confirm. The test `test_requirement_string_columns_are_the_reviewed_codes_and_places_only` fails if a new string column is added without review. Deletion of `crm.requirements` reports `anonymized_partial`, and the kept fields are listed in the execution record.
 
 5. **Lead intake fingerprint: resolved, replaced on deletion.** `payload_hash` is a SHA-256 of the normalized submission, which includes contact details, and it is unsalted. A digest of a phone number or an email can be checked against guessed values, so while the submission exists it can identify the person. It is therefore replaced on deletion by a tombstone computed from the row id, table and field name only. The original digest is not kept anywhere in the row. The raw payload, normalized payload, validation problems and decision reason are cleared, and the external reference is replaced by `redacted-<id>`, which keeps its uniqueness constraint. Live submissions keep their digest for duplicate detection. Tests: `test_lead_intake_deletion_replaces_the_digest…`, `test_no_stored_row_keeps_the_original_digest_after_deletion`.
 
@@ -59,7 +59,7 @@ No retention period has been approved for any category except the two that were 
 | 25 | Lint and migrations | Met for changed files; no migration added | see the report |
 | 26 | Human task events retained, reported as retained (decision 1) | Met | `test_human_tasks_and_events_are_exported_and_cleared_on_deletion` |
 | 27 | Lead intake digest replaced; agent and score digests replaced on clearing (decision 5) | Met | `test_lead_intake_deletion_replaces…`, `test_agent_run_and_lead_score_digests…` |
-| 28 | Requirement tables reviewed; history kept; evidence test (decision 4) | Met | `test_requirement_string_columns_are_the_reviewed…`, `test_requirement_history_survives…` |
+| 28 | Requirement tables reviewed; city and locality replaced; business terms and history kept; evidence tests (decision 4) | Met | `test_requirement_string_columns_are_the_reviewed…`, `test_requirement_history_survives…` |
 
 ## Retained and excluded data
 
@@ -75,6 +75,7 @@ No retention period has been approved for any category except the two that were 
 - No provider-side deletion exists; deletion is limited to Dealsflo's own records.
 - Retention periods are not approved for most categories, so they are not enforced.
 - Live submissions and live records keep their digests until deletion, for duplicate detection and audit.
+- Budget and property preferences linked to a customer are kept as business terms. The product owner should confirm this (decision 4).
 
 ## Table-by-table classification (generated)
 
@@ -104,8 +105,8 @@ All 92 database tables appear once, from `app/governance/table_inventory.py`. Th
 | `contact_do_not_disturb` | Dealsflo organization-owned | exported (crm.contacts) | - |  |
 | `contacts` | Dealsflo organization-owned | exported (crm.contacts) | - |  |
 | `customer_profiles` | Dealsflo organization-owned | exported (crm.customer_profiles) | fields cleared: customer_notes |  |
-| `customer_requirement_history` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
-| `customer_requirement_locations` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
+| `customer_requirement_history` | Dealsflo organization-owned | exported (crm.requirements) | city and locality inside snapshot locations replaced; version, change type and timestamps kept |  |
+| `customer_requirement_locations` | Dealsflo organization-owned | exported (crm.requirements) | city and locality replaced; row kept |  |
 | `customer_requirement_possession_parking_preferences` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
 | `customer_requirement_property_preferences` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
 | `customer_requirements` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
@@ -122,7 +123,7 @@ All 92 database tables appear once, from `app/governance/table_inventory.py`. Th
 | `follow_ups` | Dealsflo organization-owned | exported (crm.follow_ups) | fields cleared: title, description |  |
 | `human_task_events` | Dealsflo organization-owned | exported (automation.human_tasks) | retained: mandatory approval evidence and comment history (append-only, not altered) |  |
 | `human_tasks` | Dealsflo organization-owned | exported (automation.human_tasks) | fields cleared: title, instructions, decision_comment |  |
-| `import_batches` | Dealsflo organization-owned | file exported under documents.files; row not exported | file removed; source name and error text cleared; technical fields kept (contacts reference the row) | Uploaded file: exported and removed under documents.files. Batch row kept: imported contacts reference it (DFR1-050). |
+| `import_batches` | Dealsflo organization-owned | file exported under documents.files; row not exported | file removed; source name and error text cleared; technical fields kept (contacts reference the row) | Partially covered. The uploaded file is exported and removed under documents.files. The file name, the error summary and any personal text are cleared. Only a minimal technical record is kept: identifiers, organization, source format, content type, file size, status, row counts and timestamps. The row stays because imported contacts reference it with ON DELETE RESTRICT (DFR1-050). |
 | `inbound_webhook_deliveries` | Dealsflo organization-owned | not exported | not customer-deleted (governance record) | Delivery evidence: outcome, reason code and hashes. Accepted deliveries keep a redacted envelope. Security evidence, not customer data. Not exported. |
 | `inbound_webhook_endpoints` | Dealsflo (secret or credential) | not exported | not customer-deleted (never exported) | Inbound webhook endpoint configuration with an encrypted signing secret. Never exported; the secret is shown once at creation or rotation. |
 | `knowledge_chunks` | Dealsflo organization-owned | exported (ai.embeddings) | deleted on request |  |

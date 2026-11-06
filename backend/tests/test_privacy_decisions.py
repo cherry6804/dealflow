@@ -290,41 +290,52 @@ def test_requirement_string_columns_are_the_reviewed_codes_and_places_only() -> 
         assert string_columns <= reviewed | {"organization_id"}, (table_name, string_columns - reviewed)
 
 
-def test_requirement_history_survives_clearing_and_the_snapshot_holds_no_free_text(org, storage) -> None:
+def test_requirement_places_are_replaced_and_business_history_is_kept(org, storage) -> None:
     with SessionLocal() as db:
         organization = db.get(Organization, org.org.id)
         lead = create_lead(db, organization=organization)
-        requirement = CustomerRequirement(organization_id=org.org.id, lead_id=lead.id, status="ACTIVE", is_active=True)
+        requirement = CustomerRequirement(
+            organization_id=org.org.id, lead_id=lead.id, status="ACTIVE", is_active=True, budget_min=5000000,
+            budget_max=8000000, budget_currency="INR", transaction_type="SALE",
+        )
         db.add(requirement)
         db.flush()
         db.add(CustomerRequirementLocation(organization_id=org.org.id, customer_requirement_id=requirement.id,
                                            city="Bengaluru", locality="Whitefield", is_active=True))
         db.add(CustomerRequirementHistory(
             organization_id=org.org.id, customer_requirement_id=requirement.id, version=1, actor_id=org.owner.id,
-            change_type="created", snapshot={"requirement": {"status": "ACTIVE"},
-                                             "locations": [{"city": "Bengaluru", "locality": "Whitefield"}]},
+            change_type="created",
+            snapshot={"requirement": {"status": "ACTIVE", "budget_min": "5000000"},
+                      "locations": [{"city": "Bengaluru", "locality": "Whitefield"}]},
         ))
         db.commit()
+        requirement_id = requirement.id
         history_id = db.scalar(select(CustomerRequirementHistory.id).where(
             CustomerRequirementHistory.customer_requirement_id == requirement.id))
 
     request_id = _delete_category(org, "crm.requirements")
     execution = json.loads(_row(request_id).execution)["crm.requirements"]
-    assert execution["outcome"] == "not_executed"
-    assert "no_free_text_fields" in execution["reasons"]
+    assert execution["outcome"] == "anonymized_partial"
+    assert execution["count"] == 2  # the location row and the history snapshot
 
     with SessionLocal() as db:
+        location = db.scalar(select(CustomerRequirementLocation).where(
+            CustomerRequirementLocation.customer_requirement_id == requirement_id))
+        assert location is not None and location.city == "Redacted" and location.locality == "Redacted"
         history = db.get(CustomerRequirementHistory, history_id)
-        assert history is not None and history.snapshot["requirement"]["status"] == "ACTIVE"
+        assert history is not None
+        assert history.snapshot["locations"] == [{"city": "Redacted", "locality": "Redacted"}]
+        # Business terms and the history's structure stay.
+        assert history.snapshot["requirement"]["status"] == "ACTIVE"
+        assert history.version == 1 and history.change_type == "created"
+        requirement = db.get(CustomerRequirement, requirement_id)
+        assert requirement is not None and requirement.budget_max == 8000000 and requirement.transaction_type == "SALE"
+
     export_id = _request(org.org.id, org.owner.id, "export", ["crm.requirements"])
     _run(export_id, org.org.id)
-    document = _document_of(export_id, storage)
-    history_rows = document["categories"]["crm.requirements/requirement_history"]
-    assert history_rows, "the requirement history must be exported"
+    history_rows = _document_of(export_id, storage)["categories"]["crm.requirements/requirement_history"]
     serialized = json.dumps([row["snapshot"] for row in history_rows])
-    for personal_key in ("\"name\"", "\"phone\"", "\"email\"", "\"notes\""):
-        assert personal_key not in serialized
-    assert "Whitefield" in serialized  # the business location the requirement depends on is kept
+    assert "Whitefield" not in serialized and "Bengaluru" not in serialized
 
 
 # ---------------------------------------------------------------------------------------------------------------

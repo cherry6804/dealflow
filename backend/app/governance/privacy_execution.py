@@ -1504,8 +1504,7 @@ def _execute_category(
     if category_key in FREE_TEXT_CATEGORIES:
         return _clear_crm_free_text(db, organization_id, category_key)
     if category_key == REQUIREMENTS_CATEGORY:
-        # No approved free-text field exists on the requirement tables. Reported, never claimed as cleared.
-        return _Execution(OUTCOME_NOT_EXECUTED, not_changed=(REASON_NO_FREE_TEXT,))
+        return _clear_requirement_places(db, organization_id)
     if category_key == INVITATIONS_CATEGORY:
         count = _anonymize_invitations(db, organization_id, now=now, cutoff=cutoff)
         _require_verified(_verify_invitations(db, organization_id, cutoff=cutoff), category_key)
@@ -1544,6 +1543,73 @@ def _clear_crm_free_text(db: Session, organization_id: UUID, category_key: str) 
             *kept_fields(category_key),
             *RETAINED_RECORDS.get(category_key, ()),
             "contacts: identity is handled by the contacts category; linked records are kept",
+        ),
+    )
+
+
+def _requirement_places_remaining(db: Session, organization_id: UUID) -> bool:
+    """True while any location value, current or inside a history snapshot, still holds a real place name."""
+    if db.scalar(
+        select(func.count(CustomerRequirementLocation.id)).where(
+            CustomerRequirementLocation.organization_id == organization_id,
+            or_(
+                CustomerRequirementLocation.city != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementLocation.locality != FREE_TEXT_PLACEHOLDER,
+            ),
+        )
+    ):
+        return True
+    for history in db.scalars(
+        select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
+    ).all():
+        locations = history.snapshot.get("locations") if isinstance(history.snapshot, dict) else None
+        for entry in locations or []:
+            if any(entry.get(name) not in (None, FREE_TEXT_PLACEHOLDER) for name in ("city", "locality")):
+                return True
+    return False
+
+
+def _clear_requirement_places(db: Session, organization_id: UUID) -> _Execution:
+    """Replace the place names a customer asked for. These are personal preferences once linked to a customer.
+
+    Kept: the requirement's business terms (status, budget, transaction type), the property and parking codes,
+    and the history's version, change type and timestamps. Only city and locality values are replaced.
+    """
+    changed = 0
+    for location in db.scalars(
+        select(CustomerRequirementLocation).where(CustomerRequirementLocation.organization_id == organization_id)
+    ).all():
+        if location.city != FREE_TEXT_PLACEHOLDER or location.locality != FREE_TEXT_PLACEHOLDER:
+            location.city = FREE_TEXT_PLACEHOLDER
+            location.locality = FREE_TEXT_PLACEHOLDER
+            changed += 1
+    for history in db.scalars(
+        select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
+    ).all():
+        snapshot = history.snapshot
+        locations = snapshot.get("locations") if isinstance(snapshot, dict) else None
+        if not locations:
+            continue
+        replaced = []
+        for entry in locations:
+            updated = dict(entry)
+            for name in ("city", "locality"):
+                if name in updated:
+                    updated[name] = FREE_TEXT_PLACEHOLDER
+            replaced.append(updated)
+        if replaced != locations:
+            history.snapshot = {**snapshot, "locations": replaced}
+            changed += 1
+    db.flush()
+    _require_verified(not _requirement_places_remaining(db, organization_id), REQUIREMENTS_CATEGORY)
+    return _Execution(
+        OUTCOME_ANONYMIZED_PARTIAL,
+        changed,
+        0,
+        (
+            "customer_requirements: status, budget and transaction type kept as business terms",
+            "customer_requirement_property_preferences, customer_requirement_possession_parking_preferences: codes kept",
+            "customer_requirement_history: version, change type and timestamps kept; location values replaced",
         ),
     )
 
