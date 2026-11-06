@@ -320,15 +320,26 @@ def claim_due_events(
     return events
 
 
+_EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE_PATTERN = re.compile(r"\+?\d[\d\s()-]{7,}\d")
+
+
+def _redact_phone(match: re.Match[str]) -> str:
+    # Dates and counts are shorter than a phone number. Only a run of ten or more digits is redacted.
+    return "[phone]" if sum(character.isdigit() for character in match.group()) >= 10 else match.group()
+
+
 def _describe_error(exc: BaseException) -> str:
     """Return a bounded, single-line description. Never includes the traceback.
 
-    Database error messages echo the failing row, for example an email address in a unique-key
-    violation, so for database errors only the exception type is stored.
+    Database error messages echo the failing row, for example an email address in a unique-key violation, so for
+    database errors only the exception type is stored. Other messages are kept for operators, with email addresses
+    and phone-like numbers replaced (DFR1-050), because a validation message can name the value it rejected.
     """
     if isinstance(exc, SQLAlchemyError):
         return f"{type(exc).__name__}: database error (details withheld)"
     message = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
+    message = _PHONE_PATTERN.sub(_redact_phone, _EMAIL_PATTERN.sub("[email]", message))
     return message[:MAX_ERROR_LENGTH]
 
 

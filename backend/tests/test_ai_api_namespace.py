@@ -115,6 +115,10 @@ ROUTES: tuple[RouteCase, ...] = (
     RouteCase("privacy.requests.cancel", "POST",
               "/api/v1/governance/privacy/requests/{request_id}/cancel",
               "governance.privacy.manage", True, 200, prerequisite="privacy_request"),
+    RouteCase("privacy.requests.execute", "POST",
+              "/api/v1/governance/privacy/requests/{request_id}/execute",
+              "governance.privacy.manage", True, 202, prerequisite="deletion_request",
+              body={"confirm": True}),
     RouteCase("usage.breakdown.read", "GET", "/api/v1/governance/usage/breakdown",
               "governance.usage.read", False, 200),
     RouteCase("privacy.requests.export_download", "GET",
@@ -317,6 +321,12 @@ def _prepare(kind: str, owner, organization_id: uuid.UUID) -> dict[str, str]:
             response = client.post(
                 _canonical("/api/v1/governance/privacy/requests"),
                 json={"request_type": "export", "categories": ["crm.contacts"], "confirm": True},
+            )
+            key = "request_id"
+        elif kind == "deletion_request":
+            response = client.post(
+                _canonical("/api/v1/governance/privacy/requests"),
+                json={"request_type": "deletion", "categories": ["crm.contacts"], "confirm": True},
             )
             key = "request_id"
         elif kind == "credential":

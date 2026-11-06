@@ -21,7 +21,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import distinct, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.privacy_records import PrivacyDataRequest, RetentionPolicy
@@ -94,7 +94,7 @@ def run_retention(
     report: Counter = Counter()
     with session_factory() as db:
         organization_ids = db.scalars(
-            select(distinct(RetentionPolicy.organization_id))
+            select(RetentionPolicy.organization_id).distinct()
         ).all()
     report["organizations"] = len(organization_ids)
 

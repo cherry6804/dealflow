@@ -37,16 +37,19 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models.activity import Activity
 from app.db.models.ai_usage_event import AiUsageEvent
+from app.db.models.channel_policy import ContactDoNotDisturb
 from app.db.models.contact import Contact
+from app.db.models.contact_consent import ContactConsentRecord
 from app.db.models.customer_profile import CustomerProfile
 from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_history import CustomerRequirementHistory
@@ -63,14 +66,24 @@ from app.db.models.deal_negotiation import DealNegotiation, DealNegotiationHisto
 from app.db.models.deal_stage_history import DealStageHistory
 from app.db.models.document import Document
 from app.db.models.follow_up import FollowUp
+from app.db.models.import_batch import ImportBatch
+from app.db.models.knowledge_chunk import KnowledgeChunk
 from app.db.models.lead import Lead
+from app.db.models.notification import Notification
+from app.db.models.notification_preference import NotificationPreference
 from app.db.models.outbox_event import OutboxEvent
 from app.db.models.payment_milestone import PaymentMilestone
 from app.db.models.privacy_records import PrivacyDataRequest, RetentionPolicy
 from app.db.models.property import Property
 from app.db.models.referral import Referral
+from app.db.models.requirement_match_run import RequirementMatchRun
+from app.db.models.requirement_match_run_result import RequirementMatchRunResult
+from app.db.models.requirement_property_shortlist import RequirementPropertyShortlist
+from app.db.models.requirement_shortlist_event import RequirementShortlistEvent
+from app.db.models.site_visit import SiteVisit
 from app.db.models.team_invitation import TeamInvitation
-from app.governance.data_classification import CATEGORY_BY_KEY
+from app.db.models.team_member_removal import TeamMemberRemoval
+from app.governance.data_classification import CATEGORIES, CATEGORY_BY_KEY
 from app.governance.privacy import (
     REASON_EXECUTOR_NOT_BUILT,
     REASON_NO_EXPORT_PRODUCER,
@@ -91,6 +104,19 @@ from app.governance.privacy import (
     record_completed_privacy_event,
     record_requested_privacy_event,
 )
+from app.governance.privacy_derived import (
+    DERIVED_EXPORTERS,
+    DERIVED_SUB_RECORD_EXPORTERS,
+    PRIVACY_LIMITATIONS,
+    RETAINED_PERSONAL_DATA_HISTORY,
+    RETAINED_RECORDS,
+    RULE_CATEGORIES,
+    apply_clearing,
+    kept_fields,
+    pending_clearing,
+)
+from app.governance.table_inventory import DISPOSITION_EXPORTED, TABLE_INVENTORY
+from app.imports.storage import delete_stored_upload
 from app.knowledge.service import remove_document_chunks
 from app.multimodal.review import remove_document_review
 from app.outbox.service import enqueue_event, register_handler
@@ -108,7 +134,34 @@ DOCUMENTS_CATEGORY = "documents.files"
 CONTACTS_CATEGORY = "crm.contacts"
 INVITATIONS_CATEGORY = "team.invitations"
 EMAIL_CATEGORY = "messaging.email_outbox"
+LEADS_CATEGORY = "crm.leads"
+FOLLOW_UPS_CATEGORY = "crm.follow_ups"
+PROFILES_CATEGORY = "crm.customer_profiles"
+REQUIREMENTS_CATEGORY = "crm.requirements"
+DEALS_CATEGORY = "crm.deals"
+PROPERTIES_CATEGORY = "crm.properties"
+REFERRALS_CATEGORY = "crm.referrals"
+SITE_VISITS_CATEGORY = "crm.site_visits"
+MATCHING_CATEGORY = "crm.requirement_matching"
+NOTIFICATIONS_CATEGORY = "messaging.notifications"
+IMPORT_MEMBER_PREFIX = "imports"
+AI_EMBEDDINGS_CATEGORY = "ai.embeddings"
 
+# CRM categories whose approved free-text fields are cleared by a deletion (decision B).
+FREE_TEXT_CATEGORIES: frozenset[str] = RULE_CATEGORIES
+
+# Financial and contractual fields that a deletion keeps (decision B and G). Exported, never changed.
+PRESERVED_FINANCIAL_FIELDS: tuple[str, ...] = (
+    "payment_milestones.notes",
+    "payment_milestones.payment_reference",
+    "deal_commissions.terms",
+    "deal_commissions.payment_reference",
+)
+
+# Shown in place of a required text field that is cleared. Same placeholder as a redacted contact name.
+FREE_TEXT_PLACEHOLDER = REDACTED_NAME
+
+REASON_NO_FREE_TEXT = "no_free_text_fields"
 REASON_STORED_OBJECT_MISSING = "stored_object_missing"
 REASON_STORED_OBJECT_CHECKSUM = "stored_object_checksum_mismatch"
 REASON_EXPORT_SIZE_LIMIT = "export_size_limit_exceeded"
@@ -116,6 +169,7 @@ REASON_ENCRYPTED_PAYLOAD = "encrypted_payload_not_exportable"
 REASON_RETENTION_NOT_ENFORCED = "retention_enforcement_not_built"
 
 OUTCOME_DELETED = "deleted"
+OUTCOME_DELETED_PARTIAL = "deleted_partial"
 OUTCOME_ANONYMIZED = "anonymized"
 OUTCOME_ANONYMIZED_PARTIAL = "anonymized_partial"
 OUTCOME_NOT_EXECUTED = "not_executed"
@@ -124,7 +178,7 @@ OUTCOME_SKIPPED = "skipped"
 # Only these outcomes complete a category. Anything partial keeps the request partial.
 OUTCOMES_FULL = frozenset({OUTCOME_DELETED, OUTCOME_ANONYMIZED})
 OUTCOMES_PERFORMED = frozenset(
-    {OUTCOME_DELETED, OUTCOME_ANONYMIZED, OUTCOME_ANONYMIZED_PARTIAL}
+    {OUTCOME_DELETED, OUTCOME_DELETED_PARTIAL, OUTCOME_ANONYMIZED, OUTCOME_ANONYMIZED_PARTIAL}
 )
 
 # Exclusions decided by data shape, not by policy: no exporter can produce these honestly.
@@ -420,13 +474,16 @@ def _export_documents(
     *,
     max_bytes: int,
 ) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
-    """Export every document with its stored file, or none of them."""
+    """Export every document and import attachment with its stored file, or none of them."""
     documents = db.scalars(
         select(Document)
         .where(Document.organization_id == organization_id)
         .order_by(Document.created_at, Document.id)
     ).all()
-    declared = sum(document.file_size_bytes or 0 for document in documents)
+    batches = _import_attachment_batches(db, organization_id)
+    declared = sum(document.file_size_bytes or 0 for document in documents) + sum(
+        batch.file_size_bytes or 0 for batch in batches
+    )
     if declared > max_bytes:
         raise CategoryNotExportedError(REASON_EXPORT_SIZE_LIMIT)
 
@@ -451,6 +508,7 @@ def _export_documents(
         members[member] = content
         rows.append(
             {
+                "kind": "document",
                 "id": str(document.id),
                 "original_filename": document.original_filename,
                 "display_name": document.display_name,
@@ -463,7 +521,64 @@ def _export_documents(
                 "archive_path": member,
             }
         )
+
+    for batch in batches:
+        content = _read_import_attachment(batch, max_bytes=max_bytes - total)
+        total += len(content)
+        member = f"{IMPORT_MEMBER_PREFIX}/{batch.id}{_safe_extension(Path(batch.source_filename).suffix)}"
+        members[member] = content
+        rows.append(
+            {
+                "kind": "import_attachment",
+                "id": str(batch.id),
+                "original_filename": batch.source_filename,
+                "source_format": batch.source_format,
+                "content_type": batch.content_type,
+                "file_size_bytes": batch.file_size_bytes,
+                "status": batch.status,
+                "created_at": _iso(batch.created_at),
+                "archive_path": member,
+            }
+        )
     return rows, members
+
+
+def _import_attachment_batches(db: Session, organization_id: UUID, *, cutoff: datetime | None = None) -> list[ImportBatch]:
+    """Import batches whose uploaded file is still stored."""
+    query = (
+        select(ImportBatch)
+        .where(ImportBatch.organization_id == organization_id, ImportBatch.storage_key.is_not(None))
+        .order_by(ImportBatch.created_at, ImportBatch.id)
+    )
+    if cutoff is not None:
+        query = query.where(ImportBatch.created_at < cutoff)
+    return list(db.scalars(query).all())
+
+
+def _import_upload_path(storage_key: str) -> Path:
+    """Resolve an upload key inside the upload root. Any other path is refused."""
+    root = get_settings().upload_storage_dir.resolve()
+    candidate = (root / storage_key).resolve()
+    if candidate == root or root not in candidate.parents:
+        raise CategoryNotExportedError(REASON_STORED_OBJECT_MISSING)
+    return candidate
+
+
+def _read_import_attachment(batch: ImportBatch, *, max_bytes: int) -> bytes:
+    """Read one stored upload. A missing file or a size mismatch excludes the whole category."""
+    if not batch.storage_key:
+        raise CategoryNotExportedError(REASON_STORED_OBJECT_MISSING)
+    path = _import_upload_path(batch.storage_key)
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError as error:
+        raise CategoryNotExportedError(REASON_STORED_OBJECT_MISSING) from error
+    if size > max_bytes:
+        raise CategoryNotExportedError(REASON_EXPORT_SIZE_LIMIT)
+    content = path.read_bytes()
+    if batch.file_size_bytes is not None and batch.file_size_bytes != len(content):
+        raise CategoryNotExportedError(REASON_STORED_OBJECT_CHECKSUM)
+    return content
 
 
 def _export_customer_profiles(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
@@ -588,64 +703,354 @@ def _export_ai_usage(db: Session, organization_id: UUID) -> list[dict[str, Any]]
     ]
 
 
+def _id(value: UUID | None) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _export_properties(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    """Properties with their source and owner references as identifiers. Contact details are exported under contacts."""
+    rows = db.scalars(
+        select(Property).where(Property.organization_id == organization_id).order_by(Property.created_at, Property.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "status": row.status,
+            "transaction_type": row.transaction_type,
+            "price": row.price,
+            "currency": row.currency,
+            "rent": row.rent,
+            "security_deposit": row.security_deposit,
+            "maintenance_charge": row.maintenance_charge,
+            "address_line_1": row.address_line_1,
+            "address_line_2": row.address_line_2,
+            "locality": row.locality,
+            "city": row.city,
+            "state": row.state,
+            "postal_code": row.postal_code,
+            "property_type": row.property_type,
+            "bhk": row.bhk,
+            "built_up_area": row.built_up_area,
+            "carpet_area": row.carpet_area,
+            "floor_number": row.floor_number,
+            "total_floors": row.total_floors,
+            "source_contact_id": _id(row.source_contact_id),
+            "owner_contact_id": _id(row.owner_contact_id),
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_referrals(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(Referral).where(Referral.organization_id == organization_id).order_by(Referral.created_at, Referral.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "customer_profile_id": _id(row.customer_profile_id),
+            "referrer_contact_id": _id(row.referrer_contact_id),
+            "deal_id": _id(row.deal_id),
+            "referral_name": row.referral_name,
+            "referral_phone": row.referral_phone,
+            "referral_email": row.referral_email,
+            "status": row.status,
+            "notes": row.notes,
+            "is_active": row.is_active,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_site_visits(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(SiteVisit).where(SiteVisit.organization_id == organization_id).order_by(SiteVisit.scheduled_at, SiteVisit.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "property_id": str(row.property_id),
+            "lead_id": _id(row.lead_id),
+            "customer_profile_id": _id(row.customer_profile_id),
+            "owner_user_id": str(row.owner_user_id),
+            "scheduled_at": _iso(row.scheduled_at),
+            "ends_at": _iso(row.ends_at),
+            "status": row.status,
+            "outcome": row.outcome,
+            "notes": row.notes,
+            "feedback": row.feedback,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_match_runs(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    """Matching runs for requirements. Results, shortlists and shortlist events are sub-records."""
+    rows = db.scalars(
+        select(RequirementMatchRun)
+        .where(RequirementMatchRun.organization_id == organization_id)
+        .order_by(RequirementMatchRun.created_at, RequirementMatchRun.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "customer_requirement_id": str(row.customer_requirement_id),
+            "actor_id": str(row.actor_id),
+            "criteria_snapshot": row.criteria_snapshot,
+            "ruleset_version": row.ruleset_version,
+            "input_hash": row.input_hash,
+            "total_candidates": row.total_candidates,
+            "matched_candidates": row.matched_candidates,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_match_results(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(RequirementMatchRunResult)
+        .where(RequirementMatchRunResult.organization_id == organization_id)
+        .order_by(RequirementMatchRunResult.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "match_run_id": str(row.match_run_id),
+            "property_id": str(row.property_id),
+            "overall_match": row.overall_match,
+            "rank": row.rank,
+            "eligibility": row.eligibility,
+            "ranking_basis": row.ranking_basis,
+            "property_snapshot": row.property_snapshot,
+            "criteria_results_snapshot": row.criteria_results_snapshot,
+        }
+        for row in rows
+    ]
+
+
+def _export_shortlists(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(RequirementPropertyShortlist)
+        .where(RequirementPropertyShortlist.organization_id == organization_id)
+        .order_by(RequirementPropertyShortlist.created_at, RequirementPropertyShortlist.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "customer_requirement_id": str(row.customer_requirement_id),
+            "property_id": str(row.property_id),
+            "created_by_user_id": str(row.created_by_user_id),
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_shortlist_events(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(RequirementShortlistEvent)
+        .where(RequirementShortlistEvent.organization_id == organization_id)
+        .order_by(RequirementShortlistEvent.created_at, RequirementShortlistEvent.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "customer_requirement_id": str(row.customer_requirement_id),
+            "property_id": str(row.property_id),
+            "actor_id": str(row.actor_id),
+            "event_type": row.event_type,
+            "property_snapshot": row.property_snapshot,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_notifications(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(Notification).where(Notification.organization_id == organization_id).order_by(Notification.created_at, Notification.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "recipient_user_id": str(row.recipient_user_id),
+            "event_type": row.event_type,
+            "title": row.title,
+            "message": row.message,
+            "resource_type": row.resource_type,
+            "resource_id": row.resource_id,
+            "created_at": _iso(row.created_at),
+            "read_at": _iso(row.read_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_notification_preferences(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(NotificationPreference).where(NotificationPreference.organization_id == organization_id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "user_id": str(row.user_id),
+            "enabled": row.enabled,
+            "follow_ups_enabled": row.follow_ups_enabled,
+            "deals_enabled": row.deals_enabled,
+            "site_visits_enabled": row.site_visits_enabled,
+            "leads_enabled": row.leads_enabled,
+            "automation_enabled": row.automation_enabled,
+        }
+        for row in rows
+    ]
+
+
+def _export_consent_records(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(ContactConsentRecord)
+        .where(ContactConsentRecord.organization_id == organization_id)
+        .order_by(ContactConsentRecord.recorded_at, ContactConsentRecord.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "contact_id": str(row.contact_id),
+            "channel": row.channel,
+            "purpose": row.purpose,
+            "scope": row.scope,
+            "status": row.status,
+            "policy_version": row.policy_version,
+            "source": row.source,
+            "evidence_note": row.evidence_note,
+            "expires_at": _iso(row.expires_at),
+            "recorded_at": _iso(row.recorded_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_do_not_disturb(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(ContactDoNotDisturb).where(ContactDoNotDisturb.organization_id == organization_id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "contact_id": str(row.contact_id),
+            "set_by_user_id": str(row.set_by_user_id),
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _export_membership_removals(db: Session, organization_id: UUID) -> list[dict[str, Any]]:
+    rows = db.scalars(
+        select(TeamMemberRemoval)
+        .where(TeamMemberRemoval.organization_id == organization_id)
+        .order_by(TeamMemberRemoval.created_at, TeamMemberRemoval.id)
+    ).all()
+    return [
+        {
+            "id": str(row.id),
+            "membership_id": str(row.membership_id),
+            "target_user_id": str(row.target_user_id),
+            "actor_user_id": str(row.actor_user_id),
+            "reason": row.reason,
+            "seat_outcome": row.seat_outcome,
+            "created_at": _iso(row.created_at),
+        }
+        for row in rows
+    ]
+
+
 EXPORTERS: dict[str, Callable[[Session, UUID], list[dict[str, Any]]]] = {
     CONTACTS_CATEGORY: _export_contacts,
-    "crm.leads": _export_leads,
-    "crm.follow_ups": _export_follow_ups,
-    "crm.customer_profiles": _export_customer_profiles,
-    "crm.requirements": _export_requirements,
-    "crm.deals": _export_deals,
+    LEADS_CATEGORY: _export_leads,
+    FOLLOW_UPS_CATEGORY: _export_follow_ups,
+    PROFILES_CATEGORY: _export_customer_profiles,
+    REQUIREMENTS_CATEGORY: _export_requirements,
+    DEALS_CATEGORY: _export_deals,
+    PROPERTIES_CATEGORY: _export_properties,
+    REFERRALS_CATEGORY: _export_referrals,
+    SITE_VISITS_CATEGORY: _export_site_visits,
+    MATCHING_CATEGORY: _export_match_runs,
+    NOTIFICATIONS_CATEGORY: _export_notifications,
     "ai.usage": _export_ai_usage,
     INVITATIONS_CATEGORY: _export_invitations,
 }
 
-# CRM sub-records are exported under their parent category. Each list is part of that category.
+# Sub-records are exported under their parent category. Each list is part of that category.
 SUB_RECORD_EXPORTERS: dict[str, dict[str, Callable[[Session, UUID], list[dict[str, Any]]]]] = {
-    "crm.requirements": {
+    REQUIREMENTS_CATEGORY: {
         "requirement_locations": _export_requirement_locations,
         "requirement_property_preferences": _export_requirement_property_preferences,
         "requirement_parking_preferences": _export_requirement_parking_preferences,
         "requirement_history": _export_requirement_history,
     },
-    "crm.deals": {
+    DEALS_CATEGORY: {
         "negotiations": _export_deal_negotiations,
         "negotiation_history": _export_deal_negotiation_history,
         "stage_history": _export_deal_stage_history,
     },
-    "crm.follow_ups": {
+    FOLLOW_UPS_CATEGORY: {
         "activities": _export_activities,
+    },
+    MATCHING_CATEGORY: {
+        "results": _export_match_results,
+        "shortlists": _export_shortlists,
+        "shortlist_events": _export_shortlist_events,
+    },
+    NOTIFICATIONS_CATEGORY: {
+        "preferences": _export_notification_preferences,
+    },
+    CONTACTS_CATEGORY: {
+        "consent_records": _export_consent_records,
+        "do_not_disturb": _export_do_not_disturb,
+    },
+    INVITATIONS_CATEGORY: {
+        "membership_removals": _export_membership_removals,
     },
 }
 
+# Derived and operational records (privacy_derived). Merged here so one registry drives the export.
+EXPORTERS.update(DERIVED_EXPORTERS)
+for _category, _subs in DERIVED_SUB_RECORD_EXPORTERS.items():
+    SUB_RECORD_EXPORTERS.setdefault(_category, {}).update(_subs)
+
 # Organization-owned tables that no export covers. Every artifact lists them, so none is left out silently.
-NOT_COVERED_TABLES: tuple[dict[str, str], ...] = (
-    {"table": "billing_reconciliation_records", "classification": "billing.records", "reason": "Excluded by decision D3 until sensitive-field filtering and authorization are approved."},
-    {"table": "audit_events", "classification": "audit.events", "reason": "Excluded by decision D3 until sensitive-field filtering and authorization are approved."},
-    {"table": "properties", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "site_visits", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "referrals", "classification": "unclassified", "reason": "Pending classification (decision D9). Contains personal contact details."},
-    {"table": "notifications", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "notification_preferences", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "import_batches", "classification": "unclassified, document-like (decision D13)", "reason": "Ownership, dependencies and retention to be confirmed before export or deletion."},
-    {"table": "organization_memberships", "classification": "SIBVO-owned (decision D6)", "reason": "SIBVO is the authority for membership. Requests are answered by SIBVO."},
-    {"table": "subscriptions", "classification": "SIBVO-owned (decision D6)", "reason": "SIBVO is the authority for subscriptions and billing. Requests are answered by SIBVO."},
-    {"table": "roles", "classification": "configuration", "reason": "Pending classification (decision D9)."},
-    {"table": "organization_capability_settings", "classification": "configuration", "reason": "Pending classification (decision D9)."},
-    {"table": "organization_usage_budgets", "classification": "configuration and billing", "reason": "Pending classification (decision D9)."},
-    {"table": "auth_sessions", "classification": "security", "reason": "Never exported. Contains session credentials."},
-    {"table": "automation_rules", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "automation_executions", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "requirement_match_runs", "classification": "unclassified, derived", "reason": "Pending classification (decision D9)."},
-    {"table": "requirement_match_run_results", "classification": "unclassified, derived", "reason": "Pending classification (decision D9)."},
-    {"table": "requirement_property_shortlists", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "requirement_shortlist_events", "classification": "unclassified", "reason": "Pending classification (decision D9)."},
-    {"table": "team_member_removals", "classification": "unclassified, personal removal reasons", "reason": "Pending classification (decision D9)."},
-    {"table": "email_outbox_messages", "classification": "platform, no organization column", "reason": "Outside organization export and deletion (decision D5)."},
-    {"table": "privacy_data_requests", "classification": "governance record", "reason": "Request records are not customer data. Retained as governance evidence."},
-    {"table": "privacy_legal_holds", "classification": "governance record", "reason": "Hold records are not customer data. Retained as governance evidence."},
-    {"table": "privacy_retention_policies", "classification": "governance record", "reason": "Policy records are not customer data. Retained as governance evidence."},
-    {"table": "outbox_events", "classification": "system record", "reason": "Not customer data."},
+NOT_COVERED_TABLES: tuple[dict[str, str], ...] = tuple(
+    {"table": table, "classification": entry.disposition, "reason": entry.reason or entry.category or ""}
+    for table, entry in TABLE_INVENTORY.items()
+    if entry.disposition != DISPOSITION_EXPORTED
 )
+
+# Data that belongs to SIBVO. Dealsflo does not change it. Every export states it and the route to use.
+SIBVO_OWNED_CATEGORIES: tuple[dict[str, str], ...] = (
+    {"category": "Organization memberships and roles", "tables": "organization_memberships, membership_roles", "owner": "SIBVO (decision D6)"},
+    {"category": "Subscriptions, plans and entitlements", "tables": "subscriptions, plans, plan_entitlements, organization_entitlement_snapshots", "owner": "SIBVO (decision D6)"},
+    {"category": "Identity links", "tables": "sibvo_identity_links, sibvo_organization_links", "owner": "SIBVO (decision D6)"},
+    {"category": "Platform billing records", "tables": "billing_reconciliation_records, billing_webhook_events", "owner": "SIBVO (decision F). Export excluded by decision D3."},
+    {"category": "User accounts", "tables": "users", "owner": "SIBVO (decision F)"},
+)
+SIBVO_PRIVACY_ROUTE = (
+    "Requests about identity, organization membership, subscriptions, plans and platform billing are answered by "
+    "SIBVO's platform privacy process. Dealsflo does not change these records. See "
+    "docs/architecture/sibvo-dealsflo-sso-contract.md."
+)
+
+
+def _not_implemented_categories() -> list[dict[str, str]]:
+    """Categories whose producer does not exist yet. Listed so no export implies they were checked."""
+    return [
+        {"category_key": category.key, "label": category.label, "reason": category.note or "Producer not built."}
+        for category in CATEGORIES
+        if not category.producer_exists
+    ]
 
 
 def enqueue_processing(db: Session, request: PrivacyDataRequest) -> None:
@@ -659,6 +1064,38 @@ def enqueue_processing(db: Session, request: PrivacyDataRequest) -> None:
         idempotency_key=f"privacy-request:{request.id}:process",
         payload={"request_id": str(request.id)},
     )
+
+
+def request_deletion_execution(
+    db: Session,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID,
+    request_id: UUID,
+) -> PrivacyDataRequest:
+    """Start execution of a recorded deletion. The explicit, audited step that precedes any destructive work.
+
+    Only a request in its eligibility-recorded state can start. Holds are checked again by the worker before each
+    category runs, so a hold placed after this step still blocks it. Repeating the call queues one event, because
+    the processing event carries an idempotency key.
+    """
+    request = _load_request(db, organization_id=organization_id, request_id=request_id)
+    if request.request_type != PrivacyDataRequest.TYPE_DELETION:
+        raise InvalidRequestStateError("Only deletion requests are executed.")
+    if request.status != STATUS_ELIGIBILITY_RECORDED:
+        raise InvalidRequestStateError(f"Deletion is {request.status} and cannot be executed.")
+    record_requested_privacy_event(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action="privacy.deletion.execution_requested",
+        resource_type="privacy_request",
+        resource_id=str(request.id),
+        metadata={"categories": json.loads(request.categories)},
+    )
+    enqueue_processing(db, request)
+    db.flush()
+    return request
 
 
 def _default_export_reason(category_key: str) -> str:
@@ -753,6 +1190,15 @@ def generate_export(
             "not_exported": not_exported,
             # Organization-owned data that no export covers. Listed in every artifact, never silently omitted.
             "not_covered": [dict(item) for item in NOT_COVERED_TABLES],
+            # Categories whose producers are not built. Never reported as checked.
+            "not_implemented_categories": _not_implemented_categories(),
+            # Data owned by SIBVO, with the route for requests about it.
+            "sibvo_owned": [dict(item) for item in SIBVO_OWNED_CATEGORIES],
+            "sibvo_privacy_route": SIBVO_PRIVACY_ROUTE,
+            # What this export and its deletions do not cover, stated where a reader of the artifact will see it.
+            "limitations": [dict(item) for item in PRIVACY_LIMITATIONS],
+            # Personal-data history kept because it is append-only or mandatory evidence.
+            "retained_personal_data_history": [dict(item) for item in RETAINED_PERSONAL_DATA_HISTORY],
         },
         "categories": included,
     }
@@ -789,6 +1235,7 @@ class _Execution:
     count: int = 0
     deferred: int = 0
     not_changed: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
 
 
 def _delete_documents(
@@ -806,16 +1253,79 @@ def _delete_documents(
     for document in documents:
         if document.storage_key:
             keys.append(document.storage_key)
-            try:
-                storage.delete(document.storage_key)
-            except ObjectNotFoundError:
-                # Removed by an earlier attempt. The row removal below still completes.
-                pass
         remove_document_chunks(db, organization_id=organization_id, document_id=document.id)
         remove_document_review(db, organization_id=organization_id, document_id=document.id)
         db.delete(document)
+    # Rows first, then objects. If an object cannot be removed, the savepoint rolls the rows back, so no
+    # row is left pointing at an object that was already deleted. A missing object counts as removed.
     db.flush()
+    for key in keys:
+        try:
+            storage.delete(key)
+        except ObjectNotFoundError:
+            pass
     return len(documents), keys
+
+
+def _import_batches_to_clear(db: Session, organization_id: UUID, *, cutoff: datetime | None = None) -> list[ImportBatch]:
+    """Batches that still hold personal content: a stored file, a file name, or a per-row error summary.
+
+    A batch whose file was removed earlier can still hold a name or error text, so it is included.
+    """
+    query = (
+        select(ImportBatch)
+        .where(
+            ImportBatch.organization_id == organization_id,
+            or_(
+                ImportBatch.storage_key.is_not(None),
+                ImportBatch.error_summary.is_not(None),
+                ImportBatch.source_filename != FREE_TEXT_PLACEHOLDER,
+            ),
+        )
+        .order_by(ImportBatch.created_at, ImportBatch.id)
+    )
+    if cutoff is not None:
+        query = query.where(ImportBatch.created_at < cutoff)
+    return list(db.scalars(query).all())
+
+
+def _delete_import_attachments(
+    db: Session,
+    organization_id: UUID,
+    *,
+    cutoff: datetime | None = None,
+) -> tuple[int, list[str]]:
+    """Remove stored import uploads and the personal text on each batch.
+
+    The batch row is kept with its technical fields only: identifiers, format, counts, status and timestamps.
+    Imported contacts reference the row with RESTRICT, so it cannot be removed.
+    """
+    batches = _import_batches_to_clear(db, organization_id, cutoff=cutoff)
+    keys: list[str] = []
+    for batch in batches:
+        if batch.storage_key:
+            keys.append(batch.storage_key)
+        batch.storage_key = None
+        batch.storage_backend = None
+        batch.source_filename = FREE_TEXT_PLACEHOLDER
+        batch.error_summary = None
+    db.flush()
+    for key in keys:
+        # The same rule as the upload path: a key outside the root raises and rolls the change back.
+        delete_stored_upload(key)
+    return len(batches), keys
+
+
+def _verify_import_attachments(
+    db: Session,
+    organization_id: UUID,
+    keys: list[str],
+    *,
+    cutoff: datetime | None,
+) -> bool:
+    if _import_batches_to_clear(db, organization_id, cutoff=cutoff):
+        return False
+    return not any(_import_upload_path(key).exists() for key in keys if key)
 
 
 def _verify_documents(
@@ -903,6 +1413,7 @@ def _anonymize_contacts(db: Session, organization_id: UUID) -> tuple[int, int]:
     ).all()
     anonymized = 0
     deferred = 0
+    anonymized_ids: list[UUID] = []
     for contact in contacts:
         if contact.id in dependent:
             deferred += 1
@@ -912,7 +1423,20 @@ def _anonymize_contacts(db: Session, organization_id: UUID) -> tuple[int, int]:
         contact.email = None
         contact.phone = None
         contact.is_active = False
+        anonymized_ids.append(contact.id)
         anonymized += 1
+    if anonymized_ids:
+        # The consent evidence note is free text written about the same person, so it is cleared with the contact.
+        # The consent decision itself is kept as evidence.
+        db.execute(
+            update(ContactConsentRecord)
+            .where(
+                ContactConsentRecord.organization_id == organization_id,
+                ContactConsentRecord.contact_id.in_(anonymized_ids),
+                ContactConsentRecord.evidence_note.is_not(None),
+            )
+            .values(evidence_note=None)
+        )
     db.flush()
     return anonymized, deferred
 
@@ -961,10 +1485,27 @@ def _execute_category(
 ) -> _Execution:
     if category_key == DOCUMENTS_CATEGORY:
         count, keys = _delete_documents(db, organization_id, storage, cutoff=cutoff)
+        attachments, attachment_keys = _delete_import_attachments(db, organization_id, cutoff=cutoff)
         _require_verified(
-            _verify_documents(db, organization_id, storage, keys, cutoff=cutoff), category_key
+            _verify_documents(db, organization_id, storage, keys, cutoff=cutoff)
+            and _verify_import_attachments(db, organization_id, attachment_keys, cutoff=cutoff),
+            category_key,
         )
+        if attachments:
+            # The file is gone, but the batch row stays because imported contacts reference it. Never reported as full.
+            return _Execution(
+                OUTCOME_DELETED_PARTIAL,
+                count + attachments,
+                0,
+                ("import_batches: rows kept because imported contacts reference them",),
+            )
         return _Execution(OUTCOME_DELETED, count)
+    if category_key == AI_EMBEDDINGS_CATEGORY:
+        return _delete_knowledge_chunks(db, organization_id)
+    if category_key in FREE_TEXT_CATEGORIES:
+        return _clear_crm_free_text(db, organization_id, category_key)
+    if category_key == REQUIREMENTS_CATEGORY:
+        return _clear_requirement_personal_terms(db, organization_id)
     if category_key == INVITATIONS_CATEGORY:
         count = _anonymize_invitations(db, organization_id, now=now, cutoff=cutoff)
         _require_verified(_verify_invitations(db, organization_id, cutoff=cutoff), category_key)
@@ -987,6 +1528,232 @@ def _execute_category(
     return _Execution(OUTCOME_NOT_EXECUTED)
 
 
+def _clear_crm_free_text(db: Session, organization_id: UUID, category_key: str) -> _Execution:
+    """Clear approved free-text fields and keep every structural record. Verified before it reports success.
+
+    The fields are defined per model in ``privacy_derived.CLEARING_RULES``. The same check runs for every category.
+    """
+    changed = apply_clearing(db, organization_id, category_key)
+    _require_verified(not pending_clearing(db, organization_id, category_key), category_key)
+    return _Execution(
+        OUTCOME_ANONYMIZED_PARTIAL,
+        changed,
+        0,
+        (
+            *(PRESERVED_FINANCIAL_FIELDS if category_key == DEALS_CATEGORY else ()),
+            *kept_fields(category_key),
+            *RETAINED_RECORDS.get(category_key, ()),
+            "contacts: identity is handled by the contacts category; linked records are kept",
+        ),
+    )
+
+
+def _requirement_personal_values_remaining(db: Session, organization_id: UUID) -> bool:
+    """True while any customer-linked personal value still stands, in a current row or inside a history snapshot."""
+    requirement_values = (
+        CustomerRequirement.budget_min,
+        CustomerRequirement.budget_max,
+        CustomerRequirement.budget_currency,
+        CustomerRequirement.transaction_type,
+    )
+    if db.scalar(
+        select(func.count(CustomerRequirement.id)).where(
+            CustomerRequirement.organization_id == organization_id,
+            or_(*(column.is_not(None) for column in requirement_values)),
+        )
+    ):
+        return True
+    if db.scalar(
+        select(func.count(CustomerRequirementLocation.id)).where(
+            CustomerRequirementLocation.organization_id == organization_id,
+            or_(
+                CustomerRequirementLocation.city != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementLocation.locality != FREE_TEXT_PLACEHOLDER,
+            ),
+        )
+    ):
+        return True
+    if db.scalar(
+        select(func.count(CustomerRequirementPropertyPreference.id)).where(
+            CustomerRequirementPropertyPreference.organization_id == organization_id,
+            or_(
+                CustomerRequirementPropertyPreference.property_type != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPropertyPreference.bhk_min.is_not(None),
+                CustomerRequirementPropertyPreference.bhk_max.is_not(None),
+            ),
+        )
+    ):
+        return True
+    if db.scalar(
+        select(func.count(CustomerRequirementPossessionParkingPreference.id)).where(
+            CustomerRequirementPossessionParkingPreference.organization_id == organization_id,
+            or_(
+                CustomerRequirementPossessionParkingPreference.possession_preference != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPossessionParkingPreference.parking_preference != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPossessionParkingPreference.parking_spaces_min.is_not(None),
+            ),
+        )
+    ):
+        return True
+    for history in db.scalars(
+        select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
+    ).all():
+        if _snapshot_personal_values(history.snapshot):
+            return True
+    return False
+
+
+_SNAPSHOT_REQUIREMENT_FIELDS = ("budget_min", "budget_max", "budget_currency")
+_SNAPSHOT_PROPERTY_FIELDS = ("bhk_min", "bhk_max")
+_SNAPSHOT_PARKING_FIELDS = ("parking_spaces_min",)
+
+
+def _snapshot_personal_values(snapshot: Any) -> bool:
+    """True if a history snapshot still carries a customer-linked value that deletion replaces."""
+    if not isinstance(snapshot, dict):
+        return False
+    requirement = snapshot.get("requirement") or {}
+    if any(requirement.get(name) is not None for name in _SNAPSHOT_REQUIREMENT_FIELDS):
+        return True
+    for entry in snapshot.get("locations") or []:
+        if any(entry.get(name) not in (None, FREE_TEXT_PLACEHOLDER) for name in ("city", "locality")):
+            return True
+    for entry in snapshot.get("property_preferences") or []:
+        if entry.get("property_type") not in (None, FREE_TEXT_PLACEHOLDER):
+            return True
+        if any(entry.get(name) is not None for name in _SNAPSHOT_PROPERTY_FIELDS):
+            return True
+    parking = snapshot.get("possession_parking_preference") or {}
+    if any(parking.get(name) not in (None, FREE_TEXT_PLACEHOLDER)
+           for name in ("possession_preference", "parking_preference")):
+        return True
+    return any(parking.get(name) is not None for name in _SNAPSHOT_PARKING_FIELDS)
+
+
+def _replace_snapshot_personal_values(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the snapshot with customer-linked values replaced. Keys, versions and structure are kept."""
+    updated = dict(snapshot)
+    requirement = dict(updated.get("requirement") or {})
+    for name in _SNAPSHOT_REQUIREMENT_FIELDS:
+        if name in requirement:
+            requirement[name] = None
+    if "requirement" in updated:
+        updated["requirement"] = requirement
+    if "locations" in updated:
+        updated["locations"] = [
+            {**entry, **{name: FREE_TEXT_PLACEHOLDER for name in ("city", "locality") if name in entry}}
+            for entry in updated["locations"] or []
+        ]
+    if "property_preferences" in updated:
+        updated["property_preferences"] = [
+            {
+                **entry,
+                **({"property_type": FREE_TEXT_PLACEHOLDER} if "property_type" in entry else {}),
+                **{name: None for name in _SNAPSHOT_PROPERTY_FIELDS if name in entry},
+            }
+            for entry in updated["property_preferences"] or []
+        ]
+    if isinstance(updated.get("possession_parking_preference"), dict):
+        parking = dict(updated["possession_parking_preference"])
+        for name in ("possession_preference", "parking_preference"):
+            if name in parking:
+                parking[name] = FREE_TEXT_PLACEHOLDER
+        for name in _SNAPSHOT_PARKING_FIELDS:
+            if name in parking:
+                parking[name] = None
+        updated["possession_parking_preference"] = parking
+    return updated
+
+
+def _clear_requirement_personal_terms(db: Session, organization_id: UUID) -> _Execution:
+    """Clear customer-linked budget, place, property and parking values on current rows and in history snapshots.
+
+    Removed (personal, customer-linked): budget minimum and maximum, budget currency, transaction type, place names,
+    property type, BHK range, possession and parking preferences, parking spaces.
+    Retained (business history and structure): requirement status and active flag, the lead and profile links, the
+    history versions, change types and timestamps, and the identifiers of every row.
+    """
+    changed = 0
+    for requirement in db.scalars(
+        select(CustomerRequirement).where(CustomerRequirement.organization_id == organization_id)
+    ).all():
+        cleared = False
+        for name in ("budget_min", "budget_max", "budget_currency", "transaction_type"):
+            if getattr(requirement, name) is not None:
+                setattr(requirement, name, None)
+                cleared = True
+        changed += int(cleared)
+    for location in db.scalars(
+        select(CustomerRequirementLocation).where(CustomerRequirementLocation.organization_id == organization_id)
+    ).all():
+        if location.city != FREE_TEXT_PLACEHOLDER or location.locality != FREE_TEXT_PLACEHOLDER:
+            location.city = FREE_TEXT_PLACEHOLDER
+            location.locality = FREE_TEXT_PLACEHOLDER
+            changed += 1
+    for preference in db.scalars(
+        select(CustomerRequirementPropertyPreference).where(
+            CustomerRequirementPropertyPreference.organization_id == organization_id
+        )
+    ).all():
+        if preference.property_type != FREE_TEXT_PLACEHOLDER or preference.bhk_min is not None or preference.bhk_max is not None:
+            preference.property_type = FREE_TEXT_PLACEHOLDER
+            preference.bhk_min = None
+            preference.bhk_max = None
+            changed += 1
+    for parking in db.scalars(
+        select(CustomerRequirementPossessionParkingPreference).where(
+            CustomerRequirementPossessionParkingPreference.organization_id == organization_id
+        )
+    ).all():
+        if (
+            parking.possession_preference != FREE_TEXT_PLACEHOLDER
+            or parking.parking_preference != FREE_TEXT_PLACEHOLDER
+            or parking.parking_spaces_min is not None
+        ):
+            parking.possession_preference = FREE_TEXT_PLACEHOLDER
+            parking.parking_preference = FREE_TEXT_PLACEHOLDER
+            parking.parking_spaces_min = None
+            changed += 1
+    for history in db.scalars(
+        select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
+    ).all():
+        if _snapshot_personal_values(history.snapshot):
+            history.snapshot = _replace_snapshot_personal_values(history.snapshot)
+            changed += 1
+    db.flush()
+    _require_verified(not _requirement_personal_values_remaining(db, organization_id), REQUIREMENTS_CATEGORY)
+    return _Execution(
+        OUTCOME_ANONYMIZED_PARTIAL,
+        changed,
+        0,
+        (
+            "retained: requirement status, active flag and lead and profile links (workflow state and referential integrity)",
+            "retained: history versions, change types and timestamps (business history structure)",
+            "retained: property and parking records keep their identifiers, active flag and timestamps",
+        ),
+        removed=(
+            "removed: budget minimum, budget maximum and budget currency (current row and history snapshots)",
+            "removed: transaction type (current row)",
+            "removed: place names, city and locality (current row, location rows and history snapshots)",
+            "removed: property type and BHK range (preference rows and history snapshots)",
+            "removed: possession and parking preferences and parking spaces (preference rows and history snapshots)",
+        ),
+    )
+
+
+def _delete_knowledge_chunks(db: Session, organization_id: UUID) -> _Execution:
+    """Remove derived knowledge chunks. They are copies of document text and are rebuilt from the source document."""
+    chunks = db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.organization_id == organization_id)).all()
+    for chunk in chunks:
+        db.delete(chunk)
+    db.flush()
+    remaining = db.scalar(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.organization_id == organization_id)
+    )
+    _require_verified(remaining == 0, AI_EMBEDDINGS_CATEGORY)
+    return _Execution(OUTCOME_DELETED, len(chunks))
+
+
 def _execution_record(
     execution: _Execution, reasons: list[str] | None = None
 ) -> dict[str, Any]:
@@ -1000,6 +1767,9 @@ def _execution_record(
         record["deferred_dependent"] = execution.deferred
     if execution.not_changed:
         record["not_changed"] = list(execution.not_changed)
+    if execution.removed:
+        # Personal values removed by this deletion, reported apart from the retained business history.
+        record["removed"] = list(execution.removed)
     if reasons:
         record["reasons"] = reasons
     return record
@@ -1049,7 +1819,8 @@ def execute_deletion(
             db, request.organization_id, key, storage=storage, now=now
         )
         if result.outcome == OUTCOME_NOT_EXECUTED:
-            execution[key] = _execution_record(result, [REASON_EXECUTOR_NOT_BUILT])
+            reasons = list(result.not_changed) or [REASON_EXECUTOR_NOT_BUILT]
+            execution[key] = _execution_record(result, reasons)
         else:
             execution[key] = _execution_record(result)
         outcomes[key] = result.outcome
@@ -1138,7 +1909,11 @@ def enforce_retention(
             action="privacy.retention.requested",
             resource_type="retention_policy",
             resource_id=key,
-            metadata={"cutoff": cutoff.isoformat(), "retention_days": policy.retention_days},
+            metadata={
+                "cutoff": cutoff.isoformat(),
+                "retention_days": policy.retention_days,
+                "policy_version": policy.version,
+            },
         )
         result = _execute_category(
             db, organization_id, key, storage=storage, now=now, cutoff=cutoff
@@ -1146,6 +1921,7 @@ def enforce_retention(
         record = _execution_record(result)
         record["cutoff"] = cutoff.isoformat()
         record["retention_days"] = policy.retention_days
+        record["policy_version"] = policy.version
         report[key] = record
         record_completed_privacy_event(
             db,

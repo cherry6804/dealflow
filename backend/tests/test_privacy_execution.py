@@ -209,6 +209,11 @@ def _archive_document(storage, key: str) -> dict:
     return json.loads(_archive_members(storage, key)["export.json"])
 
 
+def _top_level_exported(document: dict) -> list[str]:
+    """Exported categories without their sub-record keys (``category/sub``)."""
+    return sorted(key for key in document["coverage"]["exported"] if "/" not in key)
+
+
 def test_export_is_generated_with_an_honest_coverage_record(tenant, storage) -> None:
     organization_id, user_id = tenant
     contact_id = _contact(organization_id)
@@ -225,7 +230,7 @@ def test_export_is_generated_with_an_honest_coverage_record(tenant, storage) -> 
         == f"{EXPORT_KEY_PREFIX}/{organization_id}/{request_id}.zip"
     )
     document = _archive_document(storage, row.artifact_reference)
-    assert document["coverage"]["exported"] == ["crm.contacts"]
+    assert _top_level_exported(document) == ["crm.contacts"]
     assert document["coverage"]["not_exported"] == [
         {"category_key": "messaging.conversations", "reason": "no_producer_yet"}
     ]
@@ -579,7 +584,7 @@ def test_a_missing_stored_object_excludes_the_whole_documents_category(
     row = _row(request_id)
     assert row.status == "ready_partial"
     document = _archive_document(storage, row.artifact_reference)
-    assert document["coverage"]["exported"] == ["crm.contacts"]
+    assert _top_level_exported(document) == ["crm.contacts"]
     assert document["coverage"]["not_exported"] == [
         {"category_key": "documents.files", "reason": "stored_object_missing"}
     ]
@@ -845,7 +850,7 @@ def test_every_artifact_lists_organization_data_that_is_not_covered(tenant, stor
     # Decision D5: platform email is outside organization export.
     assert "email_outbox_messages" in not_covered
     # Decision D6: SIBVO-owned membership and subscriptions are referred to SIBVO.
-    assert not_covered["subscriptions"]["classification"] == "SIBVO-owned (decision D6)"
+    assert not_covered["subscriptions"]["classification"] == "sibvo_owned"
     assert all(item["reason"] for item in coverage["not_covered"])
 
 
@@ -887,7 +892,7 @@ def test_crm_sub_records_are_exported_under_their_parent_category(tenant, storag
                 activity_type="NOTE",
                 title="Called about the flat",
                 description="Wants a south-facing unit",
-                details={"internal": "not exported"},
+                details={"internal": "internal-detail-sentinel"},
                 occurred_at=datetime.now(UTC),
             )
         )
@@ -903,7 +908,7 @@ def test_crm_sub_records_are_exported_under_their_parent_category(tenant, storag
     assert activities[0]["title"] == "Called about the flat"
     # Actor identifiers and unreviewed JSON details are never exported.
     serialized = json.dumps(document)
-    assert "not exported" not in serialized
+    assert "internal-detail-sentinel" not in serialized
     assert str(user_id) not in serialized
 
 
