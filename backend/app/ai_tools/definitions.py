@@ -42,6 +42,34 @@ class ToolParameter:
     maximum: int | None = None
 
 
+# Deepest nesting an output contract may declare. The result object is level 1, so this allows an object inside an object
+# inside an object, and no deeper.
+MAX_OUTPUT_DEPTH = 3
+
+
+class OutputType(StrEnum):
+    STRING = "string"
+    INTEGER = "integer"
+    BOOLEAN = "boolean"
+    OBJECT = "object"
+    ARRAY = "array"
+
+
+@dataclass(frozen=True)
+class OutputField:
+    """One declared field of a tool result. An object declares its ``fields``; an array declares its ``items``.
+
+    A field that is not ``required`` may be absent. A field that is ``nullable`` may hold None. Nothing else is accepted.
+    """
+
+    name: str
+    type: OutputType
+    required: bool = True
+    nullable: bool = False
+    fields: tuple[OutputField, ...] = ()
+    items: OutputField | None = None
+
+
 # A handler receives a validated, typed argument mapping and returns JSON-safe primitives only. It must not return ORM rows.
 ToolHandler = Callable[[Session, UUID, dict[str, Any]], dict[str, Any]]
 
@@ -56,6 +84,17 @@ class ToolDefinition:
     handler: ToolHandler
     read_only: bool = True
     timeout_ms: int = DEFAULT_TIMEOUT_MS
+    # Contract version. A caller may pin a version; any other version is refused, so a changed contract never runs silently.
+    version: int = 1
+    # The exact shape of the result. Every key must be declared, required keys must be present, and every value must match
+    # its declared type. A result that does not match is refused and never returned.
+    output_schema: tuple[OutputField, ...] = ()
+    # The record the call acts on, for the audit trail. ``target_parameter`` names the argument that holds its UUID. Only the
+    # identifier is recorded, never the record's contents.
+    target_type: str | None = None
+    target_parameter: str | None = None
+    # An unavailable tool stays in the catalogue for review but cannot be invoked through the registry.
+    available: bool = True
 
     def parameter(self, name: str) -> ToolParameter | None:
         return next((item for item in self.parameters if item.name == name), None)

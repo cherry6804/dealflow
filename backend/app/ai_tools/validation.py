@@ -11,7 +11,13 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
-from app.ai_tools.definitions import ParameterType, ToolDefinition, ToolParameter
+from app.ai_tools.definitions import (
+    OutputField,
+    OutputType,
+    ParameterType,
+    ToolDefinition,
+    ToolParameter,
+)
 
 
 class InvalidArgumentsError(ValueError):
@@ -64,3 +70,53 @@ def validate_arguments(definition: ToolDefinition, raw: Mapping[str, object]) ->
             continue
         typed[name] = _check_value(parameter, raw[name])
     return typed
+
+
+class OutputContractError(ValueError):
+    """A handler result does not match its declared output contract. The detail names a field, never a value."""
+
+
+def validate_output(definition: ToolDefinition, data: object) -> dict[str, Any]:
+    """Check a handler result against the tool's exact output contract, and return a new, fully checked copy.
+
+    Every key must be declared, required keys must be present, nullable is the only way a value may be None, and each value
+    must match its declared type. Nested objects are checked with their own declared fields, and arrays with their declared
+    item type. Nothing is returned until the whole result has passed, so a partly valid result is never exposed.
+    """
+    return _check_object(definition.output_schema, data, path="result")
+
+
+def _check_object(fields: tuple[OutputField, ...], value: object, *, path: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OutputContractError(f"{path} must be an object.")
+    declared = {field.name: field for field in fields}
+    if any(key not in declared for key in value):
+        raise OutputContractError(f"{path} has an undeclared field.")
+    checked: dict[str, Any] = {}
+    for field in fields:
+        if field.name not in value:
+            if field.required:
+                raise OutputContractError(f"{path}.{field.name} is required.")
+            continue
+        checked[field.name] = _check_result_value(field, value[field.name], path=f"{path}.{field.name}")
+    return checked
+
+
+def _check_result_value(field: OutputField, value: object, *, path: str) -> Any:
+    if value is None:
+        if field.nullable:
+            return None
+        raise OutputContractError(f"{path} may not be null.")
+    if field.type is OutputType.OBJECT:
+        return _check_object(field.fields, value, path=path)
+    if field.type is OutputType.ARRAY:
+        if not isinstance(value, list) or field.items is None:
+            raise OutputContractError(f"{path} must be an array.")
+        return [_check_result_value(field.items, item, path=f"{path}[{index}]") for index, item in enumerate(value)]
+    if field.type is OutputType.STRING and isinstance(value, str):
+        return value
+    if field.type is OutputType.BOOLEAN and isinstance(value, bool):
+        return value
+    if field.type is OutputType.INTEGER and isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise OutputContractError(f"{path} has the wrong type.")

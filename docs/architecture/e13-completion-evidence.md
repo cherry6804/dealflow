@@ -2108,6 +2108,93 @@ Branch: `feature/DFR1-E04-verified-webhook-ingress`, cut from `origin/develop` a
 - Privacy export and deletion for the delivery records (DFR1-050).
 - A running outbox worker and a managed key provider in production.
 
+## 36. DFR1-018 typed tool registry: contract, versioning and attribution increment
+
+Branch: `feature/DFR1-018-typed-ai-tools`. Builds on section 26. Only the contract rules this increment adds are recorded here.
+
+What was added:
+
+- **Versions.** Each tool has a `version` (1). A caller may pin a version; a different one is refused before the handler runs (`unsupported_tool_version`).
+- **Availability.** A tool can be marked unavailable. Invoking it is refused before the gate and the handler run (`tool_unavailable`).
+- **Output contract.** Each tool declares `output_fields`. A result may only use declared top-level keys, and each value must be a JSON primitive or a flat object of primitives. Anything else is refused (`output_contract_violation`), the completed audit record says so, and no data is returned. The built-in tools declare `found` and their entity field.
+- **Deferred tools.** The registry refuses any tool whose key contains a channel or voice word (whatsapp, messenger, instagram, telephony, voice, sms, email, call, channel) and any tool governed by `ai.voice`. No such tool is registered.
+- **Attribution.** `invoke_tool` takes an optional `agent_execution_id`. It is written to the requested, denial and completed audit records, along with the tool version. The agent runtime's tool step passes its execution identifier.
+
+Verification (isolated database `dealflow_test` on 127.0.0.1:5438):
+
+- `tests/test_ai_tools.py`, `tests/test_ai_tools_crm.py`, `tests/test_ai_tools_contract.py`, `tests/test_agents_runtime.py`: 87 passed, 0 failed. Existing tests were updated where the contract changed: the datetime-in-result test now expects `output_contract_violation`.
+- `ruff check` passes on `app/ai_tools`, `app/agents/runtime.py` and the new test module.
+- Migration: none added.
+
+Not verified in this increment: the full backend suite was not re-run.
+
+## 37. DFR1-018 corrective completion: exact output contracts, per-tool authorization, attribution and deferred tools
+
+Branch: `feature/DFR1-018-typed-ai-tools`, on top of `7025940`. This section supersedes the limits recorded in section 36 where they conflict.
+
+### What changed
+
+- **Exact output contracts** (`app/ai_tools/definitions.py`, `validation.py`, `registry.py`). A tool declares a recursive `output_schema` of `OutputField`s. Each field has a type (`string`, `integer`, `boolean`, `object`, `array`), `required` and `nullable`. An object declares its fields and an array declares its item type. Undeclared fields at any level, missing required fields, wrong types, unexpected nulls, undeclared arrays and deeper structures are refused. `validate_output` returns a new, fully checked copy, so a partly valid result is never exposed. Registration refuses schemas deeper than `MAX_OUTPUT_DEPTH = 3` object levels, duplicate or malformed names, and arrays or objects missing their item type or fields.
+- **Built-in schemas** (`app/ai_tools/builtin.py`). Each lookup declares `found` and one entity object. Nullable fields match the model columns that can be empty.
+- **Target and version.** Each tool declares `target_type` and `target_parameter`. Only the target UUID is recorded in the audit trail. A pinned `tool_version` that differs from the current version is refused.
+- **Server-built agent context** (`app/ai_tools/service.py` `AgentInvocation`, `app/agents/runtime.py`). The agent runtime passes the agent ID, the agent execution ID, the execution's correlation ID and the idempotency key `tool:<execution>:<step>`. A model cannot supply them. Organization and user identifiers passed as arguments are refused as unknown arguments.
+- **Initiating actor.** Direct calls use the authenticated user. Agent runs use the user who started them (`initiated_by_user_id`), passed by the outbox handler and by the workflow service context. The user must be active and hold the permission through an active membership in the organization, checked before any handler runs.
+- **Audit records.** Requested, denied and completed records each carry the initiating user, organization, tool key and version, operation, target type and ID, correlation ID, idempotency key when set, agent and execution IDs when set, argument names, and status. Failed calls are recorded as `allowed` with status `failed`, not as denied. Only a call the gate refused is recorded as `denied`.
+
+### Per-tool authorization coverage (`tests/test_ai_tools_contract.py`)
+
+For each of the five built-in tools (`contacts.get`, `leads.get`, `requirements.get`, `properties.get`, `deals.get`), parametrized tests cover:
+
+| Check | Evidence |
+|---|---|
+| Authenticated actor and active organization membership | an outside user is refused before the handler runs; an inactive user is refused before the handler runs |
+| Required permission | a member holding every other tool permission is refused before the handler runs; a member holding only this permission reads the record |
+| Server-derived tenant | the handler receives the caller's organization; a record in another organization returns the same answer as a missing one |
+| Resource-level rejection | another organization's record is not found and its data is never returned |
+| Capability and entitlement gate | a disabled `ai.assistant` capability stops the call at the gate before the handler runs |
+
+Reads are scoped by organization in the existing CRM services (`get_contact`, `get_lead`, `get_customer_requirement`, `get_property`) and in `deals.get`'s direct organization-filtered query. The tools apply no per-record ownership rule beyond organization, because the CRM services define none for these reads.
+
+### Attribution evidence (`tests/test_ai_tools_contract.py`)
+
+Covered: direct invocation; agent invocation; a denied agent invocation by a non-member (attributed to the human, recorded under the system actor with `attempted_user_id`); a denied direct invocation by a member; a failed agent invocation; an output-contract violation with the agent context kept; retries of one agent step (two attempts, one idempotency key, each attempt paired with its own requested and completed records); a real `_execute_step` tool step (agent execution ID, idempotency key `tool:<execution>:<index>`, correlation ID); identifiers supplied as arguments refused; and no argument values or withheld fields in audit metadata.
+
+### Deferred communication and voice tools
+
+Refused at every entry point. None of the names (whatsapp, messenger, instagram, telephony, voice, sms, email, call, channel, including `contacts.call`) is registered. Exact-match lookup refuses aliases and spelling variants (`contact.get`, `Contacts.Get`, trailing spaces, path and punctuation variants). Direct service invocation returns `tool_not_registered` and writes no record. Agent configuration refuses a deferred tool step (`normalise_configuration`). An agent runtime tool step naming a deferred tool fails closed (`failed`, `tool_not_registered`). `ai.voice` is refused as a capability. No live channel or voice integration was added.
+
+### Test results (isolated database `dealflow_test`, URL on `127.0.0.1:5438`)
+
+- **Focused DFR1-018 group**: `pytest` on `tests/test_ai_tools.py`, `test_ai_tools_crm.py`, `test_ai_tools_contract.py`, `test_agents_runtime.py`, `test_agents_definitions.py`, `test_workflow_runtime.py`, `test_capability_policy_gates.py`, `test_governance_execution_gate.py`, `test_governance_enforcement.py`, `test_tenant_dependencies.py`, with `-v -rfE`. Result: **313 passed, 0 failed**, exit 0, 38.50 seconds. Log: `scratchpad/focused-127.txt`.
+- **Full backend suite**: `pytest tests -v -rfE --durations=30`, with `DATABASE_URL` on `127.0.0.1`. Result: **2,828 passed, 2 failed, 14 skipped**, exit 1, 506.09 seconds. Log: `scratchpad/full-127.txt`.
+- **The two failures are pre-existing and outside DFR1-018.** Both are in the DFR1-017 reservation reaper:
+  - `tests/test_usage_ledger_hardening.py::test_a_reservation_in_use_by_another_transaction_is_skipped_not_released`: expected `skipped=1`, got `skipped=2`.
+  - `tests/test_usage_reservations.py::test_the_cleanup_job_releases_expired_entries_and_reports_failures`: expected `released=2`, got `0`.
+  Both log `reservation_reaper_budget_missing`, both fail in about 0.6 seconds, and both fail identically on the original commit `7025940` (checked from a `git archive` export). No file under `app/governance` and neither test file changed in this branch. They are not fixed here.
+- **Migration tests** in the full run passed, including `test_migration_automation_default.py`, the file that stalled earlier.
+
+### Environment diagnosis: `localhost` on Windows
+
+- **Symptom.** A full-suite run stalled for more than an hour, and single migration tests appeared to hang.
+- **Diagnosis.** A stack dump of the stalled worker showed the main thread blocked in `psycopg` connection setup, from the session-wide `create_test_schema` fixture (`tests/conftest.py:57`), not in the migration test.
+- **Cause.** `localhost` resolves to the IPv6 address `::1` first on this machine, and the disposable PostgreSQL server listens only on `127.0.0.1`. Measured against the same database: `127.0.0.1:5438` connected in 0.05 seconds, and `localhost:5438` connected in 45.09 seconds. The test connection path has no timeout, so every new connection waited.
+- **Fix.** No application code change. The test `DATABASE_URL` on this machine uses `127.0.0.1`. The stalled migration test then passed in 7.92 seconds, and the full suite finished in 506 seconds.
+- **Not verified.** Whether CI runners resolve `localhost` the same way. Not tested here.
+
+### Process notes
+
+- The first stalled full-suite run (PID 25504, launcher 1704) and the reproduction run (PID 22192, launcher 3320) were stopped gracefully after their evidence was preserved. Both exited.
+- The stall in both was the `localhost` connection delay, not a DFR1-018 defect and not the OpenAI credentials. `OPENAI_API_KEY` is not set in this shell, and the migration path makes no provider call.
+
+### Limitations
+
+- **Output schema depth** is limited to three object levels. Arrays are supported only with a declared item type. Deeper contracts are refused at registration.
+- **No ownership rule** beyond organization is enforced for these reads, because the CRM services define none for them.
+- **Budget**: tool calls are not metered against a budget unit, as recorded in section 26.
+- **Retries** are not deduplicated. Read-only repetition is safe, and each attempt is audited with the same idempotency key.
+- **Two pre-existing failures** in the DFR1-017 reservation reaper remain, as recorded above.
+- **Not verified**: a live AI provider, live channel and voice integrations (deferred by design), the production gate's approvals, and CI behaviour for the `localhost` question.
+- **Ruff format**: the two changed files that were already formatted at HEAD remain format-clean. Other touched files were not formatted at HEAD and were left unformatted rather than reformatted.
 ## 38. Usage ledger reservation reaper: budget-less reservations blocked releasable ones
 
 Branch: `fix/usage-ledger-reservation-reaper`, cut from `origin/develop` at `ce47f90`. It does not include DFR1-018 (`feature/DFR1-018-typed-ai-tools`, commit `faac518`).

@@ -281,7 +281,7 @@ def test_repeated_reads_return_the_same_data_and_each_call_is_audited_to_its_use
     for row in requested:
         metadata = json.loads(row.event_metadata)
         assert metadata["argument_names"] == ["property_id"]
-        assert str(crm.property) not in row.event_metadata
+        assert metadata["target_id"] == str(crm.property)
 
 
 def _user(user_id):
