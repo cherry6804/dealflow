@@ -2195,3 +2195,57 @@ Refused at every entry point. None of the names (whatsapp, messenger, instagram,
 - **Two pre-existing failures** in the DFR1-017 reservation reaper remain, as recorded above.
 - **Not verified**: a live AI provider, live channel and voice integrations (deferred by design), the production gate's approvals, and CI behaviour for the `localhost` question.
 - **Ruff format**: the two changed files that were already formatted at HEAD remain format-clean. Other touched files were not formatted at HEAD and were left unformatted rather than reformatted.
+## 38. Usage ledger reservation reaper: budget-less reservations blocked releasable ones
+
+Branch: `fix/usage-ledger-reservation-reaper`, cut from `origin/develop` at `ce47f90`. It does not include DFR1-018 (`feature/DFR1-018-typed-ai-tools`, commit `faac518`).
+
+### Symptoms
+
+- `tests/test_usage_reservations.py::test_the_cleanup_job_releases_expired_entries_and_reports_failures` failed with `assert 0 == 2`. Two expired reservations existed, the maintenance run used `batch_size=1`, and nothing was released.
+- `tests/test_usage_ledger_hardening.py::test_a_reservation_in_use_by_another_transaction_is_skipped_not_released` failed with `skipped == 2`, expected `1`.
+- Both logged `reservation_reaper_budget_missing` for organization `858fcb2c-d9db-4cec-81fa-6034e68fea8c`.
+- Both failed identically on the DFR1-018 base commit `7025940`.
+
+### Root cause
+
+`expire_stale_reservations` (`app/governance/usage_ledger.py`) selects candidates in expiry order with a `LIMIT`. For each candidate it looks up the budget for the unit and UTC period. A candidate with no budget is counted as skipped and left in place. The next pass selects the same row first, so a single reservation that cannot be released occupies a batch slot on every pass and blocks every later expired reservation.
+
+The shared test database held one such reservation: a `reserved` event for organization `858fcb2c` whose budget row no longer existed. It was left by an earlier test run that did not reach its cleanup. Its expiry sorted before the test reservations, so with `batch_size=1` it consumed the only slot (`released` 0), and it was counted as a second skip (`skipped` 2).
+
+The same defect applies in production. A reservation whose budget was removed would block cleanup of all later expired reservations, once the batch fills with such rows.
+
+### Fix
+
+`app/governance/usage_ledger.py`:
+
+- New helper `_budget_exists_for_event()`. It is true when the event's unit has a budget for the UTC calendar period containing the event's `occurred_at`. The period is computed in SQL with `date_trunc('month', timezone('UTC', occurred_at))`, matching `budget_period_for`.
+- The candidate query now requires that helper, so a reservation with no budget never occupies a batch slot.
+- Before selecting candidates, the reaper counts expired reserved entries with no budget and logs `reservation_reaper_budget_missing` at error level with the count. These entries are reported on every pass until resolved. They are not released, because there is no budget counter to free.
+- The existing per-candidate budget check remains as a defensive path for a budget deleted between the query and the lock. It is still counted as skipped.
+- Result semantics are unchanged: `expired` counts successful releases, and `skipped` counts locked or otherwise deferred entries. Lock, re-check, release and audit logic are unchanged.
+
+### Regression test
+
+`tests/test_usage_reservations.py::test_a_reservation_whose_budget_is_missing_does_not_block_the_expired_reservations_behind_it`. It creates a reservation on one unit, deletes that unit's budget, then creates a reservation on another unit with a budget. The maintenance run uses `batch_size=1`. Expected: one release, the budget-less reservation still reserved, and the error log present. Before the fix it released 0 (verified by running the test on the unfixed code). After the fix it passes.
+
+### Test results
+
+- Regression test: failed before the fix (`assert 0 == 1`), passed after.
+- The two originally failing tests, run individually: both pass.
+- `tests/test_usage_ledger_hardening.py` and `tests/test_usage_reservations.py` (complete) together with usage metering, reversal, alert, governance, gateway and independent-audit tests: **298 passed, 0 failed**, exit 0, 83.77 seconds.
+- DFR1-018 focused group (313 tests): run from a copy of commit `faac518` with this fix copied in (the fix branch does not contain DFR1-018): **313 passed, 0 failed**, exit 0, 44.75 seconds.
+- Full backend suite on this branch, `pytest tests -v --durations=20`, `DATABASE_URL` on `127.0.0.1`: **2,710 passed, 0 failed, 14 skipped**, exit 0, 532.57 seconds. Log: `scratchpad/full-fix.txt`. The count excludes the DFR1-018 tests, which this branch does not contain.
+
+### Lint and checks
+
+- `ruff check app/governance/usage_ledger.py`: passes.
+- `ruff check tests/test_usage_reservations.py`: two findings, both already present on `origin/develop`: `I001` (import block) and `F401` (`InvalidUsageStateError` unused). Left unchanged so this fix does not touch unrelated lines.
+- `ruff format --check`: neither file was format-clean on `develop` (the repo does not enforce ruff format in CI), so no reformatting was applied to existing code.
+- `git diff --check`: passes (line-ending warnings only).
+
+### Remaining limitations
+
+- A reservation whose budget is missing stays `reserved` and is reported on every pass until an operator resolves it. The reaper does not release it, because there is no counter to free. Operators must restore the budget or correct the data.
+- The shared test database still contains the orphaned reservation for organization `858fcb2c`. It was left by a prior killed run. It has not been deleted here, and it no longer affects the tests.
+- The two pre-existing Ruff findings in `tests/test_usage_reservations.py` remain.
+- Not verified: behaviour under concurrent cleanup workers beyond the existing lock-skip tests; and CI behaviour, since the local runs used the `127.0.0.1` database URL.
