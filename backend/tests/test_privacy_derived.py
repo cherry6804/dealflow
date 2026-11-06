@@ -263,7 +263,8 @@ def test_lead_intake_and_priority_records_are_exported_and_their_personal_text_i
         score = db.get(LeadPriorityScore, ids["score"])
         correction = db.scalar(select(LeadPriorityCorrection).where(LeadPriorityCorrection.score_id == ids["score"]))
         assert intake is not None and intake.raw_payload == {} and intake.normalized_payload is None
-        assert intake.payload_hash == "a" * 64 and intake.status == LeadIntakeSubmission.STATUS_RECEIVED
+        # The digest is replaced by a tombstone (decision 5); the status is kept.
+        assert intake.payload_hash != "a" * 64 and intake.status == LeadIntakeSubmission.STATUS_RECEIVED
         assert score is not None and score.factors == [] and score.score == 72 and score.band == "high"
         assert correction is not None and correction.reason == "Redacted" and correction.corrected_score == 55
 

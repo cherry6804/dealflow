@@ -15,6 +15,7 @@ The mapping was reviewed against the model columns. It is recorded in
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -50,6 +51,19 @@ CLEAR_NONE = "none"
 CLEAR_PLACEHOLDER = "placeholder"
 CLEAR_EMPTY_OBJECT = "empty_object"
 CLEAR_EMPTY_LIST = "empty_list"
+# Tombstones are derived from the row ID, the table and the field name only. They never depend on the content, so
+# they cannot be checked against personal data, and they keep unique and not-null columns valid.
+CLEAR_TOMBSTONE_DIGEST = "tombstone_digest"
+CLEAR_TOMBSTONE_TEXT = "tombstone_text"
+
+
+def tombstone_digest(row: object, field_name: str) -> str:
+    table = getattr(row, "__tablename__", type(row).__name__)
+    return hashlib.sha256(f"redacted:{table}:{row.id}:{field_name}".encode()).hexdigest()
+
+
+def tombstone_text(row: object) -> str:
+    return f"redacted-{row.id}"
 
 
 @dataclass(frozen=True)
@@ -57,17 +71,21 @@ class ClearField:
     field: str
     clear_to: str
 
-    def target(self, current: Any) -> Any:
+    def target(self, row: object, current: Any) -> Any:
         if self.clear_to == CLEAR_NONE:
             return None
         if self.clear_to == CLEAR_PLACEHOLDER:
             return PLACEHOLDER
         if self.clear_to == CLEAR_EMPTY_OBJECT:
             return {}
+        if self.clear_to == CLEAR_TOMBSTONE_DIGEST:
+            return tombstone_digest(row, self.field)
+        if self.clear_to == CLEAR_TOMBSTONE_TEXT:
+            return tombstone_text(row)
         return []
 
-    def is_cleared(self, current: Any) -> bool:
-        return current == self.target(current)
+    def is_cleared(self, row: object, current: Any) -> bool:
+        return current == self.target(row, current)
 
 
 @dataclass(frozen=True)
@@ -102,7 +120,8 @@ CLEARING_RULES: dict[str, tuple[ClearRule, ...]] = {
     ),
     "crm.lead_intelligence": (
         # The score and band are kept. Their explanations (factors, requirement summary) are personal facts.
-        ClearRule(LeadPriorityScore, (_f("factors", CLEAR_EMPTY_LIST), _f("requirement_summary", CLEAR_EMPTY_LIST)),
+        ClearRule(LeadPriorityScore, (_f("factors", CLEAR_EMPTY_LIST), _f("requirement_summary", CLEAR_EMPTY_LIST),
+                                      _f("input_hash", CLEAR_TOMBSTONE_DIGEST)),
                   kept=("score", "band", "ruleset_version", "computed_at")),
         ClearRule(LeadPriorityCorrection, (_f("reason", CLEAR_PLACEHOLDER),), kept=("corrected_band", "corrected_score")),
     ),
@@ -111,8 +130,9 @@ CLEARING_RULES: dict[str, tuple[ClearRule, ...]] = {
         ClearRule(
             LeadIntakeSubmission,
             (_f("raw_payload", CLEAR_EMPTY_OBJECT), _f("normalized_payload", CLEAR_NONE),
-             _f("validation_problems", CLEAR_EMPTY_LIST), _f("decision_reason", CLEAR_NONE)),
-            kept=("payload_hash", "status", "decision", "contact_id", "lead_id", "processed_at"),
+             _f("validation_problems", CLEAR_EMPTY_LIST), _f("decision_reason", CLEAR_NONE),
+             _f("external_reference", CLEAR_TOMBSTONE_TEXT), _f("payload_hash", CLEAR_TOMBSTONE_DIGEST)),
+            kept=("source_channel", "status", "match_outcome", "decision", "contact_id", "lead_id", "processed_at"),
         ),
     ),
     "crm.lead_qualification": (
@@ -120,7 +140,7 @@ CLEARING_RULES: dict[str, tuple[ClearRule, ...]] = {
                   kept=("review_status", "requires_review", "reviewed_at")),
     ),
     "crm.requirement_matching": (
-        ClearRule(RequirementMatchRun, (_f("criteria_snapshot", CLEAR_EMPTY_OBJECT),),
+        ClearRule(RequirementMatchRun, (_f("criteria_snapshot", CLEAR_EMPTY_OBJECT), _f("input_hash", CLEAR_TOMBSTONE_DIGEST)),
                   kept=("total_candidates", "matched_candidates", "created_at")),
         ClearRule(NextBestActionRecommendation,
                   (_f("facts", CLEAR_EMPTY_OBJECT), _f("summary", CLEAR_PLACEHOLDER), _f("history", CLEAR_EMPTY_LIST)),
@@ -128,13 +148,13 @@ CLEARING_RULES: dict[str, tuple[ClearRule, ...]] = {
     ),
     "ai.execution_traces": (
         ClearRule(AgentExecution, (_f("input_values", CLEAR_EMPTY_OBJECT), _f("output", CLEAR_NONE),
-                                   _f("failure_reason", CLEAR_NONE)),
+                                   _f("failure_reason", CLEAR_NONE), _f("input_hash", CLEAR_TOMBSTONE_DIGEST)),
                   kept=("status", "tool_calls", "model_calls", "steps_completed", "created_at")),
         ClearRule(AgentExecutionStep, (_f("trace", CLEAR_EMPTY_OBJECT),), kept=("kind", "status", "attempts")),
     ),
     "automation.workflow_runs": (
         ClearRule(WorkflowExecution, (_f("input_values", CLEAR_EMPTY_OBJECT), _f("output", CLEAR_NONE),
-                                      _f("failure_reason", CLEAR_NONE)),
+                                      _f("failure_reason", CLEAR_NONE), _f("input_hash", CLEAR_TOMBSTONE_DIGEST)),
                   kept=("status", "trigger_type", "steps_completed", "created_at")),
         ClearRule(WorkflowExecutionStep, (_f("trace", CLEAR_NONE),), kept=("step_type", "status", "attempts")),
     ),
@@ -150,6 +170,57 @@ CLEARING_RULES: dict[str, tuple[ClearRule, ...]] = {
 }
 
 RULE_CATEGORIES: frozenset[str] = frozenset(CLEARING_RULES)
+
+
+# Personal-data history that deletion keeps on purpose. Each entry names what is kept and why. Any future redaction
+# of these records needs a separately approved security design: the append-only trigger and the audit controls are
+# not bypassed by privacy processing.
+RETAINED_PERSONAL_DATA_HISTORY: tuple[dict[str, str], ...] = (
+    {
+        "table": "human_task_events",
+        "kept": "Decision and assignment events (created, assigned, reassigned, approved, rejected, expired, cancelled) "
+        "and comment events, with their comment and detail text.",
+        "why": "Mandatory approval evidence. Comment events are part of the same append-only history.",
+        "limitation": "Comment text can contain personal information. Deletion cannot change it: the database rejects "
+        "every UPDATE and DELETE on this table. Export includes it for the data subject. Redaction needs a "
+        "separately approved security design.",
+    },
+)
+
+# What this export and its deletions do not cover. Listed in every artifact.
+PRIVACY_LIMITATIONS: tuple[dict[str, str], ...] = (
+    {
+        "topic": "Human task event history",
+        "statement": "Comment and decision text in human_task_events is retained, not deleted. "
+        "See retained_personal_data_history.",
+    },
+    {
+        "topic": "Messages and conversations",
+        "statement": "No producer exists. Not exported, not deleted, and not claimed as checked.",
+    },
+    {
+        "topic": "Calls, voice recordings and transcripts",
+        "statement": "No producer exists. Not exported, not deleted, and not claimed as checked.",
+    },
+    {
+        "topic": "AI chat prompts and responses",
+        "statement": "No conversational producer is persisted. Agent run content is covered under ai.execution_traces.",
+    },
+    {
+        "topic": "Provider-side copies",
+        "statement": "No provider integration performs deletion. Deletion here applies only to Dealsflo's own records.",
+    },
+    {
+        "topic": "Retention periods",
+        "statement": "No retention period has been approved for the categories listed here. Only documents and "
+        "invitations can be enforced, and only where an organization administrator has configured a period.",
+    },
+    {
+        "topic": "Lead intake fingerprint",
+        "statement": "The payload digest is replaced when the submission is cleared, because an unsalted digest of "
+        "contact details can be checked against guessed values.",
+    },
+)
 
 # Records a clearing cannot change. Reported on every deletion of the category, as retained, never as deleted or
 # anonymized. Human task events are append-only: the database trigger rejects every UPDATE and DELETE on the table.
@@ -167,7 +238,7 @@ def pending_clearing(db: Session, organization_id: UUID, category_key: str) -> l
     found: list[tuple[Any, ClearRule]] = []
     for rule in CLEARING_RULES.get(category_key, ()):
         for row in db.scalars(select(rule.model).where(rule.model.organization_id == organization_id)).all():
-            if any(not item.is_cleared(getattr(row, item.field)) for item in rule.fields):
+            if any(not item.is_cleared(row, getattr(row, item.field)) for item in rule.fields):
                 found.append((row, rule))
     return found
 
@@ -177,8 +248,8 @@ def apply_clearing(db: Session, organization_id: UUID, category_key: str) -> int
     changed = 0
     for row, rule in pending_clearing(db, organization_id, category_key):
         for item in rule.fields:
-            if not item.is_cleared(getattr(row, item.field)):
-                setattr(row, item.field, item.target(getattr(row, item.field)))
+            if not item.is_cleared(row, getattr(row, item.field)):
+                setattr(row, item.field, item.target(row, getattr(row, item.field)))
         changed += 1
     db.flush()
     return changed

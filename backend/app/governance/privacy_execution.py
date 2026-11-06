@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -107,6 +107,8 @@ from app.governance.privacy import (
 from app.governance.privacy_derived import (
     DERIVED_EXPORTERS,
     DERIVED_SUB_RECORD_EXPORTERS,
+    PRIVACY_LIMITATIONS,
+    RETAINED_PERSONAL_DATA_HISTORY,
     RETAINED_RECORDS,
     RULE_CATEGORIES,
     apply_clearing,
@@ -1193,6 +1195,10 @@ def generate_export(
             # Data owned by SIBVO, with the route for requests about it.
             "sibvo_owned": [dict(item) for item in SIBVO_OWNED_CATEGORIES],
             "sibvo_privacy_route": SIBVO_PRIVACY_ROUTE,
+            # What this export and its deletions do not cover, stated where a reader of the artifact will see it.
+            "limitations": [dict(item) for item in PRIVACY_LIMITATIONS],
+            # Personal-data history kept because it is append-only or mandatory evidence.
+            "retained_personal_data_history": [dict(item) for item in RETAINED_PERSONAL_DATA_HISTORY],
         },
         "categories": included,
     }
@@ -1260,21 +1266,48 @@ def _delete_documents(
     return len(documents), keys
 
 
+def _import_batches_to_clear(db: Session, organization_id: UUID, *, cutoff: datetime | None = None) -> list[ImportBatch]:
+    """Batches that still hold personal content: a stored file, a file name, or a per-row error summary.
+
+    A batch whose file was removed earlier can still hold a name or error text, so it is included.
+    """
+    query = (
+        select(ImportBatch)
+        .where(
+            ImportBatch.organization_id == organization_id,
+            or_(
+                ImportBatch.storage_key.is_not(None),
+                ImportBatch.error_summary.is_not(None),
+                ImportBatch.source_filename != FREE_TEXT_PLACEHOLDER,
+            ),
+        )
+        .order_by(ImportBatch.created_at, ImportBatch.id)
+    )
+    if cutoff is not None:
+        query = query.where(ImportBatch.created_at < cutoff)
+    return list(db.scalars(query).all())
+
+
 def _delete_import_attachments(
     db: Session,
     organization_id: UUID,
     *,
     cutoff: datetime | None = None,
 ) -> tuple[int, list[str]]:
-    """Remove stored import uploads. The batch rows stay: imported contacts reference them with RESTRICT."""
-    batches = _import_attachment_batches(db, organization_id, cutoff=cutoff)
+    """Remove stored import uploads and the personal text on each batch.
+
+    The batch row is kept with its technical fields only: identifiers, format, counts, status and timestamps.
+    Imported contacts reference the row with RESTRICT, so it cannot be removed.
+    """
+    batches = _import_batches_to_clear(db, organization_id, cutoff=cutoff)
     keys: list[str] = []
     for batch in batches:
-        keys.append(batch.storage_key or "")
+        if batch.storage_key:
+            keys.append(batch.storage_key)
         batch.storage_key = None
         batch.storage_backend = None
-        # The file name can name a person, so it is cleared with the file. The batch keeps its counts and status.
         batch.source_filename = FREE_TEXT_PLACEHOLDER
+        batch.error_summary = None
     db.flush()
     for key in keys:
         # The same rule as the upload path: a key outside the root raises and rolls the change back.
@@ -1289,7 +1322,7 @@ def _verify_import_attachments(
     *,
     cutoff: datetime | None,
 ) -> bool:
-    if _import_attachment_batches(db, organization_id, cutoff=cutoff):
+    if _import_batches_to_clear(db, organization_id, cutoff=cutoff):
         return False
     return not any(_import_upload_path(key).exists() for key in keys if key)
 
