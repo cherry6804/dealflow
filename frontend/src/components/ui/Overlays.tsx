@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { KeyboardEvent, ReactElement, ReactNode } from "react";
 
+import { useDismissOnOutside } from "./useDismissOnOutside";
+
 /* ---------- Dialog and drawer ---------- */
 
 export interface DialogProps {
@@ -94,20 +96,26 @@ export interface MenuItem {
 }
 
 export interface MenuProps {
+  /** Accessible name of the trigger. Also the visible text unless `triggerContent` replaces it. */
   triggerLabel: string;
   items: readonly MenuItem[];
   align?: "start" | "end";
+  /** Replaces the visible text, for example an avatar. The trigger keeps `triggerLabel` as its name. */
+  triggerContent?: ReactNode;
+  triggerClassName?: string;
 }
 
 /**
  * Contextual menu. Enter or Space on the trigger opens it and focuses the first item. Arrow keys move, Home and End jump,
  * Escape closes and returns focus to the trigger. Disabled items are skipped by the arrow keys.
  */
-export function Menu({ triggerLabel, items, align = "start" }: MenuProps) {
+export function Menu({ triggerLabel, items, align = "start", triggerContent, triggerClassName }: MenuProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
+  useDismissOnOutside(hostRef, open, () => setOpen(false));
 
   const enabledIndexes = items.map((item, index) => (item.disabled ? -1 : index)).filter((index) => index >= 0);
 
@@ -144,11 +152,12 @@ export function Menu({ triggerLabel, items, align = "start" }: MenuProps) {
   }
 
   return (
-    <div className="df-menu">
+    <div ref={hostRef} className="df-menu">
       <button
         ref={triggerRef}
         type="button"
-        className="df-btn df-btn--secondary df-btn--md"
+        className={triggerClassName ?? "df-btn df-btn--secondary df-btn--md"}
+        aria-label={triggerContent ? triggerLabel : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
@@ -157,7 +166,7 @@ export function Menu({ triggerLabel, items, align = "start" }: MenuProps) {
           if (!open) queueMicrotask(() => focusItem(0));
         }}
       >
-        <span className="df-btn-label">{triggerLabel}</span>
+        {triggerContent ?? <span className="df-btn-label">{triggerLabel}</span>}
       </button>
       {open ? (
         <div
@@ -204,9 +213,11 @@ export interface PopoverProps {
 export function Popover({ triggerLabel, children }: PopoverProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
+  useDismissOnOutside(hostRef, open, () => setOpen(false));
   return (
-    <div className="df-popover">
+    <div ref={hostRef} className="df-popover">
       <button
         ref={triggerRef}
         type="button"
