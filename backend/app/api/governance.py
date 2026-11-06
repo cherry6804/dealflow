@@ -53,7 +53,9 @@ from app.governance.privacy import (
 from app.governance.privacy_execution import (
     ExportUnavailableError,
     PrivacyRequestNotFoundError,
+    enqueue_processing,
     open_export,
+    request_deletion_execution,
 )
 from app.governance.service import (
     CapabilityState,
@@ -359,6 +361,12 @@ class PrivacyRequestCreate(BaseModel):
     confirm: Literal[True] = Field(...)
 
 
+class PrivacyExecutionRequest(BaseModel):
+    """Explicit confirmation that a recorded deletion should now run."""
+
+    confirm: Literal[True] = Field(...)
+
+
 class PrivacyRequestResponse(BaseModel):
     id: UUID
     request_type: str
@@ -534,6 +542,38 @@ def create_privacy_request_endpoint(
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    if row.request_type == PrivacyDataRequest.TYPE_EXPORT:
+        # Export generation runs in the worker. Without this event nothing would ever build the artifact.
+        enqueue_processing(db, row)
+    db.commit()
+    return _request_response(row)
+
+
+@governance_routes.post(
+    "/privacy/requests/{request_id}/execute",
+    response_model=PrivacyRequestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def execute_privacy_deletion(
+    request_id: UUID,
+    payload: PrivacyExecutionRequest,
+    tenant: TenantContext = Depends(require_permission("governance.privacy.manage")),
+    db: Session = Depends(get_db_session),
+) -> PrivacyRequestResponse:
+    """Start a recorded deletion. Explicitly confirmed and audited. The worker re-checks holds before each category."""
+    try:
+        row = request_deletion_execution(
+            db,
+            organization_id=tenant.organization_id,
+            actor_user_id=tenant.membership.user_id,
+            request_id=request_id,
+        )
+    except PrivacyRequestNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Privacy request not found.") from None
+    except InvalidRequestStateError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
     db.commit()
     return _request_response(row)
 
