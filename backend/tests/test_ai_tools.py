@@ -19,7 +19,13 @@ import pytest
 from sqlalchemy import delete, select, text
 
 from app.ai_tools import service as tools
-from app.ai_tools.definitions import ParameterType, ToolDefinition, ToolParameter
+from app.ai_tools.definitions import (
+    OutputField,
+    OutputType,
+    ParameterType,
+    ToolDefinition,
+    ToolParameter,
+)
 from app.ai_tools.registry import DEFAULT_REGISTRY, ToolRegistrationError, ToolRegistry
 from app.ai_tools.service import ToolExecutionError, invoke_tool
 from app.auth.dependencies import CurrentUserContext
@@ -38,6 +44,7 @@ from tests.governance_helpers import (
 from tests.test_team_api import create_manager, create_owner_manager
 
 ASSISTANT = "ai.assistant"
+FOUND = (OutputField("found", OutputType.BOOLEAN),)
 CONTACT_TOOL = "contacts.get"
 
 
@@ -124,7 +131,11 @@ def _counting_registry(handler, *, permission="contacts.read", parameters=(), ti
     registry.register(ToolDefinition(
         key="contacts.probe", description="test tool", capability_key=ASSISTANT,
         required_permission=permission, parameters=parameters, handler=handler, timeout_ms=timeout_ms,
-        output_fields=("text", "n", "when"),
+        output_schema=(
+            OutputField("text", OutputType.STRING),
+            OutputField("n", OutputType.INTEGER, required=False),
+            OutputField("when", OutputType.STRING, required=False),
+        ),
     ))
     return registry
 
@@ -166,7 +177,7 @@ def test_the_registry_refuses_definitions_that_break_the_rules(changes, message)
     base = {
         "key": "contacts.probe", "description": "x", "capability_key": ASSISTANT,
         "required_permission": "contacts.read", "parameters": (), "handler": lambda db, o, a: {},
-        "output_fields": ("found",),
+        "output_schema": FOUND,
     }
     registry = ToolRegistry()
     with pytest.raises(ToolRegistrationError, match=message):
@@ -177,14 +188,14 @@ def test_the_registry_refuses_duplicate_keys_and_duplicate_parameters() -> None:
     registry = ToolRegistry()
     definition = ToolDefinition(key="contacts.probe", description="x", capability_key=ASSISTANT,
                                 required_permission="contacts.read", parameters=(), handler=lambda db, o, a: {},
-                                output_fields=("found",))
+                                output_schema=FOUND)
     registry.register(definition)
     with pytest.raises(ToolRegistrationError, match="already registered"):
         registry.register(definition)
     dup = ToolDefinition(key="contacts.dup", description="x", capability_key=ASSISTANT,
                          required_permission="contacts.read",
                          parameters=(ToolParameter("a", ParameterType.STRING), ToolParameter("a", ParameterType.STRING)),
-                         handler=lambda db, o, a: {}, output_fields=("found",))
+                         handler=lambda db, o, a: {}, output_schema=FOUND)
     with pytest.raises(ToolRegistrationError, match="unique"):
         registry.register(dup)
 
@@ -256,9 +267,10 @@ def test_a_successful_call_writes_linked_requested_and_completed_records(world, 
     completed = [row for row in rows if row.outcome == "completed"]
     assert len(requested) == 1 and len(completed) == 1
     assert completed[0].causation_id == str(requested[0].id)
-    # Argument names only: the contact identifier never reaches the audit trail.
-    assert str(world.member_contact_id) not in (requested[0].event_metadata or "")
-    assert json.loads(requested[0].event_metadata)["argument_names"] == ["contact_id"]
+    # Argument names and the target identifier only. The argument values are not recorded.
+    metadata = json.loads(requested[0].event_metadata)
+    assert metadata["argument_names"] == ["contact_id"]
+    assert metadata["target_id"] == str(world.member_contact_id)
 
 
 def test_an_unknown_tool_is_refused_the_same_way_as_a_missing_one(world, monkeypatch) -> None:

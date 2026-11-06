@@ -1,19 +1,27 @@
 """Invocation of approved AI tools (DFR1-018).
 
-Every call is checked on the server, in this order, and each refusal stops the call before the tool runs:
+Every call is checked on the server, in this order, and each refusal stops the call before the tool runs or reads data:
 
-1. The tool is registered. An unknown name and a name the caller may not know are answered the same way.
-2. The arguments match the schema (strict types, no unknown keys).
-3. The initiating user holds the tool's permission in this organization (membership and role, checked in the database).
+1. The tool is registered and available, and the caller's pinned version (if any) is the current one. An unknown name, an
+   unavailable tool and a name the caller may not know are answered the same way, except for the reason code.
+2. The arguments match the schema (strict types, no unknown keys). An organization or user identifier supplied as an argument
+   is an unknown argument, so a model cannot choose the tenant or the actor.
+3. The initiating user is active and holds the tool's permission in this organization (membership and role, checked in the
+   database). A user outside the organization is refused and the attempt is audited under the system actor.
 4. The shared execution gate allows the tool's AI capability (entitlement, switches, provider readiness, actor, resource,
    consent, rate, budget). A tool call is an AI execution, so the gate applies to it in full.
 5. The handler runs in a savepoint with a statement timeout. A timeout or database error rolls back only the tool's work.
+6. The handler's result is checked against the tool's exact output contract before anything is returned. A result that does
+   not match is refused, never returned in part.
 
-Each call writes a requested audit record before it runs, and a completed or denied record after it. Records hold the tool
-key, the argument names and the outcome. They never hold argument values or results.
+Attribution. Each accepted call writes a requested record before it runs and a completed record after it. A refused call writes
+a denied record. Every record holds the initiating user, the organization, the tool key and version, the operation, the target
+record identifier, the status, the correlation identifier and, when an agent run asked for the call, the agent and agent
+execution identifiers and the idempotency key. Records hold argument names and identifiers only, never argument values or
+results.
 
-Retries: none. A read-only tool is cheap to repeat, and an automatic retry would write duplicate audit records. Idempotency:
-every tool in this release is read-only, so repeating a call changes nothing. A write tool needs its own design.
+Retries. Nothing retries a tool call. A read-only call may be repeated safely. A repeated agent step reuses the same
+idempotency key, so its records can be linked, but each attempt is audited separately and runs again.
 """
 
 from __future__ import annotations
@@ -64,6 +72,7 @@ TOOL_AUDIT_EVENT = "ai_tool"
 TOOL_INVOKE_ACTION = "ai_tool.invoke"
 POSTGRES_QUERY_CANCELED = "57014"
 AI_TOOL_SYSTEM_ACTOR = register_system_actor("ai_tools")
+MAX_IDEMPOTENCY_KEY = 200
 
 REASON_OK = "ok"
 REASON_NOT_REGISTERED = "tool_not_registered"
@@ -82,6 +91,15 @@ class ToolExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class AgentInvocation:
+    """The server-side context of an agent run that asks for a tool. The agent runtime sets it; a model never does."""
+
+    agent_id: UUID
+    agent_execution_id: UUID
+    correlation_id: str
+
+
+@dataclass(frozen=True)
 class ToolResult:
     outcome: str
     reason_code: str
@@ -91,6 +109,40 @@ class ToolResult:
     @property
     def succeeded(self) -> bool:
         return self.outcome == "succeeded"
+
+
+@dataclass(frozen=True)
+class _Call:
+    """Everything the audit trail needs for one call. Built only after the arguments have been validated."""
+
+    organization_id: UUID
+    user_id: UUID
+    definition: ToolDefinition
+    arguments: dict[str, Any]
+    correlation_id: str
+    idempotency_key: str | None
+    agent: AgentInvocation | None
+
+    def metadata(self, **extra: object) -> dict[str, object]:
+        definition = self.definition
+        metadata: dict[str, object] = {
+            "tool": definition.key,
+            "tool_version": definition.version,
+            "operation": "read" if definition.read_only else "write",
+            "initiated_by_user_id": str(self.user_id),
+            "argument_names": sorted(self.arguments),
+            "correlation_id": self.correlation_id,
+        }
+        if definition.target_parameter is not None and definition.target_parameter in self.arguments:
+            metadata["target_type"] = definition.target_type
+            metadata["target_id"] = str(self.arguments[definition.target_parameter])
+        if self.idempotency_key is not None:
+            metadata["idempotency_key"] = self.idempotency_key
+        if self.agent is not None:
+            metadata["agent_id"] = str(self.agent.agent_id)
+            metadata["agent_execution_id"] = str(self.agent.agent_execution_id)
+        metadata.update(extra)
+        return metadata
 
 
 def _refused(tool_key: str, reason: str) -> ToolResult:
@@ -106,12 +158,14 @@ def invoke_tool(
     user_context: CurrentUserContext,
     registry: ToolRegistry = DEFAULT_REGISTRY,
     tool_version: int | None = None,
-    agent_execution_id: UUID | None = None,
+    agent: AgentInvocation | None = None,
+    idempotency_key: str | None = None,
 ) -> ToolResult:
     """Run one approved tool for one user in one organization. The caller commits or rolls back the session.
 
-    ``tool_version`` pins the contract a caller was built against; None means the current version. ``agent_execution_id``
-    links the call to the agent run that asked for it, so the audit trail can follow the call back to that run.
+    ``organization_id`` and ``user_context`` come from the server: the verified tenant and the authenticated initiating user,
+    which for an agent run is the user who started it. ``tool_version`` pins the contract a caller was built against. ``agent``
+    and ``idempotency_key`` are set by the agent runtime and are recorded in the audit trail.
     """
     definition = registry.get(tool_key)
     if definition is None:
@@ -120,34 +174,30 @@ def invoke_tool(
         return _refused(tool_key, REASON_TOOL_UNAVAILABLE)
     if tool_version is not None and tool_version != definition.version:
         return _refused(tool_key, REASON_UNSUPPORTED_VERSION)
+    if idempotency_key is not None and not 1 <= len(idempotency_key) <= MAX_IDEMPOTENCY_KEY:
+        return _refused(tool_key, REASON_INVALID_ARGUMENTS)
 
     try:
         typed = validate_arguments(definition, arguments)
     except InvalidArgumentsError:
         return _refused(tool_key, REASON_INVALID_ARGUMENTS)
 
-    user_id = user_context.user.id
-    if not actor_permission_granted(
-        db,
+    call = _Call(
         organization_id=organization_id,
-        user_id=user_id,
-        permission_key=definition.required_permission,
-    ):
-        _record_denial(
-            db,
-            organization_id=organization_id,
-            user_id=user_id,
-            definition=definition,
-            typed=typed,
-            agent_execution_id=agent_execution_id,
-        )
+        user_id=user_context.user.id,
+        definition=definition,
+        arguments=typed,
+        correlation_id=agent.correlation_id if agent is not None else str(uuid.uuid4()),
+        idempotency_key=idempotency_key,
+        agent=agent,
+    )
+    if not _may_invoke(db, call, user_context):
+        _record_denial(db, call)
         return _refused(tool_key, REASON_PERMISSION_DENIED)
 
-    attribution = user_attribution(organization_id=organization_id, actor_user_id=user_id)
-    correlation_id = str(uuid.uuid4())
     requested = persist_independent_audit_event(
         db,
-        attribution=attribution,
+        attribution=user_attribution(organization_id=organization_id, actor_user_id=call.user_id),
         event_type=TOOL_AUDIT_EVENT,
         action=TOOL_INVOKE_ACTION,
         decision="allowed",
@@ -155,8 +205,8 @@ def invoke_tool(
         permission_key=definition.required_permission,
         resource_type="ai_tool",
         resource_id=tool_key,
-        correlation_id=correlation_id,
-        metadata=_metadata(definition, typed, agent_execution_id=agent_execution_id),
+        correlation_id=call.correlation_id,
+        metadata=call.metadata(),
     )
 
     decision = evaluate_execution(
@@ -166,11 +216,11 @@ def invoke_tool(
             capability_key=definition.capability_key,
             user_context=user_context,
             resource_id=f"tool:{tool_key}",
-            correlation_id=correlation_id,
+            correlation_id=call.correlation_id,
         ),
     )
     if not decision.allowed or decision.ticket is None:
-        _complete(db, organization_id, user_id, requested, definition, "denied", decision.reason_code, agent_execution_id=agent_execution_id)
+        _complete(db, call, requested, outcome="denied", reason=decision.reason_code)
         return _refused(tool_key, decision.reason_code)
     ticket = decision.ticket
 
@@ -182,11 +232,11 @@ def invoke_tool(
         settle_ticket(db, ticket, actual={})
         reason = REASON_TIMEOUT if getattr(exc.orig, "sqlstate", None) == POSTGRES_QUERY_CANCELED else REASON_FAILED
         logger.error("AI tool database work failed", extra={"tool": tool_key, "error_type": type(exc).__name__})
-        _complete(db, organization_id, user_id, requested, definition, "failed", reason, agent_execution_id=agent_execution_id)
+        _complete(db, call, requested, outcome="failed", reason=reason)
         return ToolResult(outcome="failed", reason_code=reason, tool_key=tool_key)
     except ToolExecutionError:
         settle_ticket(db, ticket, actual={})
-        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_FAILED, agent_execution_id=agent_execution_id)
+        _complete(db, call, requested, outcome="failed", reason=REASON_FAILED)
         return ToolResult(outcome="failed", reason_code=REASON_FAILED, tool_key=tool_key)
 
     settle_ticket(db, ticket, actual={})
@@ -194,15 +244,27 @@ def invoke_tool(
         checked = validate_output(definition, data)
     except OutputContractError:
         logger.error("AI tool result broke its output contract", extra={"tool": tool_key})
-        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_OUTPUT_INVALID, agent_execution_id=agent_execution_id)
+        _complete(db, call, requested, outcome="failed", reason=REASON_OUTPUT_INVALID)
         return ToolResult(outcome="failed", reason_code=REASON_OUTPUT_INVALID, tool_key=tool_key)
     serialized = json.dumps(checked, sort_keys=True)
     if len(serialized) > MAX_RESULT_CHARACTERS:
-        _complete(db, organization_id, user_id, requested, definition, "failed", REASON_RESULT_TOO_LARGE, agent_execution_id=agent_execution_id)
+        _complete(db, call, requested, outcome="failed", reason=REASON_RESULT_TOO_LARGE)
         return ToolResult(outcome="failed", reason_code=REASON_RESULT_TOO_LARGE, tool_key=tool_key)
 
-    _complete(db, organization_id, user_id, requested, definition, "succeeded", REASON_OK, agent_execution_id=agent_execution_id)
+    _complete(db, call, requested, outcome="succeeded", reason=REASON_OK)
     return ToolResult(outcome="succeeded", reason_code=REASON_OK, tool_key=tool_key, data=json.loads(serialized))
+
+
+def _may_invoke(db: Session, call: _Call, user_context: CurrentUserContext) -> bool:
+    """The initiating user must be active and hold the permission through an active membership in this organization."""
+    if not user_context.user.is_active:
+        return False
+    return actor_permission_granted(
+        db,
+        organization_id=call.organization_id,
+        user_id=call.user_id,
+        permission_key=call.definition.required_permission,
+    )
 
 
 def _is_active_member(db: Session, *, organization_id: UUID, user_id: UUID) -> bool:
@@ -218,23 +280,15 @@ def _is_active_member(db: Session, *, organization_id: UUID, user_id: UUID) -> b
     )
 
 
-def _record_denial(
-    db: Session,
-    *,
-    organization_id: UUID,
-    user_id: UUID,
-    definition: ToolDefinition,
-    typed: dict[str, Any],
-    agent_execution_id: UUID | None,
-) -> None:
-    metadata = _metadata(definition, typed, reason=REASON_PERMISSION_DENIED, agent_execution_id=agent_execution_id)
-    if _is_active_member(db, organization_id=organization_id, user_id=user_id):
-        attribution = user_attribution(organization_id=organization_id, actor_user_id=user_id)
+def _record_denial(db: Session, call: _Call) -> None:
+    metadata = call.metadata(reason=REASON_PERMISSION_DENIED)
+    if _is_active_member(db, organization_id=call.organization_id, user_id=call.user_id):
+        attribution = user_attribution(organization_id=call.organization_id, actor_user_id=call.user_id)
     else:
         # The user is not an active member of this organization. Record the attempt under the system actor, with the
         # attempted user identifier, so the cross-tenant attempt is visible rather than silently dropped.
-        attribution = system_attribution(organization_id=organization_id, capability=AI_TOOL_SYSTEM_ACTOR)
-        metadata["attempted_user_id"] = str(user_id)
+        attribution = system_attribution(organization_id=call.organization_id, capability=AI_TOOL_SYSTEM_ACTOR)
+        metadata["attempted_user_id"] = str(call.user_id)
     persist_independent_audit_event(
         db,
         attribution=attribution,
@@ -242,68 +296,35 @@ def _record_denial(
         action=TOOL_INVOKE_ACTION,
         decision="denied",
         outcome=OUTCOME_DENIED,
-        permission_key=definition.required_permission,
+        permission_key=call.definition.required_permission,
         resource_type="ai_tool",
-        resource_id=definition.key,
+        resource_id=call.definition.key,
+        correlation_id=call.correlation_id,
         metadata=metadata,
     )
 
 
-def _metadata(
-    definition: ToolDefinition,
-    typed: dict[str, Any],
-    *,
-    reason: str | None = None,
-    agent_execution_id: UUID | None = None,
-) -> dict[str, object]:
-    # Argument names only. Values are personal and operational data, and they stay out of the audit trail.
-    metadata: dict[str, object] = {
-        "tool": definition.key,
-        "tool_version": definition.version,
-        "argument_names": sorted(typed) if typed else [],
-    }
-    if agent_execution_id is not None:
-        metadata["agent_execution_id"] = str(agent_execution_id)
-    if reason is not None:
-        metadata["reason"] = reason
-    return metadata
+def _complete(db: Session, call: _Call, requested: AuditEvent, *, outcome: str, reason: str) -> None:
+    """The completed record follows the requested record in the caller's transaction (WP3 pattern).
 
-
-def _complete(
-    db: Session,
-    organization_id: UUID,
-    user_id: UUID,
-    requested: AuditEvent,
-    definition: ToolDefinition,
-    outcome: str,
-    reason: str,
-    *,
-    agent_execution_id: UUID | None = None,
-) -> None:
-    """The completed record follows the requested record in the caller's transaction (WP3 pattern)."""
+    The gate allowed a call that reached the handler, so a ``failed`` call is recorded as allowed, with its failure status.
+    Only a call the gate refused is recorded as denied.
+    """
+    definition = call.definition
     db.add(
         AuditEvent(
-            user_id=user_id,
-            organization_id=organization_id,
+            user_id=call.user_id,
+            organization_id=call.organization_id,
             event_type=TOOL_AUDIT_EVENT,
             action=TOOL_INVOKE_ACTION,
-            decision="allowed" if outcome == "succeeded" else "denied",
+            decision="denied" if outcome == "denied" else "allowed",
             outcome=OUTCOME_COMPLETED,
             causation_id=str(requested.id),
-            correlation_id=requested.correlation_id,
+            correlation_id=call.correlation_id,
             permission_key=definition.required_permission,
             resource_type="ai_tool",
             resource_id=definition.key,
-            event_metadata=json.dumps(
-                {
-                    "tool": definition.key,
-                    "tool_version": definition.version,
-                    "outcome": outcome,
-                    "reason": reason,
-                    "agent_execution_id": None if agent_execution_id is None else str(agent_execution_id),
-                },
-                sort_keys=True,
-            ),
+            event_metadata=json.dumps(call.metadata(status=outcome, reason=reason), sort_keys=True),
         )
     )
     db.flush()

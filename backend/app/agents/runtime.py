@@ -46,7 +46,7 @@ from app.agents.service import (
 from app.ai_gateway.contracts import GatewayRequest, TaskResult
 from app.ai_gateway.service import execute as gateway_execute
 from app.ai_gateway.tasks import TaskType
-from app.ai_tools.service import invoke_tool
+from app.ai_tools.service import AgentInvocation, invoke_tool
 from app.audit.attribution import user_attribution
 from app.audit.independent import (
     OUTCOME_COMPLETED,
@@ -504,7 +504,10 @@ def _execute_step(db: Session, execution: AgentExecution, step: dict[str, Any], 
     if kind == "tool":
         arguments = {name: _resolve(value, execution.input_values, outputs) for name, value in step["arguments"].items()}
         result = invoke_tool(db, organization_id=execution.organization_id, tool_key=step["tool"],
-                             arguments=arguments, user_context=user_context, agent_execution_id=execution.id)
+                             arguments=arguments, user_context=user_context,
+                             agent=AgentInvocation(agent_id=execution.agent_id, agent_execution_id=execution.id,
+                                                   correlation_id=execution.correlation_id),
+                             idempotency_key=f"tool:{execution.id}:{index}")
         execution.tool_calls += 1
         if result.outcome == "denied" and result.reason_code == REASON_PERMISSION_DENIED:
             return "stopped", "tool_permission_denied", None
