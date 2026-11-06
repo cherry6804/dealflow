@@ -2249,3 +2249,64 @@ The same defect applies in production. A reservation whose budget was removed wo
 - The shared test database still contains the orphaned reservation for organization `858fcb2c`. It was left by a prior killed run. It has not been deleted here, and it no longer affects the tests.
 - The two pre-existing Ruff findings in `tests/test_usage_reservations.py` remain.
 - Not verified: behaviour under concurrent cleanup workers beyond the existing lock-skip tests; and CI behaviour, since the local runs used the `127.0.0.1` database URL.
+
+## 39. DFR1-019 final verification on origin/develop d06a5ac: agent definitions, versioning and execution runtime
+
+Scope. DFR1-019 was implemented and merged earlier (PR #159, `feature/DFR1-E07-agent-runtime`, tip `4c95374`, an ancestor of `develop`). This section records the final verification against the latest `origin/develop` (`d06a5ac`, merge of PR #171). No application code was changed for this verification.
+
+Product decision applied (approved). The agent runtime owns agent definitions, configuration, versioning, lifecycle and execution. The workflow engine owns scheduled and event-based triggers, and invokes agents through the agent execution runtime. Agent-level trigger configuration is manual for DFR1-019 (`TRIGGER_TYPES = ("manual",)`). No scheduling is duplicated in the agent runtime.
+
+### Method
+
+A clean export of `origin/develop` at `d06a5ac` was created with `git archive` in a new directory, so the working checkout was not used for backend tests. Backend tests ran with the project virtual environment against the isolated test database `dealflow_test` on `127.0.0.1:5438`. `localhost` was not used (see section 37).
+
+### Backend test results
+
+Command (from the clean export's `backend` directory):
+`pytest` on `tests/test_agents_api.py`, `test_agents_definitions.py`, `test_agents_runtime.py`, `test_workflow_runtime.py`, `test_ai_tools.py`, `test_ai_tools_crm.py`, `test_ai_tools_contract.py`, `test_usage_ledger_hardening.py`, `test_usage_reservations.py`, `test_usage_ledger.py`, `test_usage_reversal_audit.py`, `test_usage_metering_attribution.py`, `test_governance_execution_gate.py`, `test_governance_enforcement.py`, `test_governance_policy.py`, `test_governance_entitlement.py`, `test_capability_policy_gates.py`, `test_tenant_dependencies.py`, `test_ai_gateway.py`, `test_ai_cost_separation_and_attribution.py`, with `-v -rfE`.
+
+Result: **516 passed, 0 failed**, exit 0, 58.04 seconds. Per file: agent runtime 28, agent definitions 27, agent API 6, workflow runtime 42, DFR1-018 tool contract 121, DFR1-018 tool registry 29, DFR1-018 CRM tools 11, usage ledger and reservations 92 (ledger hardening 34, reservations 29, ledger 17, reversal audit 7, metering attribution 5), governance 61 (execution gate 27, enforcement 4, policy 10, entitlement 18, capability gates 2), tenant dependencies 22, AI gateway 62, AI cost separation 15.
+
+Note on counts. The earlier report of 125 focused agent tests could not be reproduced as a single set. The four agent and workflow files on `develop` contain 103 passing tests (6 + 27 + 28 + 42), and the wider list above contains 516.
+
+### Frontend build
+
+Command: `npm run build` (`tsc -b && vite build`) in `frontend`, which is identical to `origin/develop`. Result: **passed**, exit 0, built in 1.49 seconds by Vite. The only output after the build was an npm version notice. No frontend tests were run in this verification.
+
+### Migration verification
+
+- `alembic heads` returns a single head: **`c8e1f4a7b2d9`** (DFR1-017).
+- `alembic history` shows the agent migration **`e2a8c4f1b9d7`** (DFR1-019) with parent `d2b6f8a1c4e7`, and DFR1-019's successor chain continues linearly to the head.
+- The history contains a fork at `i7f2c9d4e1a8` with two child branches (`k1a6c8e0f2b4` and `j1a6e3c9b4d2`). Both converge in the chain, so the single head is correct. This is pre-existing history and was not changed.
+
+### Security and reliability
+
+| Point | Evidence (passing tests) |
+|---|---|
+| Tenant isolation | `test_agents_api.py::test_another_organization_gets_not_found_for_an_agent_and_its_executions`; `test_agents_definitions.py::test_another_organization_cannot_read_or_change_an_agent`; `test_agents_runtime.py::test_another_organization_cannot_start_read_or_cancel_this_organizations_execution`; `test_workflow_runtime.py::test_an_event_from_one_organization_never_starts_another_organizations_workflow` |
+| Version immutability | `test_agents_definitions.py::test_editing_a_draft_leaves_the_published_version_unchanged`; `test_publishing_freezes_a_numbered_version_with_its_validation_snapshot`; `test_rollback_points_at_an_earlier_version_without_copying_or_editing_it`; `test_rolling_back_to_the_current_or_an_unknown_version_is_refused` |
+| Execution pinned to its version | `test_agents_runtime.py::test_an_execution_is_pinned_to_the_version_it_started_with`; `test_workflow_runtime.py::test_a_run_stays_pinned_to_the_version_it_started_with` |
+| Publication validation | `test_agents_definitions.py::test_publishing_freezes_a_numbered_version_with_its_validation_snapshot`; configuration validation in `normalise_configuration` |
+| Cancellation | `test_agents_api.py::test_a_cancel_over_http_stops_a_queued_execution`; `test_agents_runtime.py::test_cancelling_a_queued_execution_stops_it_and_its_event_does_nothing`; `test_cancelling_a_running_execution_stops_it_at_the_next_boundary` |
+| Timeout | `test_agents_runtime.py::test_an_expired_deadline_stops_the_execution_before_any_step`; `test_running_executions_past_their_deadline_are_expired_by_the_sweep`; `test_workflow_runtime.py::test_a_run_past_its_deadline_times_out_at_the_next_boundary` |
+| Execution attribution | `test_agents_runtime.py::test_every_step_is_audited_to_the_initiating_user_and_its_correlation_id`; `test_an_initiator_who_cannot_use_the_tool_is_refused_at_creation`; `test_the_initiator_cannot_approve_their_own_execution` |
+| Tool authorization through DFR1-018 | `test_ai_tools_contract.py::test_an_agent_invocation_keeps_the_initiating_human_and_adds_the_agent_context`; `test_ai_tools_contract.py::test_an_agent_runtime_tool_step_runs_a_registered_tool_with_the_execution_context`; `test_ai_tools_contract.py` per-tool authorization tests |
+| Budget reservation and settlement | `test_agents_runtime.py::test_exhausted_budget_stops_the_model_step_and_no_provider_is_called`; `test_workflow_runtime.py::test_an_agent_budget_refusal_fails_the_step_with_its_reason`; `test_usage_ledger_hardening.py::test_reservation_records_its_expiry_and_request_fingerprint` |
+| Recovery from interruption | `test_agents_runtime.py::test_an_interrupted_step_fails_the_execution_instead_of_repeating_it`; `test_workflow_runtime.py::test_a_step_interrupted_by_a_restart_fails_instead_of_repeating` |
+| Idempotency | `test_agents_runtime.py::test_a_repeated_request_with_the_same_key_and_input_returns_the_stored_execution`; `test_agents_api.py::test_create_publish_and_run_over_http_returns_the_stored_execution_on_repeat` |
+| No arbitrary SQL or code | Tool steps reference only registered DFR1-018 tools. Model steps go through the AI gateway. Verified by inspection of `app/agents/runtime.py` and `app/agents/configuration.py`. |
+| No secrets in source or logs | Verified by a secret scan of the DFR1-018 and reaper changes. Not re-scanned across all of `develop`. |
+
+### Remaining gaps and limitations
+
+- **Triggers are manual only** for agents, by product decision. Scheduled and event triggers are owned by the workflow engine.
+- **Tool steps are not retried.** Model steps retry only transient gateway failures, which matches DFR1-018.
+- **Frontend tests were not run** in this verification. Only the production build was checked.
+- **Full backend suite** was not re-run in this verification. The figures above are for the listed suites only. The last full-suite run on this lineage was the reaper-fix verification (2,710 passed, 0 failed, 14 skipped, on the fix branch before DFR1-018 was merged).
+- **Two pre-existing Ruff findings** remain in `tests/test_usage_reservations.py` (`I001`, `F401`), as recorded in section 38.
+- **Test-database residue**: one orphaned reserved reservation from a killed run remains in the shared test database (section 38). It does not affect the tests.
+- **Not verified here**: live AI providers (not required; all tests use deterministic mocks), and CI resolution of `localhost`.
+
+### Completion assessment
+
+On the approved product decision, every DFR1-019 acceptance criterion is implemented and covered by passing tests on `origin/develop`. No gap remains that requires code. DFR1-019 can be marked complete, subject to the product owner's review, with the limitations above.
