@@ -2249,3 +2249,40 @@ The same defect applies in production. A reservation whose budget was removed wo
 - The shared test database still contains the orphaned reservation for organization `858fcb2c`. It was left by a prior killed run. It has not been deleted here, and it no longer affects the tests.
 - The two pre-existing Ruff findings in `tests/test_usage_reservations.py` remain.
 - Not verified: behaviour under concurrent cleanup workers beyond the existing lock-skip tests; and CI behaviour, since the local runs used the `127.0.0.1` database URL.
+
+## 40. DFR1-020 documentation reconciliation: acceptance criteria assessment
+
+Scope. Documentation only. No application code, migration, or Jira status was changed. DFR1-020 was implemented and merged earlier through PR #160 (feature branch `feature/DFR1-E09-story-020`, commit `d42b792`, merge `8257ed2`). Section 28 records its delivery. This section records the acceptance-criteria assessment and corrects the tracker's stale status.
+
+Basis of each assessment. The assessment has two bases, and they are kept separate here.
+- **Code inspection** of `develop` at `d06a5ac`: `app/leads/priority.py`, `app/leads/priority_service.py`, `app/api/lead_priority.py`, `app/db/models/lead_priority.py`, and migration `f3b9d2c7a1e4`.
+- **Tests recorded at delivery** (section 28). These were **not re-run** in this reconciliation. No test result is reported here as a new run.
+
+### Backlog entry
+
+- Issue DFR1-020, epic DFR1-E09, sprint S3, priority P0, 5 points, labels `predictive,crm`.
+- Dependencies DFR1-008 and DFR1-015, both recorded as merged.
+- Source: `docs/product/release-1/Dealsflo_Release1_Jira_Backlog_v2.xlsx`, "Jira Backlog" sheet. The backlog workbook still shows status "To Do". That status is stale, and Jira was not changed.
+
+### Acceptance criteria assessment
+
+| Criterion | Assessment | Basis |
+|---|---|---|
+| Insufficient data is labelled rule-based or baseline | **Verified** | Code inspection: `METHOD_BASELINE = "rule_based_baseline"` and the `insufficient_data` flag, set when too few rules have facts. Tests recorded at delivery: `test_a_lead_with_little_recorded_data_is_labelled_a_baseline_and_missing_facts_are_listed`. |
+| Factors, confidence, timestamp and ruleset version are exposed through the API | **Verified at API level** | Code inspection: `GET /api/v1/leads/{id}/priority` returns `confidence`, `ruleset_version`, `factors`, and the stored timestamp. Tests recorded at delivery: `test_a_calculated_score_is_stored_with_version_timestamp_factors_and_attribution`. |
+| Human corrections are captured for evaluation | **Verified** | Code inspection: `POST` and `GET /api/v1/leads/{id}/priority/{score_id}/corrections`. Tests recorded at delivery: `test_a_correction_is_recorded_for_evaluation_and_the_score_is_unchanged`, `test_a_repeated_correction_with_the_same_key_is_idempotent`, and `test_concurrent_corrections_with_one_key_store_exactly_one_row`. The evaluation pipeline itself belongs to DFR1-045. |
+
+### Deferred item (not a DFR1-020 blocker)
+
+The lead-detail priority panel is **deferred to the frontend redesign phase**. It is not a DFR1-020 blocker. The API exposes every field the criteria require. No frontend code for lead priority exists on `develop`, and none was changed for this reconciliation.
+
+### What this section does not establish
+
+- It does not establish that the DFR1-020 tests pass on `develop` today. Those results are recorded in section 28 from delivery.
+- It does not establish a user-facing display of priority. That is the deferred panel above.
+- The privacy export and deletion gap (DFR1-050), the absence of per-organization rule configuration, and the absence of a calibrated probability or evaluation pipeline (DFR1-045) remain open, as recorded in the tracker.
+
+### Corrections made
+
+- The tracker row for DFR1-020 said "PR created against develop; not merged". PR #160 is merged. The row now records the merged status.
+- The tracker row's status cell holds the story's points in the existing table. This is a pre-existing table convention. The header labels that column "Status". It was not changed in this reconciliation.
