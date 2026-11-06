@@ -31,6 +31,9 @@ const ResetPasswordPage = lazy(
 const ComponentPreview = import.meta.env.DEV
   ? lazy(() => import("../../dev/design-system/ComponentPreview"))
   : null;
+const ShellPreview = import.meta.env.DEV
+  ? lazy(() => import("../../dev/design-system/ShellPreview"))
+  : null;
 
 // SIBVO single sign-on callback
 const SsoCallbackPage = lazy(
@@ -145,6 +148,10 @@ export default function AppRouter() {
 
         {ComponentPreview ? (
           <Route path="/design-system" element={<ComponentPreview />} />
+        ) : null}
+
+        {ShellPreview ? (
+          <Route path="/design-system/shell/*" element={<ShellPreview />} />
         ) : null}
 
         {/* Public authentication pages */}

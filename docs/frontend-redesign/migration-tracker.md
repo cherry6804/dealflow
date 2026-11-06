@@ -76,3 +76,30 @@ Dev-only preview: `/design-system`, registered only when `import.meta.env.DEV` i
 Browser checks (dev server, fixtures): the preview renders in light and dark themes. Dialog opens as modal, closes on its close control, and returns focus. Hover and keyboard focus are checked by interaction, not by forced state. No backend is running, so API calls made by the app shell return 502; this does not affect the preview.
 
 Not verified: responsive behaviour at 390px and 768px; Escape handling for dialogs and tooltips in a real browser; axe (no axe package is installed).
+
+## Application shell
+
+Status: built and tested in the development preview at `/design-system/shell/*`. Production routes still render through the existing `WorkspaceLayout`. Replacing it is the next step, and only after the production wiring is tested.
+
+| Requirement | Component or module | Tests | Browser check (dev preview, fixtures) |
+|---|---|---|---|
+| Global header | components/shell/AppShell.tsx | yes | desktop, tablet, 390px |
+| Organization switcher (listbox, keyboard, retry) | components/shell/HeaderMenus.tsx | yes | select with arrow keys and Enter; list closes |
+| Expandable and collapsible sidebar, rail on tablet | components/shell/Navigation.tsx, AppShell.tsx | yes | collapse and expand on desktop; rail forced at 768 to 1023px |
+| Permission-aware navigation | components/shell/shellModel.ts, AppShell.tsx | yes | gated module hidden from nav and commands; route shows permission state |
+| Navigation groups, customizable sections | Navigation.tsx, sidebarSections.ts (existing) | indirectly | space disclosure toggles |
+| Active route and breadcrumbs | Navigation.tsx, shellModel.ts | yes | aria-current on the active link |
+| Contextual page actions | PageHeader.tsx | no | preview only |
+| Global search and command palette | CommandPalette.tsx | yes | Ctrl+K and "/" open it; focus moves to the field; Enter runs the command |
+| Notifications menu (loading, empty, error, retry, mark read) | NotificationsMenu.tsx | yes | loading, error and retry observed; panel fits 390px |
+| Profile menu (settings, sign out) | HeaderMenus.tsx | no | preview only |
+| Responsive mobile navigation (drawer) | AppShell.tsx, Dialog placement end | yes | drawer opens at 390px; Escape closes and returns focus |
+| Loading, empty, error, permission states | RouteStates.tsx | no | seen in preview routes |
+
+Not done:
+- Record search. The shell has no search API, so the palette searches only modules and commands. The existing navigation-only search in `WorkspaceLayout` is unchanged.
+- Production wiring. Organization switching, sign-out, notifications and preferences still use the existing context and storage code. The shell takes them as props, so wiring is a container change.
+- Permissions. The session exposes no per-user permission list. `PERMISSION_BY_MODULE` is empty, so nothing is gated in production. The preview gates one module with a fixture permission.
+- Preview fixtures. The preview uses fixture organizations and notifications. Text is English and not translated; it is dev-only.
+- Not verified: keyboard tab order across the full header, reduced-motion behaviour in a browser, and an accessibility scan (no axe package installed).
+- Console: duplicate-key warnings from the preview's command list were fixed. The remaining 502 responses come from the app's API calls, which have no backend in this environment.
