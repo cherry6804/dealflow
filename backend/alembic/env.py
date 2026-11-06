@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine, pool
@@ -6,6 +7,7 @@ from sqlalchemy.engine import make_url
 from alembic import context
 from app.config import get_settings
 from app.db.base import Base
+from app.db.migration_guard import is_migration_database_allowed
 
 config = context.config
 
@@ -25,14 +27,19 @@ database_url = (
 )
 
 # Safety guard: migrations are permitted only for the application database
-# and the dedicated test database. This helps prevent accidental migrations
-# against unrelated databases.
-database_name = make_url(database_url).database
+# and the dedicated test database. One isolated end-to-end database can be
+# opted in for local verification; see app/db/migration_guard.py.
+parsed_database_url = make_url(database_url)
 
-if database_name not in {"dealflow", "dealflow_test"}:
+if not is_migration_database_allowed(
+    parsed_database_url,
+    app_environment=settings.app_environment,
+    environ=os.environ,
+):
     raise RuntimeError(
         "Refusing to run Alembic against unexpected database "
-        f"{database_name!r}. Allowed databases: 'dealflow', 'dealflow_test'."
+        f"{parsed_database_url.database!r}. Allowed databases: "
+        "'dealflow', 'dealflow_test'."
     )
 
 
