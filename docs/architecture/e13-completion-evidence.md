@@ -2249,3 +2249,60 @@ The same defect applies in production. A reservation whose budget was removed wo
 - The shared test database still contains the orphaned reservation for organization `858fcb2c`. It was left by a prior killed run. It has not been deleted here, and it no longer affects the tests.
 - The two pre-existing Ruff findings in `tests/test_usage_reservations.py` remain.
 - Not verified: behaviour under concurrent cleanup workers beyond the existing lock-skip tests; and CI behaviour, since the local runs used the `127.0.0.1` database URL.
+
+## 41. DFR1-021 documentation reconciliation: lead intake and qualification agents
+
+Scope. Documentation only. No application code, test, migration, frontend file or Jira status was changed. The backlog workbook was not modified. DFR1-021 was implemented and merged earlier through PR #161 (feature branch `feature/DFR1-E07-lead-intake-qualification-agents`, merge `7f824b6`). Section 29 records its delivery. This section records the acceptance-criteria assessment, the product-owner decisions, and the corrected tracker status.
+
+Repository basis. Base `origin/develop` at `d06a5ac`. Merge `7f824b6` is an ancestor of that commit.
+
+### Backlog entry
+
+- Issue DFR1-021, epic DFR1-E07, sprint S3, priority P0, 5 points, labels `agents, sales`.
+- Dependencies DFR1-019 and DFR1-020, both merged (PR #159 and PR #160).
+- Source: `docs/product/release-1/Dealsflo_Release1_Jira_Backlog_v2.xlsx`, sheet "Jira Backlog". The workbook still shows status "To Do". That status is stale and was not changed.
+
+### Merged implementation
+
+- Backend: `app/agents/templates.py` (four templates: receptionist, identity resolver, lead scoring, qualification), `app/agents/crm_action_catalogue.py`, `app/agents/crm_actions.py`, `app/leads/intake.py`, `app/leads/intake_service.py`, `app/leads/qualification.py`, `app/db/models/lead_intake.py`, `app/db/models/sibvo_identity_link.py`.
+- API: `app/api/lead_intake.py` at `/api/v1/lead-intake` (create, list, detail, process, decision); `app/api/lead_qualification.py` (qualification list for a lead, and review of a qualification result).
+- Frontend: `LeadIntakePage.tsx` and its test, `leadIntakeApi.ts`, and the `/lead-intake` route. The route is not in navigation. The agents page shows execution metrics and failure reasons.
+- Migration: `a7c3e9d1f2b4` (`alembic/versions/a7c3e9d1f2b4_lead_intake_qualification.py`). Parent `f3b9d2c7a1e4` (DFR1-020). It creates `lead_intake_submissions` and `lead_qualification_results`. It is in the linear migration history, and it introduces no new head. `develop` has a single head, `c8e1f4a7b2d9`, as recorded in section 39. Downgrade refuses while rows exist. The intake table has a unique constraint on `(organization_id, external_reference)` and an index on `(organization_id, status)`. Both tables reference organizations and users with `RESTRICT`.
+- Tests: `backend/tests/test_lead_intake_qualification.py`.
+
+### Acceptance-criteria assessment
+
+The backlog criterion is one cell, "Agents create/update only through CRM services; review uncertain extraction; execution metrics and failure reasons visible." It is assessed here as three criteria.
+
+**1. Agents create and update only through CRM services: satisfied.**
+- Code inspection: the agents' CRM actions are `intake.process`, `intake.resolve_identity`, `lead.calculate_priority` and `qualification.record`. Each calls an existing service. The agent runtime writes only its own execution, step and audit records.
+- Historical test evidence (recorded at delivery, section 29): `test_a_new_person_becomes_a_contact_and_an_open_lead_through_the_crm_services`, `test_the_lead_scoring_agent_writes_only_a_score_and_not_the_lead`, `test_a_crm_action_must_name_an_approved_action_and_only_earlier_references`.
+
+**2. "Review uncertain extraction": satisfied as identity-resolution review (product decision 1).**
+- Ambiguous identity matches are routed to a person. The person must explicitly make the identity decision. The decision is attributed and audited. No CRM record is created from an unresolved match.
+- Code inspection: `POST /api/v1/lead-intake/{id}/decision`. Qualification results carry `review_status` (pending, accepted, overridden), reviewed through `POST /api/v1/lead-qualifications/{id}/review`.
+- Historical test evidence: `test_an_ambiguous_identity_waits_for_a_human_and_writes_no_crm_record`, `test_a_human_can_attach_an_uncertain_submission_to_a_matched_contact_and_the_decision_is_attributed`, `test_a_human_review_records_the_member_and_leaves_the_lead_unchanged`.
+- AI extraction from conversations, emails, WhatsApp, documents or other communication sources is not part of DFR1-021. It is potential future product scope, subject to separate approval. No extraction functionality was added or is required.
+
+**3. Execution metrics and failure reasons visible: satisfied (product decision 3).**
+- Code inspection: `GET /api/v1/agents/{agent_id}/metrics` returns status counts and failure reasons. `AgentsPage.tsx` renders them.
+- Historical test evidence: `test_execution_metrics_count_statuses_and_failure_reasons` (backend). No named frontend test covers the metrics rendering. A dedicated frontend test is a testing improvement for the frontend testing phase. It is not a blocker, and the story is not reopened.
+
+### Product-owner decisions recorded
+
+1. **Uncertain extraction.** The requirement is satisfied by the existing human identity-resolution review, as described in criterion 2. AI extraction is out of scope for DFR1-021.
+2. **Privacy (mandatory production pilot gate).** Lead intake and qualification data contain personal information. DFR1-050 must provide privacy export and deletion coverage for `lead_intake_submissions` and `lead_qualification_results` before real customer data is used. The table inventory currently lists both as not covered. DFR1-050 was not modified in this reconciliation.
+3. **Execution metrics.** The API metrics and the `AgentsPage` rendering satisfy the visibility requirement. A dedicated frontend test is recorded as a testing improvement for the frontend testing phase.
+
+### Test evidence: what was and was not executed
+
+- **Historical, recorded at delivery (section 29):** backend focused 39 passed; full backend suite 2,472 passed, 14 skipped, 0 failed; frontend `tsc`, lint, build and vitest (139 tests) exit 0.
+- **Executed during this reconciliation:** none. This section is documentation only, and no test or build was run for it.
+
+### Outstanding items
+
+- **DFR1-050:** privacy export and deletion for the two tables. This is a mandatory production pilot gate.
+- **Frontend testing phase:** a dedicated test for metrics and failure-reason rendering.
+- **Future product scope:** AI extraction from conversations, emails, WhatsApp and documents, subject to separate approval.
+- **Navigation:** the intake page is routed but not in navigation. The acceptance criteria do not require navigation, so this is not a DFR1-021 gap.
+- **Documentation consolidation:** sections 39 and 40 exist only on the unmerged branches `docs/dfr1-019-final-verification` and `docs/dfr1-020-reconciliation`. This section is numbered 41 to avoid duplicates. The next documentation branch should check develop's numbering before adding a section.
