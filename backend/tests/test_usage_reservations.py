@@ -650,3 +650,32 @@ def test_a_threshold_is_announced_once_per_period_even_after_settlement(org) -> 
 def test_the_settings_default_reservation_ttl_is_fifteen_minutes() -> None:
     assert get_settings().usage_reservation_ttl_seconds == 900
 
+
+
+def test_a_reservation_whose_budget_is_missing_does_not_block_the_expired_reservations_behind_it(org, caplog) -> None:
+    """A reservation with no budget cannot be released, because there is no counter to free. It must not take the batch
+    slot of a reservation that can be released, and it must be reported rather than dropped silently."""
+    organization_id, _ = org
+    _budget(organization_id, 100, unit=UsageUnit.TOKENS_INPUT)
+    _reserve(organization_id, "orphan-1", 5, unit=UsageUnit.TOKENS_INPUT)
+    with SessionLocal() as db:
+        db.execute(
+            delete(OrganizationUsageBudget).where(
+                OrganizationUsageBudget.organization_id == organization_id,
+                OrganizationUsageBudget.unit == UsageUnit.TOKENS_INPUT.value,
+            )
+        )
+        db.commit()
+    _budget(organization_id, 100)
+    _reserve(organization_id, "job-1", 10)
+
+    with caplog.at_level("ERROR", logger="app.governance.usage_ledger"):
+        report = usage_maintenance.run(SessionLocal, now=datetime.now(UTC) + timedelta(days=1), batch_size=1)
+
+    assert report["released"] == 1
+    with SessionLocal() as db:
+        orphan = db.scalar(select(AiUsageEvent).where(AiUsageEvent.idempotency_key == "orphan-1"))
+        released = db.scalar(select(AiUsageEvent).where(AiUsageEvent.idempotency_key == "job-1"))
+        assert orphan.status == AiUsageEvent.STATUS_RESERVED
+        assert released.status == AiUsageEvent.STATUS_RELEASED
+    assert "reservation_reaper_budget_missing" in caplog.text

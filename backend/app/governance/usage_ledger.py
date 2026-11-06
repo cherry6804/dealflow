@@ -50,7 +50,7 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -580,6 +580,20 @@ def release(
     return event
 
 
+def _budget_exists_for_event():
+    """True when the event's unit has a budget for the UTC period containing the event's occurred_at."""
+    period_start = cast(func.date_trunc("month", func.timezone("UTC", AiUsageEvent.occurred_at)), Date)
+    return (
+        select(OrganizationUsageBudget.id)
+        .where(
+            OrganizationUsageBudget.organization_id == AiUsageEvent.organization_id,
+            OrganizationUsageBudget.unit == AiUsageEvent.unit,
+            OrganizationUsageBudget.period_start == period_start,
+        )
+        .exists()
+    )
+
+
 def expire_stale_reservations(
     db: Session,
     *,
@@ -591,13 +605,27 @@ def expire_stale_reservations(
     Only RESERVED entries with ``reservation_expires_at <= now`` are changed. Settled, released and
     reversed entries and reservations still inside their window are never touched. Each candidate is
     processed under the same lock order as the other operations, and is re-checked after locking.
-    Entries that cannot be locked right now, or whose budget is missing, are counted as skipped and
-    left for a later pass.
+    Entries that cannot be locked right now are counted as skipped and left for a later pass. A reservation
+    whose budget is missing cannot be released, because there is no counter to free. It is left out of the
+    candidates, so it never takes a batch slot from a releasable reservation, and it is reported in the error
+    log on every pass until an operator resolves it.
     """
     if batch_size < 1:
         raise ValueError("Reaper batch size must be at least 1.")
     moment = now if now is not None else _database_now(db)
     _require_aware(moment, "now")
+
+    unbudgeted = db.scalar(
+        select(func.count())
+        .select_from(AiUsageEvent)
+        .where(
+            AiUsageEvent.status == AiUsageEvent.STATUS_RESERVED,
+            AiUsageEvent.reservation_expires_at <= moment,
+            ~_budget_exists_for_event(),
+        )
+    )
+    if unbudgeted:
+        logger.error("reservation_reaper_budget_missing", extra={"count": int(unbudgeted)})
 
     candidates = db.execute(
         select(
@@ -609,6 +637,7 @@ def expire_stale_reservations(
         .where(
             AiUsageEvent.status == AiUsageEvent.STATUS_RESERVED,
             AiUsageEvent.reservation_expires_at <= moment,
+            _budget_exists_for_event(),
         )
         .order_by(AiUsageEvent.reservation_expires_at, AiUsageEvent.id)
         .limit(batch_size)
