@@ -27,6 +27,11 @@ const ResetPasswordPage = lazy(
   () => import("../../features/auth/pages/ResetPasswordPage"),
 );
 
+// Development-only component preview. Not registered in production builds.
+const ComponentPreview = import.meta.env.DEV
+  ? lazy(() => import("../../dev/design-system/ComponentPreview"))
+  : null;
+
 // SIBVO single sign-on callback
 const SsoCallbackPage = lazy(
   () => import("../../features/auth/pages/SsoCallbackPage"),
@@ -137,6 +142,10 @@ export default function AppRouter() {
           path="/sso/callback"
           element={<SsoCallbackPage />}
         />
+
+        {ComponentPreview ? (
+          <Route path="/design-system" element={<ComponentPreview />} />
+        ) : null}
 
         {/* Public authentication pages */}
         <Route element={<PublicLayout />}>
