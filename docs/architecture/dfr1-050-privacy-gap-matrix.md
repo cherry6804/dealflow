@@ -16,7 +16,36 @@ The per-table section at the end is generated from `backend/app/governance/table
 
 3. **Import batch rows: resolved, minimum technical record.** A batch that holds a stored file, a file name, or a per-row error summary is cleared. The file is removed. The source name is replaced with `Redacted`. The error summary, which can echo row values, is set to null. The batch keeps only: id, organization, source format, content type, file size, status, row counts, timestamps, and an empty storage reference. The row is kept because contacts reference it with `ON DELETE RESTRICT`. A batch whose file was removed earlier is still cleared. Other organizations' batches are untouched. Outcome: `deleted_partial`.
 
-4. **Requirement history and requirement tables: resolved, corrected in review.** Every string column on the five requirement tables was reviewed against the models. Status, budget, transaction type, property type, possession and parking codes and change type are business terms or codes, and they are kept. City and locality are place names that a customer asked for. Once linked to an identifiable customer through the lead or profile, they reveal where that person wants to live, so they are personal data. Deletion replaces them with the placeholder on the current location rows and inside the location entries of history snapshots. Version, change type and timestamps are kept. Budget and property preferences are kept as the commercial terms of the requirement. That is a judgment the product owner should confirm. The test `test_requirement_string_columns_are_the_reviewed_codes_and_places_only` fails if a new string column is added without review. Deletion of `crm.requirements` reports `anonymized_partial`, and the kept fields are listed in the execution record.
+4. **Requirement history and requirement tables: resolved by product-owner decision.** Budget, budget ranges, property preferences and parking preferences linked to an identifiable customer are potentially personal data, and they are not treated as non-personal business terms. Deletion removes them from current records and from history snapshots, keeps the workflow status, the links and the history structure, and reports removed and retained values separately. The field-level matrix is below. Mandatory financial and contractual records (deals, commissions, payment milestones) are separate tables and are not changed by this deletion.
+
+   **Field-level deletion matrix (`crm.requirements`)**
+
+   | Table | Field | Treatment | Reason |
+   |---|---|---|---|
+   | customer_requirements | budget_min, budget_max | Removed (NULL) | Customer-linked budget. Personal under the product-owner decision. |
+   | customer_requirements | budget_currency | Removed (NULL) | Qualifies the removed budget. Meaningless once the budget is gone. |
+   | customer_requirements | transaction_type | Removed (NULL) | Customer-linked intent (sale, rent or lease). Nullable with a check constraint, so NULL is the only neutral value. |
+   | customer_requirements | status, is_active | Retained | Workflow state and active flag. Not personal. |
+   | customer_requirements | id, organization_id, lead_id, customer_profile_id | Retained | Identifiers and links that keep referential integrity and tenant isolation. |
+   | customer_requirements | created_at, updated_at | Retained | Timestamps of the business record. |
+   | customer_requirement_locations | city, locality | Replaced with `Redacted` | Place names a customer asked for. Personal when linked to a customer. Not nullable, so a placeholder is used. |
+   | customer_requirement_locations | id, organization_id, customer_requirement_id, is_active, timestamps | Retained | Identifiers, flag and timestamps. |
+   | customer_requirement_property_preferences | property_type | Replaced with `Redacted` | Customer-linked preference. Not nullable, and has no check constraint, so a placeholder is used. |
+   | customer_requirement_property_preferences | bhk_min, bhk_max | Removed (NULL) | Customer-linked preference. Nullable. |
+   | customer_requirement_property_preferences | id, organization_id, customer_requirement_id, is_active, timestamps | Retained | Identifiers, flag and timestamps. |
+   | customer_requirement_possession_parking_preferences | possession_preference, parking_preference | Replaced with `Redacted` | Customer-linked preferences. Not nullable, no check constraint. |
+   | customer_requirement_possession_parking_preferences | parking_spaces_min | Removed (NULL) | Customer-linked preference. Nullable. |
+   | customer_requirement_possession_parking_preferences | id, organization_id, customer_requirement_id, is_active, timestamps | Retained | Identifiers, flag and timestamps. |
+   | customer_requirement_history | id, organization_id, customer_requirement_id, version, change_type, occurred_at, actor_id | Retained | Business history structure: which version, what kind of change, when, and which internal member. |
+   | customer_requirement_history | snapshot.requirement.budget_min, budget_max, budget_currency | Removed (null) | Same values as the current row. |
+   | customer_requirement_history | snapshot.requirement.status, is_active, lead_id, customer_profile_id, timestamps | Retained | Workflow state and links. |
+   | customer_requirement_history | snapshot.locations[].city, locality | Replaced with `Redacted` | Same values as the current location rows. Entries and their keys are kept. |
+   | customer_requirement_history | snapshot.property_preferences[].property_type, bhk_min, bhk_max | Replaced or removed | Same as the current preference rows. Entries and their keys are kept. |
+   | customer_requirement_history | snapshot.possession_parking_preference.possession_preference, parking_preference, parking_spaces_min | Replaced or removed | Same as the current parking row. The object and its keys are kept. |
+
+   **Export and deletion reports.** The execution record for `crm.requirements` lists `removed` (personal values removed, with where each was removed) separately from `not_changed` (retained business history, each entry prefixed `retained:`). Export lists the values still held, so an export made after deletion shows the replaced values, not the original ones.
+
+   **Tests.** Current records, history snapshots, legal holds placed after the request, the post-deletion verification (which fails if a customer-linked value is written back), tenant isolation, and the separate reporting are covered in `tests/test_privacy_decisions.py`.
 
 5. **Lead intake fingerprint: resolved, replaced on deletion.** `payload_hash` is a SHA-256 of the normalized submission, which includes contact details, and it is unsalted. A digest of a phone number or an email can be checked against guessed values, so while the submission exists it can identify the person. It is therefore replaced on deletion by a tombstone computed from the row id, table and field name only. The original digest is not kept anywhere in the row. The raw payload, normalized payload, validation problems and decision reason are cleared, and the external reference is replaced by `redacted-<id>`, which keeps its uniqueness constraint. Live submissions keep their digest for duplicate detection. Tests: `test_lead_intake_deletion_replaces_the_digest…`, `test_no_stored_row_keeps_the_original_digest_after_deletion`.
 
@@ -59,7 +88,7 @@ No retention period has been approved for any category except the two that were 
 | 25 | Lint and migrations | Met for changed files; no migration added | see the report |
 | 26 | Human task events retained, reported as retained (decision 1) | Met | `test_human_tasks_and_events_are_exported_and_cleared_on_deletion` |
 | 27 | Lead intake digest replaced; agent and score digests replaced on clearing (decision 5) | Met | `test_lead_intake_deletion_replaces…`, `test_agent_run_and_lead_score_digests…` |
-| 28 | Requirement tables reviewed; city and locality replaced; business terms and history kept; evidence tests (decision 4) | Met | `test_requirement_string_columns_are_the_reviewed…`, `test_requirement_history_survives…` |
+| 28 | Customer-linked budget, place, property and parking values removed or replaced in current rows and history snapshots; status, links and history structure kept; field matrix and tests (decision 4, product-owner decision) | Met | `test_requirement_string_columns_are_the_reviewed…`, `test_requirement_history_survives…` |
 
 ## Retained and excluded data
 
@@ -75,7 +104,6 @@ No retention period has been approved for any category except the two that were 
 - No provider-side deletion exists; deletion is limited to Dealsflo's own records.
 - Retention periods are not approved for most categories, so they are not enforced.
 - Live submissions and live records keep their digests until deletion, for duplicate detection and audit.
-- Budget and property preferences linked to a customer are kept as business terms. The product owner should confirm this (decision 4).
 
 ## Table-by-table classification (generated)
 
@@ -105,11 +133,11 @@ All 92 database tables appear once, from `app/governance/table_inventory.py`. Th
 | `contact_do_not_disturb` | Dealsflo organization-owned | exported (crm.contacts) | - |  |
 | `contacts` | Dealsflo organization-owned | exported (crm.contacts) | - |  |
 | `customer_profiles` | Dealsflo organization-owned | exported (crm.customer_profiles) | fields cleared: customer_notes |  |
-| `customer_requirement_history` | Dealsflo organization-owned | exported (crm.requirements) | city and locality inside snapshot locations replaced; version, change type and timestamps kept |  |
+| `customer_requirement_history` | Dealsflo organization-owned | exported (crm.requirements) | customer-linked budget, place, property and parking values replaced or removed inside snapshots; version, change type, timestamps and structure kept |  |
 | `customer_requirement_locations` | Dealsflo organization-owned | exported (crm.requirements) | city and locality replaced; row kept |  |
-| `customer_requirement_possession_parking_preferences` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
-| `customer_requirement_property_preferences` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
-| `customer_requirements` | Dealsflo organization-owned | exported (crm.requirements) | - |  |
+| `customer_requirement_possession_parking_preferences` | Dealsflo organization-owned | exported (crm.requirements) | possession and parking preferences replaced; parking spaces removed; flag and timestamps kept |  |
+| `customer_requirement_property_preferences` | Dealsflo organization-owned | exported (crm.requirements) | property type replaced; BHK range removed; flag and timestamps kept |  |
+| `customer_requirements` | Dealsflo organization-owned | exported (crm.requirements) | budget, budget currency and transaction type removed; status, flags, links and timestamps kept |  |
 | `deal_commissions` | Dealsflo organization-owned | exported (crm.deals) | - |  |
 | `deal_negotiation_history` | Dealsflo organization-owned | exported (crm.deals) | fields cleared: note |  |
 | `deal_negotiations` | Dealsflo organization-owned | exported (crm.deals) | - |  |

@@ -1235,6 +1235,7 @@ class _Execution:
     count: int = 0
     deferred: int = 0
     not_changed: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
 
 
 def _delete_documents(
@@ -1504,7 +1505,7 @@ def _execute_category(
     if category_key in FREE_TEXT_CATEGORIES:
         return _clear_crm_free_text(db, organization_id, category_key)
     if category_key == REQUIREMENTS_CATEGORY:
-        return _clear_requirement_places(db, organization_id)
+        return _clear_requirement_personal_terms(db, organization_id)
     if category_key == INVITATIONS_CATEGORY:
         count = _anonymize_invitations(db, organization_id, now=now, cutoff=cutoff)
         _require_verified(_verify_invitations(db, organization_id, cutoff=cutoff), category_key)
@@ -1547,8 +1548,21 @@ def _clear_crm_free_text(db: Session, organization_id: UUID, category_key: str) 
     )
 
 
-def _requirement_places_remaining(db: Session, organization_id: UUID) -> bool:
-    """True while any location value, current or inside a history snapshot, still holds a real place name."""
+def _requirement_personal_values_remaining(db: Session, organization_id: UUID) -> bool:
+    """True while any customer-linked personal value still stands, in a current row or inside a history snapshot."""
+    requirement_values = (
+        CustomerRequirement.budget_min,
+        CustomerRequirement.budget_max,
+        CustomerRequirement.budget_currency,
+        CustomerRequirement.transaction_type,
+    )
+    if db.scalar(
+        select(func.count(CustomerRequirement.id)).where(
+            CustomerRequirement.organization_id == organization_id,
+            or_(*(column.is_not(None) for column in requirement_values)),
+        )
+    ):
+        return True
     if db.scalar(
         select(func.count(CustomerRequirementLocation.id)).where(
             CustomerRequirementLocation.organization_id == organization_id,
@@ -1559,23 +1573,116 @@ def _requirement_places_remaining(db: Session, organization_id: UUID) -> bool:
         )
     ):
         return True
+    if db.scalar(
+        select(func.count(CustomerRequirementPropertyPreference.id)).where(
+            CustomerRequirementPropertyPreference.organization_id == organization_id,
+            or_(
+                CustomerRequirementPropertyPreference.property_type != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPropertyPreference.bhk_min.is_not(None),
+                CustomerRequirementPropertyPreference.bhk_max.is_not(None),
+            ),
+        )
+    ):
+        return True
+    if db.scalar(
+        select(func.count(CustomerRequirementPossessionParkingPreference.id)).where(
+            CustomerRequirementPossessionParkingPreference.organization_id == organization_id,
+            or_(
+                CustomerRequirementPossessionParkingPreference.possession_preference != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPossessionParkingPreference.parking_preference != FREE_TEXT_PLACEHOLDER,
+                CustomerRequirementPossessionParkingPreference.parking_spaces_min.is_not(None),
+            ),
+        )
+    ):
+        return True
     for history in db.scalars(
         select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
     ).all():
-        locations = history.snapshot.get("locations") if isinstance(history.snapshot, dict) else None
-        for entry in locations or []:
-            if any(entry.get(name) not in (None, FREE_TEXT_PLACEHOLDER) for name in ("city", "locality")):
-                return True
+        if _snapshot_personal_values(history.snapshot):
+            return True
     return False
 
 
-def _clear_requirement_places(db: Session, organization_id: UUID) -> _Execution:
-    """Replace the place names a customer asked for. These are personal preferences once linked to a customer.
+_SNAPSHOT_REQUIREMENT_FIELDS = ("budget_min", "budget_max", "budget_currency")
+_SNAPSHOT_PROPERTY_FIELDS = ("bhk_min", "bhk_max")
+_SNAPSHOT_PARKING_FIELDS = ("parking_spaces_min",)
 
-    Kept: the requirement's business terms (status, budget, transaction type), the property and parking codes,
-    and the history's version, change type and timestamps. Only city and locality values are replaced.
+
+def _snapshot_personal_values(snapshot: Any) -> bool:
+    """True if a history snapshot still carries a customer-linked value that deletion replaces."""
+    if not isinstance(snapshot, dict):
+        return False
+    requirement = snapshot.get("requirement") or {}
+    if any(requirement.get(name) is not None for name in _SNAPSHOT_REQUIREMENT_FIELDS):
+        return True
+    for entry in snapshot.get("locations") or []:
+        if any(entry.get(name) not in (None, FREE_TEXT_PLACEHOLDER) for name in ("city", "locality")):
+            return True
+    for entry in snapshot.get("property_preferences") or []:
+        if entry.get("property_type") not in (None, FREE_TEXT_PLACEHOLDER):
+            return True
+        if any(entry.get(name) is not None for name in _SNAPSHOT_PROPERTY_FIELDS):
+            return True
+    parking = snapshot.get("possession_parking_preference") or {}
+    if any(parking.get(name) not in (None, FREE_TEXT_PLACEHOLDER)
+           for name in ("possession_preference", "parking_preference")):
+        return True
+    return any(parking.get(name) is not None for name in _SNAPSHOT_PARKING_FIELDS)
+
+
+def _replace_snapshot_personal_values(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the snapshot with customer-linked values replaced. Keys, versions and structure are kept."""
+    updated = dict(snapshot)
+    requirement = dict(updated.get("requirement") or {})
+    for name in _SNAPSHOT_REQUIREMENT_FIELDS:
+        if name in requirement:
+            requirement[name] = None
+    if "requirement" in updated:
+        updated["requirement"] = requirement
+    if "locations" in updated:
+        updated["locations"] = [
+            {**entry, **{name: FREE_TEXT_PLACEHOLDER for name in ("city", "locality") if name in entry}}
+            for entry in updated["locations"] or []
+        ]
+    if "property_preferences" in updated:
+        updated["property_preferences"] = [
+            {
+                **entry,
+                **({"property_type": FREE_TEXT_PLACEHOLDER} if "property_type" in entry else {}),
+                **{name: None for name in _SNAPSHOT_PROPERTY_FIELDS if name in entry},
+            }
+            for entry in updated["property_preferences"] or []
+        ]
+    if isinstance(updated.get("possession_parking_preference"), dict):
+        parking = dict(updated["possession_parking_preference"])
+        for name in ("possession_preference", "parking_preference"):
+            if name in parking:
+                parking[name] = FREE_TEXT_PLACEHOLDER
+        for name in _SNAPSHOT_PARKING_FIELDS:
+            if name in parking:
+                parking[name] = None
+        updated["possession_parking_preference"] = parking
+    return updated
+
+
+def _clear_requirement_personal_terms(db: Session, organization_id: UUID) -> _Execution:
+    """Clear customer-linked budget, place, property and parking values on current rows and in history snapshots.
+
+    Removed (personal, customer-linked): budget minimum and maximum, budget currency, transaction type, place names,
+    property type, BHK range, possession and parking preferences, parking spaces.
+    Retained (business history and structure): requirement status and active flag, the lead and profile links, the
+    history versions, change types and timestamps, and the identifiers of every row.
     """
     changed = 0
+    for requirement in db.scalars(
+        select(CustomerRequirement).where(CustomerRequirement.organization_id == organization_id)
+    ).all():
+        cleared = False
+        for name in ("budget_min", "budget_max", "budget_currency", "transaction_type"):
+            if getattr(requirement, name) is not None:
+                setattr(requirement, name, None)
+                cleared = True
+        changed += int(cleared)
     for location in db.scalars(
         select(CustomerRequirementLocation).where(CustomerRequirementLocation.organization_id == organization_id)
     ).all():
@@ -1583,33 +1690,53 @@ def _clear_requirement_places(db: Session, organization_id: UUID) -> _Execution:
             location.city = FREE_TEXT_PLACEHOLDER
             location.locality = FREE_TEXT_PLACEHOLDER
             changed += 1
+    for preference in db.scalars(
+        select(CustomerRequirementPropertyPreference).where(
+            CustomerRequirementPropertyPreference.organization_id == organization_id
+        )
+    ).all():
+        if preference.property_type != FREE_TEXT_PLACEHOLDER or preference.bhk_min is not None or preference.bhk_max is not None:
+            preference.property_type = FREE_TEXT_PLACEHOLDER
+            preference.bhk_min = None
+            preference.bhk_max = None
+            changed += 1
+    for parking in db.scalars(
+        select(CustomerRequirementPossessionParkingPreference).where(
+            CustomerRequirementPossessionParkingPreference.organization_id == organization_id
+        )
+    ).all():
+        if (
+            parking.possession_preference != FREE_TEXT_PLACEHOLDER
+            or parking.parking_preference != FREE_TEXT_PLACEHOLDER
+            or parking.parking_spaces_min is not None
+        ):
+            parking.possession_preference = FREE_TEXT_PLACEHOLDER
+            parking.parking_preference = FREE_TEXT_PLACEHOLDER
+            parking.parking_spaces_min = None
+            changed += 1
     for history in db.scalars(
         select(CustomerRequirementHistory).where(CustomerRequirementHistory.organization_id == organization_id)
     ).all():
-        snapshot = history.snapshot
-        locations = snapshot.get("locations") if isinstance(snapshot, dict) else None
-        if not locations:
-            continue
-        replaced = []
-        for entry in locations:
-            updated = dict(entry)
-            for name in ("city", "locality"):
-                if name in updated:
-                    updated[name] = FREE_TEXT_PLACEHOLDER
-            replaced.append(updated)
-        if replaced != locations:
-            history.snapshot = {**snapshot, "locations": replaced}
+        if _snapshot_personal_values(history.snapshot):
+            history.snapshot = _replace_snapshot_personal_values(history.snapshot)
             changed += 1
     db.flush()
-    _require_verified(not _requirement_places_remaining(db, organization_id), REQUIREMENTS_CATEGORY)
+    _require_verified(not _requirement_personal_values_remaining(db, organization_id), REQUIREMENTS_CATEGORY)
     return _Execution(
         OUTCOME_ANONYMIZED_PARTIAL,
         changed,
         0,
         (
-            "customer_requirements: status, budget and transaction type kept as business terms",
-            "customer_requirement_property_preferences, customer_requirement_possession_parking_preferences: codes kept",
-            "customer_requirement_history: version, change type and timestamps kept; location values replaced",
+            "retained: requirement status, active flag and lead and profile links (workflow state and referential integrity)",
+            "retained: history versions, change types and timestamps (business history structure)",
+            "retained: property and parking records keep their identifiers, active flag and timestamps",
+        ),
+        removed=(
+            "removed: budget minimum, budget maximum and budget currency (current row and history snapshots)",
+            "removed: transaction type (current row)",
+            "removed: place names, city and locality (current row, location rows and history snapshots)",
+            "removed: property type and BHK range (preference rows and history snapshots)",
+            "removed: possession and parking preferences and parking spaces (preference rows and history snapshots)",
         ),
     )
 
@@ -1640,6 +1767,9 @@ def _execution_record(
         record["deferred_dependent"] = execution.deferred
     if execution.not_changed:
         record["not_changed"] = list(execution.not_changed)
+    if execution.removed:
+        # Personal values removed by this deletion, reported apart from the retained business history.
+        record["removed"] = list(execution.removed)
     if reasons:
         record["reasons"] = reasons
     return record

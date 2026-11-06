@@ -23,12 +23,19 @@ from app.db.models.audit_event import AuditEvent
 from app.db.models.customer_requirement import CustomerRequirement
 from app.db.models.customer_requirement_history import CustomerRequirementHistory
 from app.db.models.customer_requirement_location import CustomerRequirementLocation
+from app.db.models.customer_requirement_possession_parking_preference import (
+    CustomerRequirementPossessionParkingPreference,
+)
+from app.db.models.customer_requirement_property_preference import (
+    CustomerRequirementPropertyPreference,
+)
 from app.db.models.import_batch import ImportBatch
 from app.db.models.lead_intake import LeadIntakeSubmission
 from app.db.models.lead_priority import LeadPriorityScore
 from app.db.models.organization import Organization
 from app.db.session import SessionLocal
 from app.governance import privacy_execution
+from app.governance.privacy import place_legal_hold
 from app.governance.privacy_derived import (
     PRIVACY_LIMITATIONS,
     RETAINED_PERSONAL_DATA_HISTORY,
@@ -85,6 +92,8 @@ def org(world) -> Iterator[SimpleNamespace]:
         for model in (
             CustomerRequirementHistory,
             CustomerRequirementLocation,
+            CustomerRequirementPropertyPreference,
+            CustomerRequirementPossessionParkingPreference,
             CustomerRequirement,
             ImportBatch,
             LeadIntakeSubmission,
@@ -290,52 +299,165 @@ def test_requirement_string_columns_are_the_reviewed_codes_and_places_only() -> 
         assert string_columns <= reviewed | {"organization_id"}, (table_name, string_columns - reviewed)
 
 
-def test_requirement_places_are_replaced_and_business_history_is_kept(org, storage) -> None:
+def _requirement_fixture(org_id: UUID, lead_id: UUID, owner_id: UUID) -> dict:
+    """A requirement with every customer-linked value filled in, plus its history snapshot."""
+    from app.db.models.customer_requirement_possession_parking_preference import (
+        CustomerRequirementPossessionParkingPreference,
+    )
+    from app.db.models.customer_requirement_property_preference import (
+        CustomerRequirementPropertyPreference,
+    )
+
     with SessionLocal() as db:
-        organization = db.get(Organization, org.org.id)
-        lead = create_lead(db, organization=organization)
         requirement = CustomerRequirement(
-            organization_id=org.org.id, lead_id=lead.id, status="ACTIVE", is_active=True, budget_min=5000000,
-            budget_max=8000000, budget_currency="INR", transaction_type="SALE",
+            organization_id=org_id, lead_id=lead_id, status="ACTIVE", is_active=True,
+            budget_min=5000000, budget_max=8000000, budget_currency="INR", transaction_type="SALE",
         )
         db.add(requirement)
         db.flush()
-        db.add(CustomerRequirementLocation(organization_id=org.org.id, customer_requirement_id=requirement.id,
+        db.add(CustomerRequirementLocation(organization_id=org_id, customer_requirement_id=requirement.id,
                                            city="Bengaluru", locality="Whitefield", is_active=True))
+        preference = CustomerRequirementPropertyPreference(
+            organization_id=org_id, customer_requirement_id=requirement.id, property_type="APARTMENT",
+            bhk_min=2, bhk_max=3, is_active=True,
+        )
+        parking = CustomerRequirementPossessionParkingPreference(
+            organization_id=org_id, customer_requirement_id=requirement.id, possession_preference="READY",
+            parking_preference="COVERED", parking_spaces_min=2, is_active=True,
+        )
+        db.add_all([preference, parking])
         db.add(CustomerRequirementHistory(
-            organization_id=org.org.id, customer_requirement_id=requirement.id, version=1, actor_id=org.owner.id,
+            organization_id=org_id, customer_requirement_id=requirement.id, version=1, actor_id=owner_id,
             change_type="created",
-            snapshot={"requirement": {"status": "ACTIVE", "budget_min": "5000000"},
-                      "locations": [{"city": "Bengaluru", "locality": "Whitefield"}]},
+            snapshot={
+                "requirement": {"status": "ACTIVE", "budget_min": "5000000.00", "budget_max": "8000000.00",
+                                "budget_currency": "INR", "lead_id": str(lead_id)},
+                "locations": [{"city": "Bengaluru", "locality": "Whitefield", "is_active": True}],
+                "property_preferences": [{"property_type": "APARTMENT", "bhk_min": 2, "bhk_max": 3}],
+                "possession_parking_preference": {"possession_preference": "READY",
+                                                  "parking_preference": "COVERED", "parking_spaces_min": 2},
+            },
         ))
         db.commit()
-        requirement_id = requirement.id
-        history_id = db.scalar(select(CustomerRequirementHistory.id).where(
-            CustomerRequirementHistory.customer_requirement_id == requirement.id))
+        return {"requirement": requirement.id, "preference": preference.id, "parking": parking.id}
+
+
+def test_customer_linked_values_are_removed_from_current_records_and_kept_structure(org, storage) -> None:
+    from app.db.models.customer_requirement_possession_parking_preference import (
+        CustomerRequirementPossessionParkingPreference,
+    )
+    from app.db.models.customer_requirement_property_preference import (
+        CustomerRequirementPropertyPreference,
+    )
+
+    with SessionLocal() as db:
+        lead = create_lead(db, organization=db.get(Organization, org.org.id))
+        lead_id = lead.id
+        db.commit()
+    ids = _requirement_fixture(org.org.id, lead_id, org.owner.id)
 
     request_id = _delete_category(org, "crm.requirements")
     execution = json.loads(_row(request_id).execution)["crm.requirements"]
     assert execution["outcome"] == "anonymized_partial"
-    assert execution["count"] == 2  # the location row and the history snapshot
+    assert "retained" not in execution["removed"][0]  # removed entries are the removed values
+    assert all(item.startswith("retained:") for item in execution["not_changed"])
+    assert all(item.startswith("removed:") for item in execution["removed"])
 
     with SessionLocal() as db:
+        requirement = db.get(CustomerRequirement, ids["requirement"])
+        assert requirement is not None
+        assert requirement.budget_min is None and requirement.budget_max is None
+        assert requirement.budget_currency is None and requirement.transaction_type is None
+        # Workflow state and referential links stay.
+        assert requirement.status == "ACTIVE" and requirement.is_active is True
+        assert requirement.lead_id == lead_id
         location = db.scalar(select(CustomerRequirementLocation).where(
-            CustomerRequirementLocation.customer_requirement_id == requirement_id))
+            CustomerRequirementLocation.customer_requirement_id == ids["requirement"]))
         assert location is not None and location.city == "Redacted" and location.locality == "Redacted"
+        preference = db.get(CustomerRequirementPropertyPreference, ids["preference"])
+        assert preference is not None and preference.property_type == "Redacted"
+        assert preference.bhk_min is None and preference.bhk_max is None and preference.is_active is True
+        parking = db.get(CustomerRequirementPossessionParkingPreference, ids["parking"])
+        assert parking is not None and parking.possession_preference == "Redacted"
+        assert parking.parking_preference == "Redacted" and parking.parking_spaces_min is None
+
+
+def test_customer_linked_values_are_removed_from_history_snapshots_and_history_structure_is_kept(org, storage) -> None:
+    with SessionLocal() as db:
+        lead = create_lead(db, organization=db.get(Organization, org.org.id))
+        lead_id = lead.id
+        db.commit()
+    ids = _requirement_fixture(org.org.id, lead_id, org.owner.id)
+    with SessionLocal() as db:
+        history = db.scalar(select(CustomerRequirementHistory).where(
+            CustomerRequirementHistory.customer_requirement_id == ids["requirement"]))
+        history_id, occurred_at = history.id, history.occurred_at
+
+    _delete_category(org, "crm.requirements")
+
+    with SessionLocal() as db:
         history = db.get(CustomerRequirementHistory, history_id)
         assert history is not None
-        assert history.snapshot["locations"] == [{"city": "Redacted", "locality": "Redacted"}]
-        # Business terms and the history's structure stay.
-        assert history.snapshot["requirement"]["status"] == "ACTIVE"
-        assert history.version == 1 and history.change_type == "created"
-        requirement = db.get(CustomerRequirement, requirement_id)
-        assert requirement is not None and requirement.budget_max == 8000000 and requirement.transaction_type == "SALE"
+        assert history.version == 1 and history.change_type == "created" and history.occurred_at == occurred_at
+        snapshot = history.snapshot
+        assert snapshot["requirement"]["budget_min"] is None and snapshot["requirement"]["budget_max"] is None
+        assert snapshot["requirement"]["budget_currency"] is None
+        assert snapshot["requirement"]["status"] == "ACTIVE"  # workflow status kept
+        assert snapshot["requirement"]["lead_id"] == str(lead_id)  # link kept
+        assert snapshot["locations"] == [{"city": "Redacted", "locality": "Redacted", "is_active": True}]
+        assert snapshot["property_preferences"] == [{"property_type": "Redacted", "bhk_min": None, "bhk_max": None}]
+        assert snapshot["possession_parking_preference"] == {
+            "possession_preference": "Redacted", "parking_preference": "Redacted", "parking_spaces_min": None,
+        }
 
-    export_id = _request(org.org.id, org.owner.id, "export", ["crm.requirements"])
-    _run(export_id, org.org.id)
-    history_rows = _document_of(export_id, storage)["categories"]["crm.requirements/requirement_history"]
-    serialized = json.dumps([row["snapshot"] for row in history_rows])
-    assert "Whitefield" not in serialized and "Bengaluru" not in serialized
+
+def test_a_legal_hold_placed_after_the_request_keeps_every_customer_linked_value(org, storage) -> None:
+    with SessionLocal() as db:
+        lead = create_lead(db, organization=db.get(Organization, org.org.id))
+        lead_id = lead.id
+        db.commit()
+    ids = _requirement_fixture(org.org.id, lead_id, org.owner.id)
+    request_id = _request(org.org.id, org.owner.id, "deletion", ["crm.requirements"])
+    with SessionLocal() as db:
+        place_legal_hold(db, organization_id=org.org.id, actor_user_id=org.owner.id,
+                         category_key="crm.requirements", reason="Commercial dispute open")
+        db.commit()
+    _execute(request_id, org.org.id, org.owner.id)
+    _run(request_id, org.org.id)
+
+    assert json.loads(_row(request_id).execution)["crm.requirements"]["outcome"] == "skipped"
+    with SessionLocal() as db:
+        requirement = db.get(CustomerRequirement, ids["requirement"])
+        assert requirement is not None and requirement.budget_min == 5000000 and requirement.transaction_type == "SALE"
+
+
+def test_post_deletion_verification_detects_a_surviving_customer_value(org, storage) -> None:
+    with SessionLocal() as db:
+        lead = create_lead(db, organization=db.get(Organization, org.org.id))
+        lead_id = lead.id
+        db.commit()
+    ids = _requirement_fixture(org.org.id, lead_id, org.owner.id)
+    _delete_category(org, "crm.requirements")
+
+    with SessionLocal() as db:
+        assert privacy_execution._requirement_personal_values_remaining(db, org.org.id) is False
+        requirement = db.get(CustomerRequirement, ids["requirement"])
+        requirement.budget_max = 9000000  # a value written back after deletion
+        db.flush()
+        assert privacy_execution._requirement_personal_values_remaining(db, org.org.id) is True
+        db.rollback()
+
+
+def test_requirement_values_of_another_organization_are_untouched(org, storage) -> None:
+    with SessionLocal() as db:
+        other_lead = create_lead(db, organization=db.get(Organization, org.other_org.id))
+        other_lead_id = other_lead.id
+        db.commit()
+    other = _requirement_fixture(org.other_org.id, other_lead_id, org.other.id)
+    _delete_category(org, "crm.requirements")
+    with SessionLocal() as db:
+        requirement = db.get(CustomerRequirement, other["requirement"])
+        assert requirement is not None and requirement.budget_min == 5000000
 
 
 # ---------------------------------------------------------------------------------------------------------------
