@@ -21,7 +21,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 20px;
   background: #fff;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
 }
 
@@ -46,7 +46,7 @@
 
 .payment-milestones-header h2 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: clamp(1.35rem, 3vw, 1.8rem);
   font-weight: 750;
   letter-spacing: -0.035em;
@@ -96,7 +96,7 @@
   padding: 16px;
   border: 1px solid #e6ebf3;
   border-radius: 14px;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .payment-milestones-summary article span {
@@ -109,7 +109,7 @@
 
 .payment-milestones-summary article strong {
   display: block;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: clamp(1.1rem, 2vw, 1.45rem);
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -117,11 +117,11 @@
 
 .payment-milestones-summary article.has-overdue {
   border-color: #fecaca;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
 }
 
 .payment-milestones-summary article.has-overdue strong {
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .payment-milestones-toolbar {
@@ -134,7 +134,7 @@
 
 .payment-milestones-toolbar h3 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.05rem;
 }
 
@@ -179,13 +179,13 @@
 }
 
 .payment-milestones-secondary {
-  border-color: #dce3ed;
+  border-color: var(--df-tone-line-2);
   background: #fff;
   color: #364152;
 }
 
 .payment-milestones-secondary:hover:not(:disabled) {
-  background: #f5f7fb;
+  background: var(--df-tone-tint-5);
 }
 
 .payment-milestones-paid {
@@ -201,7 +201,7 @@
 .payment-milestones-cancel {
   border-color: #f2d2d2;
   background: #fff;
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .payment-milestones-cancel:hover:not(:disabled) {
@@ -233,7 +233,7 @@
 
 .payment-milestones-alert.error {
   border-color: #fecaca;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #a52222;
 }
 
@@ -257,13 +257,13 @@
 
 .payment-milestones-state {
   padding: 48px 16px;
-  color: #64748b;
+  color: var(--df-tone-slate);
   text-align: center;
 }
 
 .payment-milestones-empty {
   padding: 48px 20px;
-  border: 1px dashed #d5deeb;
+  border: 1px dashed var(--df-tone-line-4);
   border-radius: 16px;
   background: #fafbfe;
   text-align: center;
@@ -284,7 +284,7 @@
 
 .payment-milestones-empty h3 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.05rem;
 }
 
@@ -326,7 +326,7 @@
 
 .payment-milestone-card-heading h4 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1rem;
   font-weight: 750;
   overflow-wrap: anywhere;
@@ -334,7 +334,7 @@
 
 .payment-milestone-amount {
   margin: 7px 0 0;
-  color: #344054;
+  color: var(--df-tone-ink-5);
   font-size: 1.1rem;
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -362,7 +362,7 @@
 .payment-milestone-status-overdue {
   border-color: #fecaca;
   background: #fff1f1;
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .payment-milestone-status-paid {
@@ -372,7 +372,7 @@
 }
 
 .payment-milestone-status-cancelled {
-  border-color: #dce3ed;
+  border-color: var(--df-tone-line-2);
   background: #f2f4f7;
   color: #667085;
 }
@@ -383,7 +383,7 @@
   gap: 12px 26px;
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .payment-milestone-meta span {
@@ -417,7 +417,7 @@
   gap: 12px;
   margin-top: 17px;
   padding-top: 16px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .payment-milestone-actions > label,
@@ -425,7 +425,7 @@
   display: grid;
   min-width: 0;
   gap: 7px;
-  color: #344054;
+  color: var(--df-tone-ink-5);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -438,11 +438,11 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 10px 12px;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 9px;
   outline: none;
   background: #fff;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font: inherit;
   font-size: 0.88rem;
 }
@@ -474,12 +474,12 @@
   padding: 22px;
   border: 1px solid #dfe5f3;
   border-radius: 15px;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .payment-milestone-form-wrap h3 {
   margin: 0 0 18px;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.05rem;
 }
 
@@ -620,7 +620,7 @@
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   background: #fff;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 18px;
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
 }
@@ -647,7 +647,7 @@
   flex-shrink: 0;
   width: 38px;
   height: 38px;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 10px;
   background: #fff;
   color: #334155;
@@ -697,7 +697,7 @@
   max-height: calc(100dvh - 48px) !important;
   min-height: 0 !important;
   overflow: hidden !important;
-  border: 1px solid var(--color-border, #dce4f0) !important;
+  border: 1px solid var(--color-border, var(--df-tone-line-1)) !important;
   border-radius: 22px !important;
   background: var(--color-surface, #fff) !important;
   box-shadow: 0 24px 80px rgb(10 25 50 / 25%) !important;
@@ -725,7 +725,7 @@
   height: 42px !important;
   flex: 0 0 auto !important;
   place-items: center !important;
-  border: 1px solid var(--color-border, #dce4f0) !important;
+  border: 1px solid var(--color-border, var(--df-tone-line-1)) !important;
   border-radius: 12px !important;
   background: var(--color-surface, #fff) !important;
   color: var(--color-text, #1f2937) !important;
@@ -826,7 +826,7 @@
   max-height: calc(100dvh - 48px) !important;
   min-height: 0 !important;
   overflow: hidden !important;
-  border: 1px solid var(--color-border, #dce4f0) !important;
+  border: 1px solid var(--color-border, var(--df-tone-line-1)) !important;
   border-radius: 22px !important;
   background: var(--color-surface, #fff) !important;
   box-shadow: 0 24px 80px rgb(10 25 50 / 25%) !important;
@@ -854,7 +854,7 @@
   height: 42px !important;
   flex: 0 0 auto !important;
   place-items: center !important;
-  border: 1px solid var(--color-border, #dce4f0) !important;
+  border: 1px solid var(--color-border, var(--df-tone-line-1)) !important;
   border-radius: 12px !important;
   background: var(--color-surface, #fff) !important;
   color: var(--color-text, #1f2937) !important;

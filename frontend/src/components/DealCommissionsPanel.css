@@ -21,7 +21,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 20px;
   background: #fff;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
   animation: deal-commissions-enter 180ms ease both;
 }
@@ -49,7 +49,7 @@
 .deal-commissions-header h2,
 .deal-commission-form-header h2 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: clamp(1.35rem, 3vw, 1.8rem);
   font-weight: 750;
   letter-spacing: -0.035em;
@@ -70,7 +70,7 @@
   width: 40px;
   height: 40px;
   place-items: center;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 12px;
   background: #fff;
   color: #475569;
@@ -100,7 +100,7 @@
   padding: 18px;
   border: 1px solid #dfe5f3;
   border-radius: 14px;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .deal-commissions-deal-value > div {
@@ -115,7 +115,7 @@
 }
 
 .deal-commissions-deal-value strong {
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.3rem;
   overflow-wrap: anywhere;
 }
@@ -138,7 +138,7 @@
   padding: 16px;
   border: 1px solid #e6ebf3;
   border-radius: 14px;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .deal-commissions-summary article span {
@@ -151,7 +151,7 @@
 
 .deal-commissions-summary article strong {
   display: block;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: clamp(1rem, 2vw, 1.35rem);
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -167,7 +167,7 @@
 
 .deal-commissions-toolbar h3 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.05rem;
 }
 
@@ -211,13 +211,13 @@
 }
 
 .deal-commissions-secondary {
-  border-color: #dce3ed;
+  border-color: var(--df-tone-line-2);
   background: #fff;
   color: #364152;
 }
 
 .deal-commissions-secondary:hover:not(:disabled) {
-  background: #f5f7fb;
+  background: var(--df-tone-tint-5);
 }
 
 .deal-commissions-paid {
@@ -233,7 +233,7 @@
 .deal-commissions-cancel {
   border-color: #f2d2d2;
   background: #fff;
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .deal-commissions-cancel:hover:not(:disabled) {
@@ -266,7 +266,7 @@
 
 .deal-commissions-alert.error {
   border-color: #fecaca;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #a52222;
 }
 
@@ -290,13 +290,13 @@
 
 .deal-commissions-state {
   padding: 48px 16px;
-  color: #64748b;
+  color: var(--df-tone-slate);
   text-align: center;
 }
 
 .deal-commissions-empty {
   padding: 48px 20px;
-  border: 1px dashed #d5deeb;
+  border: 1px dashed var(--df-tone-line-4);
   border-radius: 16px;
   background: #fafbfe;
   text-align: center;
@@ -317,7 +317,7 @@
 
 .deal-commissions-empty h3 {
   margin: 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.05rem;
 }
 
@@ -366,7 +366,7 @@
 
 .deal-commission-card-heading h4 {
   margin: 7px 0 0;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: clamp(1.15rem, 2vw, 1.45rem);
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -411,7 +411,7 @@
 }
 
 .deal-commission-status-cancelled {
-  border-color: #dce3ed;
+  border-color: var(--df-tone-line-2);
   background: #f2f4f7;
   color: #667085;
 }
@@ -422,7 +422,7 @@
   gap: 12px 26px;
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .deal-commission-meta span {
@@ -456,7 +456,7 @@
   gap: 12px;
   margin-top: 17px;
   padding-top: 16px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .deal-commission-actions > label,
@@ -464,7 +464,7 @@
   display: grid;
   min-width: 0;
   gap: 7px;
-  color: #344054;
+  color: var(--df-tone-ink-5);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -477,11 +477,11 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 10px 12px;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 9px;
   outline: none;
   background: #fff;
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font: inherit;
   font-size: 0.88rem;
 }
@@ -534,7 +534,7 @@
   width: min(100%, 720px);
   max-height: min(88dvh, 820px);
   overflow: hidden;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 24px 80px rgb(15 23 42 / 30%);
@@ -587,7 +587,7 @@
   padding: 15px;
   border: 1px solid #dfe5f3;
   border-radius: 12px;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .deal-commission-preview span {
@@ -597,7 +597,7 @@
 }
 
 .deal-commission-preview strong {
-  color: #172033;
+  color: var(--df-tone-ink-deep);
   font-size: 1.25rem;
   overflow-wrap: anywhere;
 }
@@ -1182,7 +1182,7 @@ body:has(.deal-commission-form-backdrop) .deal-commissions-modal {
   min-height: 0;
   margin: auto;
   overflow: hidden;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 24px 80px rgb(15 23 42 / 30%);

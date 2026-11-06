@@ -194,3 +194,76 @@
   line-height: var(--df-type-meta-line);
   color: var(--df-muted);
 }
+
+/* Tone tokens in dark mode. Keep this list in step with tokens.css. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  --df-tone-ink-navy: #e6edf5;
+  --df-tone-ink-deep: #e6edf5;
+  --df-tone-ink-deepest: #eef3f9;
+  --df-tone-ink-2: #dfe7f2;
+  --df-tone-ink-3: #dfe7f2;
+  --df-tone-ink-4: #c9d3e0;
+  --df-tone-ink-5: #c9d3e0;
+  --df-tone-slate: #a3adbd;
+  --df-tone-slate-2: #9aa6b8;
+  --df-tone-slate-3: #9aa6b8;
+  --df-tone-danger-text: #ff8a80;
+  --df-tone-tint-1: #161b22;
+  --df-tone-tint-2: #161b22;
+  --df-tone-tint-3: #161b22;
+  --df-tone-tint-4: #1c222b;
+  --df-tone-tint-5: #0e1116;
+  --df-tone-primary-tint: #15294a;
+  --df-tone-danger-tint: #3d1d1b;
+  --df-tone-line-1: #2b3441;
+  --df-tone-line-2: #2b3441;
+  --df-tone-line-3: #2b3441;
+  --df-tone-line-4: #2b3441;
+  --df-tone-line-5: #2b3441;
+  --df-tone-line-6: #2b3441;
+  --df-tone-line-7: #2b3441;
+  --df-tone-line-8: #2b3441;
+  --df-tone-line-9: #2b3441;
+  --df-tone-line-soft-1: #222a35;
+  --df-tone-line-soft-2: #222a35;
+  --df-tone-line-soft-3: #222a35;
+  --df-tone-accent-line: #a898ff;
+  --df-tone-accent-strong: #a898ff;
+}
+
+}
+:root[data-theme="dark"] {
+  --df-tone-ink-navy: #e6edf5;
+  --df-tone-ink-deep: #e6edf5;
+  --df-tone-ink-deepest: #eef3f9;
+  --df-tone-ink-2: #dfe7f2;
+  --df-tone-ink-3: #dfe7f2;
+  --df-tone-ink-4: #c9d3e0;
+  --df-tone-ink-5: #c9d3e0;
+  --df-tone-slate: #a3adbd;
+  --df-tone-slate-2: #9aa6b8;
+  --df-tone-slate-3: #9aa6b8;
+  --df-tone-danger-text: #ff8a80;
+  --df-tone-tint-1: #161b22;
+  --df-tone-tint-2: #161b22;
+  --df-tone-tint-3: #161b22;
+  --df-tone-tint-4: #1c222b;
+  --df-tone-tint-5: #0e1116;
+  --df-tone-primary-tint: #15294a;
+  --df-tone-danger-tint: #3d1d1b;
+  --df-tone-line-1: #2b3441;
+  --df-tone-line-2: #2b3441;
+  --df-tone-line-3: #2b3441;
+  --df-tone-line-4: #2b3441;
+  --df-tone-line-5: #2b3441;
+  --df-tone-line-6: #2b3441;
+  --df-tone-line-7: #2b3441;
+  --df-tone-line-8: #2b3441;
+  --df-tone-line-9: #2b3441;
+  --df-tone-line-soft-1: #222a35;
+  --df-tone-line-soft-2: #222a35;
+  --df-tone-line-soft-3: #222a35;
+  --df-tone-accent-line: #a898ff;
+  --df-tone-accent-strong: #a898ff;
+}

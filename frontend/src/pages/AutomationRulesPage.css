@@ -81,14 +81,14 @@
 }
 
 .automation-secondary-button {
-  border-color: #dce3ed;
+  border-color: var(--df-tone-line-2);
   background: #ffffff;
   color: #35445a;
 }
 
 .automation-secondary-button:hover:not(:disabled) {
   border-color: #b8c5d8;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .automation-primary-button:disabled,
@@ -289,7 +289,7 @@
   min-width: 0;
   min-height: 42px;
   padding: 10px 12px;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 9px;
   outline: none;
   background: #ffffff;
@@ -341,7 +341,7 @@
   gap: 9px;
   margin-top: 24px;
   padding-top: 19px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .automation-list-heading {
@@ -365,7 +365,7 @@
   min-height: 39px;
   min-width: 140px;
   padding: 8px 11px;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 8px;
   background: #ffffff;
   color: var(--automation-ink);
@@ -388,7 +388,7 @@
 .automation-table th {
   padding: 12px 13px;
   border-bottom: 1px solid #e8edf4;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
   color: #64738a;
   font-size: 10px;
   font-weight: 750;
@@ -399,7 +399,7 @@
 
 .automation-table td {
   padding: 15px 13px;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--df-tone-line-soft-1);
   color: #44536a;
   font-size: 12px;
   vertical-align: middle;
@@ -431,7 +431,7 @@
   padding: 5px 7px;
   border: 1px solid #e4eaf5;
   border-radius: 6px;
-  background: #f6f8fc;
+  background: var(--df-tone-tint-3);
   color: #4b5d78;
   font-size: 10px;
   overflow-wrap: anywhere;
@@ -501,7 +501,7 @@
   gap: 12px;
   margin-top: 17px;
   padding-top: 16px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
   color: var(--automation-muted);
   font-size: 11px;
 }
@@ -990,7 +990,7 @@
 .automation-modal-actions .automation-secondary-button {
   background-color: #ffffff !important;
   color: #24344d !important;
-  border: 1px solid #dce3ed !important;
+  border: 1px solid var(--df-tone-line-2) !important;
   min-width: 88px;
   min-height: 44px;
 }
@@ -1051,7 +1051,7 @@
 
 .automation-modal-header h2 {
   margin: 0;
-  color: var(--automation-ink, #172b4d);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
   font-size: clamp(20px, 3vw, 25px);
   line-height: 1.3;
   letter-spacing: -0.5px;
@@ -1079,8 +1079,8 @@
 }
 
 .automation-modal-close:hover:not(:disabled) {
-  background: #f5f7fb;
-  color: var(--automation-ink, #172b4d);
+  background: var(--df-tone-tint-5);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
 }
 
 .automation-modal-form {
@@ -1119,7 +1119,7 @@
   margin: 24px 0 16px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--automation-border, #e2e8f1);
-  color: var(--automation-ink, #172b4d);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
   font-size: 14px;
   font-weight: 750;
   line-height: 1.5;
@@ -1141,7 +1141,7 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  color: var(--automation-ink, #172b4d);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
   font-size: 12px;
   font-weight: 700;
   line-height: 1.5;
@@ -1162,7 +1162,7 @@
   border: 1px solid #d7e0ed;
   border-radius: 8px;
   background: #fff;
-  color: var(--automation-ink, #172b4d);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
   font: inherit;
   font-size: 13px;
   font-weight: 400;
@@ -1246,7 +1246,7 @@
 
 .automation-toggle-row > span {
   min-width: 0;
-  color: var(--automation-ink, #172b4d);
+  color: var(--automation-ink, var(--df-tone-ink-navy));
   font-size: 12px;
   font-weight: 700;
   line-height: 1.6;

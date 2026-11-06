@@ -138,7 +138,7 @@
   padding: 6px 8px;
   border: 1px solid #e3e9f5;
   border-radius: 7px;
-  background: #f6f8fc;
+  background: var(--df-tone-tint-3);
   color: #53647e;
   font-size: 9px;
   font-weight: 800;
@@ -146,7 +146,7 @@
 }
 
 .notification-preferences-list {
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .notification-preference-row {
@@ -155,7 +155,7 @@
   gap: 15px;
   min-width: 0;
   padding: 18px 0;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--df-tone-line-soft-1);
 }
 
 .notification-preference-row:last-child {
@@ -329,7 +329,7 @@
 .notification-preferences-button {
   flex: 0 0 auto;
   padding: 7px 10px;
-  border: 1px solid #dce3ed;
+  border: 1px solid var(--df-tone-line-2);
   border-radius: 8px;
   background: #ffffff;
   color: var(--np-ink);

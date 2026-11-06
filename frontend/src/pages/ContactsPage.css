@@ -11,7 +11,7 @@
   min-width: 0;
   padding: 14px 16px 22px;
   color: var(--contacts-ink);
-  background: #f5f7fb;
+  background: var(--df-tone-tint-5);
   font-size: 13px;
 }
 
@@ -35,7 +35,7 @@
 
 .contacts-heading-copy h1 {
   margin: 0;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: clamp(23px, 2.1vw, 30px);
   font-weight: 700;
   line-height: 1.25;
@@ -66,7 +66,7 @@
   min-width: 180px;
   height: 42px;
   padding: 0 10px 0 12px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   background: #fff;
   color: #6b7b93;
@@ -74,7 +74,7 @@
 }
 
 .contacts-search-field:focus-within {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
@@ -107,7 +107,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 20px;
   cursor: pointer;
 }
@@ -164,14 +164,14 @@
 }
 
 .contacts-secondary-button {
-  border-color: #d5deeb;
+  border-color: var(--df-tone-line-4);
   background: #fff;
   color: #334b68;
 }
 
 .contacts-secondary-button:hover:not(:disabled) {
   border-color: #aebbd0;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .contacts-primary-button:active:not(:disabled),
@@ -236,7 +236,7 @@
 
 .contacts-alert-error {
   border-color: #f1c3c3;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #9f2929;
 }
 
@@ -329,7 +329,7 @@
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #d5deed;
+  border: 1px solid var(--df-tone-line-6);
   border-radius: 13px;
   background: #fff;
   box-shadow: 0 2px 6px rgb(24 45 80 / 3%);
@@ -342,14 +342,14 @@
   justify-content: space-between;
   gap: 12px;
   padding: 10px 16px;
-  border-top: 1px solid #e2e8f2;
+  border-top: 1px solid var(--df-tone-line-soft-2);
   background: #fff;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 12px;
 }
 
 .contacts-grid-footer-count strong {
-  color: #263b57;
+  color: var(--df-tone-ink-3);
   font-weight: 750;
 }
 
@@ -389,8 +389,8 @@
 
 .contacts-react-data-grid .rdg-header-row {
   z-index: 2;
-  background: #f0f3f8 !important;
-  color: #34445c;
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-weight: 750;
   box-shadow: 0 1px 0 #d7e0ed, 0 2px 5px rgb(20 38 65 / 4%);
 }
@@ -398,9 +398,9 @@
 .contacts-react-data-grid .rdg-header-row .rdg-cell {
   display: flex;
   align-items: center;
-  border-right: 1px solid #d8e0ec;
-  background: #f0f3f8 !important;
-  color: #34445c;
+  border-right: 1px solid var(--df-tone-line-8);
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-size: 12px;
   font-weight: 750;
 }
@@ -411,7 +411,7 @@
   align-items: center;
   overflow: hidden;
   padding: 0 12px;
-  border-right: 1px solid #e0e6f0;
+  border-right: 1px solid var(--df-tone-line-3);
   line-height: 1.35;
 }
 
@@ -420,7 +420,7 @@
 }
 
 .contacts-react-data-grid .rdg-row {
-  border-bottom: 1px solid #e0e6f0;
+  border-bottom: 1px solid var(--df-tone-line-3);
 }
 
 .contacts-react-data-grid .rdg-row:hover {
@@ -473,7 +473,7 @@
 
 .contacts-person-copy strong {
   overflow: hidden;
-  color: #172b4d;
+  color: var(--df-tone-ink-navy);
   font-size: 12px;
   font-weight: 750;
   text-overflow: ellipsis;
@@ -538,7 +538,7 @@
   width: 36px;
   height: 36px;
   place-items: center;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 8px;
   background: #fff;
   color: #607695;
@@ -589,7 +589,7 @@
 
 .contacts-configure-columns-button:hover,
 .contacts-configure-columns-button[aria-expanded="true"] {
-  border-color: #d5deeb;
+  border-color: var(--df-tone-line-4);
   background: #e3e9f4;
   color: #283e61;
 }
@@ -635,7 +635,7 @@
 }
 
 .contacts-column-menu-heading strong {
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font-size: 12px;
 }
 
@@ -651,7 +651,7 @@
   height: 27px;
   flex: 0 0 27px;
   place-items: center;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 7px;
   background: #fff;
   color: #60728e;
@@ -695,7 +695,7 @@
 .contacts-column-menu-footer button {
   min-height: 32px;
   padding: 6px 9px;
-  border: 1px solid #d5deeb;
+  border: 1px solid var(--df-tone-line-4);
   border-radius: 7px;
   background: #fff;
   color: #334b68;
@@ -726,7 +726,7 @@
   z-index: 1201;
   width: min(220px, calc(100vw - 24px));
   overflow: hidden;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 11px;
   background: #fff;
   box-shadow: 0 16px 40px rgb(20 38 65 / 18%);
@@ -744,11 +744,11 @@
   gap: 4px;
   padding: 12px 13px 10px;
   border-bottom: 1px solid #edf1f7;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .contacts-action-menu-header strong {
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font-size: 12px;
 }
 
@@ -819,7 +819,7 @@
   max-height: min(820px, calc(100dvh - 48px));
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #e0e6f0;
+  border: 1px solid var(--df-tone-line-3);
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 24px 80px rgb(10 25 50 / 22%);
@@ -860,12 +860,12 @@
   gap: 20px;
   padding: 24px 26px 20px;
   border-bottom: 1px solid #e6ebf3;
-  background: #fbfcff;
+  background: var(--df-tone-tint-1);
 }
 
 .contacts-modal-header h2 {
   margin: 0;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: clamp(21px, 2.4vw, 26px);
   font-weight: 700;
   line-height: 1.25;
@@ -885,7 +885,7 @@
   height: 38px;
   flex: 0 0 38px;
   place-items: center;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 9px;
   background: #fff;
   color: #5c708c;
@@ -896,8 +896,8 @@
 
 .contacts-modal-close:hover:not(:disabled) {
   border-color: #b9c5d8;
-  background: #f5f7fb;
-  color: #243b53;
+  background: var(--df-tone-tint-5);
+  color: var(--df-tone-ink-2);
 }
 
 .contacts-form {
@@ -920,7 +920,7 @@
 .contacts-form-section {
   margin-bottom: 21px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e8edf5;
+  border-bottom: 1px solid var(--df-tone-line-soft-3);
 }
 
 .contacts-form-section h3 {
@@ -967,11 +967,11 @@
   min-width: 0;
   min-height: 44px;
   padding: 10px 12px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 9px;
   outline: none;
   background: #fff;
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -983,7 +983,7 @@
 }
 
 .contacts-form-field input:focus {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
@@ -992,7 +992,7 @@
 }
 
 .contacts-field-error {
-  color: #b42318;
+  color: var(--df-tone-danger-text);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.5;
@@ -1012,7 +1012,7 @@
   gap: 10px;
   padding: 14px 26px;
   border-top: 1px solid #e4eaf3;
-  background: #fbfcff;
+  background: var(--df-tone-tint-1);
 }
 
 .contacts-details-identity {
@@ -1020,7 +1020,7 @@
   align-items: center;
   gap: 13px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #e8edf5;
+  border-bottom: 1px solid var(--df-tone-line-soft-3);
 }
 
 .contacts-avatar-large {
@@ -1040,7 +1040,7 @@
 
 .contacts-details-identity > div > strong {
   overflow-wrap: anywhere;
-  color: #172b4d;
+  color: var(--df-tone-ink-navy);
   font-size: 16px;
   font-weight: 750;
 }
@@ -1090,7 +1090,7 @@
   height: 29px;
   flex: 0 0 29px;
   place-items: center;
-  border: 1px solid #dce4f0;
+  border: 1px solid var(--df-tone-line-1);
   border-radius: 7px;
   background: #fff;
   color: #607695;
@@ -1167,7 +1167,7 @@
   gap: 12px;
   padding: 16px 24px;
   border-top: 1px solid #e2e8f0;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 /* Shared button layout */

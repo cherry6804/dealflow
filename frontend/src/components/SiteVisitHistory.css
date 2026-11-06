@@ -24,7 +24,7 @@
 
 .site-visit-history-eyebrow {
   margin: 0 0 0.35rem;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -145,7 +145,7 @@
   padding: 1rem;
   border: 1px dashed #cbd5e1;
   border-radius: 10px;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 0.875rem;
 }
 

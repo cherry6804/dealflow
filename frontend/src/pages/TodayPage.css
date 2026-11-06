@@ -180,7 +180,7 @@
   justify-content: space-between;
   gap: 18px;
   padding: 18px 20px;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--df-tone-line-soft-1);
 }
 
 .today-priority-title {
@@ -261,7 +261,7 @@
 .today-attention-group + .today-attention-group {
   padding-right: 0;
   padding-left: 18px;
-  border-left: 1px solid #edf0f5;
+  border-left: 1px solid var(--df-tone-line-soft-1);
 }
 
 .today-attention-group-heading {
@@ -502,7 +502,7 @@
 
 .today-card-footer {
   padding: 0 20px;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--df-tone-line-soft-1);
 }
 
 .today-card-footer a {
@@ -625,7 +625,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 17px 19px 14px;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--df-tone-line-soft-1);
 }
 
 .today-secondary-heading h2 {
@@ -645,7 +645,7 @@
   gap: 11px;
   padding: 11px 0;
   color: #263650;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--df-tone-line-soft-1);
 }
 
 .today-shortcuts > a:last-child {
@@ -877,7 +877,7 @@
   }
   .today-attention-group + .today-attention-group {
     padding: 15px 0;
-    border-top: 1px solid #edf0f5;
+    border-top: 1px solid var(--df-tone-line-soft-1);
     border-left: 0;
   }
   .today-metrics-grid {
