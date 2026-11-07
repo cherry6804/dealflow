@@ -232,3 +232,18 @@ Limitations:
 ## Space header integration (DFR-UI-SHELL-FIX-001)
 
 The space chrome (title row and tab bar) is part of the shell content. It cancels the shell's page padding, so it sits directly under the global header, runs edge to edge, and has no card, border, radius or shadow. One divider runs full width beneath the tabs. Page content starts 20px below the divider. The chrome is sticky at the top of the scrolling main area, with its threshold set to the page padding so it does not drift below the global header. The shell's mobile override of the page padding was removed, so the shell and the space header use the same tokens. Checked in the running app for Sales (all five tabs), Properties, Deals, Partners and Operations, in light and dark themes at desktop, tablet and phone widths. Tabs scroll horizontally on phones and fit on tablets; no page overflow was seen.
+
+## Enterprise grids: Properties, Requirements, Deals, Referrals (DFR-UI-GRID-STANDARDIZE-001)
+
+| Module | Route | State | Flag | Notes |
+|---|---|---|---|---|
+| Properties | /properties | Built, tested, grid browser-verified | VITE_DEALSFLO_PROPERTIES | Columns: property (title and address), transaction, type (hidden by default), location, price or rent, availability badge, listed, last updated (hidden). Filters: transaction, availability, type, city, locality, listed. Record dialog: details, availability change, visit history. Add property uses the existing create sequence and its partial-failure message; the form validates before any request. Owner is not in the property record, so no owner column. |
+| Referrals | /referrals | Built, tested, grid browser-verified (created one QA record and edited its phone) | VITE_DEALSFLO_REFERRALS | Columns: referral (name and contact), referrer, customer, related deal stage, status badge, referral date, last updated (hidden). Filters: status, referral, referrer, customer, referral date. One record dialog creates and edits the same fields; deactivation stays behind a confirmation. Commission and referral value are not in the referral record, so no value column. |
+| Requirements | /requirements | Not started | — | Legacy page (2174 lines). |
+| Deals | /deals | Not started | — | Legacy page (2211 lines). |
+
+Gaps and limits:
+- Requirements and Deals are not migrated yet; their legacy pages remain the default.
+- Owner (properties) and commission or referral value (referrals) are not in the API records, so they are not shown.
+- Browser zoom (80–200%) was not tested for these pages.
+- Column layout and filters are personal per user and organization, as on the other grids.

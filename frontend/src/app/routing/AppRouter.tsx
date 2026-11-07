@@ -68,6 +68,7 @@ const RequirementsPage = lazy(
 const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
 const DealsPage = lazy(() => import("../../pages/DealsPage"));
 const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
+const ReferralsWorkspacePage = lazy(() => import("../../pages/referrals/ReferralsWorkspacePage"));
 const PropertiesPage = lazy(() => import("../../pages/PropertiesPage"));
 const PropertiesWorkspacePage = lazy(() => import("../../pages/properties/PropertiesWorkspacePage"));
 const SiteVisitsPage = lazy(
@@ -248,7 +249,12 @@ export default function AppRouter() {
                 import.meta.env.VITE_DEALSFLO_PROPERTIES === "true" ? <PropertiesWorkspacePage /> : <PropertiesPage />
               }
             />
-            <Route path="/referrals" element={<ReferralsPage />} />
+            <Route
+              path="/referrals"
+              element={
+                import.meta.env.VITE_DEALSFLO_REFERRALS === "true" ? <ReferralsWorkspacePage /> : <ReferralsPage />
+              }
+            />
             <Route
               path="/site-visits"
               element={
