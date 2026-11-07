@@ -40,7 +40,7 @@ from app.deals.service import (
     update_deal,
 )
 from app.notifications.service import create_notification
-from app.tenant.dependencies import TenantContext
+from app.tenant.dependencies import TenantContext, get_tenant_context
 
 router = APIRouter(prefix="/api/v1/deals", tags=["deals"])
 
@@ -289,20 +289,20 @@ def update_deal_endpoint(
 def transition_deal_stage_endpoint(
     deal_id: UUID,
     payload: DealStageTransitionRequest,
-    tenant_context: TenantContext = Depends(
-        require_permission("deals.update")
-    ),
+    tenant_context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db_session),
 ) -> DealResponse:
     """Transition a deal, record history, and notify its owner."""
-    # Closing a deal is a separate permission from moving it through the
-    # pipeline, so an update-only role cannot win or lose a deal.
-    if payload.stage.value in CLOSED_STAGES:
-        enforce_permission(
-            db,
-            tenant_context=tenant_context,
-            permission_key="deals.close",
-        )
+    # Closing a deal as Won or Lost is authorized by deals.close alone, so a
+    # close-only role can close and nothing else. Every other transition
+    # moves the pipeline and needs deals.update.
+    enforce_permission(
+        db,
+        tenant_context=tenant_context,
+        permission_key=(
+            "deals.close" if payload.stage.value in CLOSED_STAGES else "deals.update"
+        ),
+    )
 
     try:
         deal = transition_deal_stage(
