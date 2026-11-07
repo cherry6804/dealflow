@@ -25,6 +25,7 @@ from app.site_visits.schemas import (
     SiteVisitResponse,
 )
 from app.site_visits.service import (
+    SiteVisitOwnerConflictError,
     create_site_visit,
     list_site_visits,
     record_site_visit_attendance,
@@ -150,6 +151,12 @@ def schedule_site_visit_endpoint(
             current_user_id=tenant_context.membership.user_id,
             payload=payload,
         )
+    except SiteVisitOwnerConflictError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
