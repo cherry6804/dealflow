@@ -79,7 +79,7 @@ const SiteVisitsPage = lazy(
 
 // Operations
 const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
-const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
+const DocumentsPage = lazy(() => import("../../pages/operations/documents/DocumentsWorkspacePage"));
 const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const LeadIntakePage = lazy(() => import("../../pages/LeadIntakePage"));
 const WorkflowsPage = lazy(() => import("../../pages/WorkflowsPage"));

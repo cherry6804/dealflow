@@ -1,0 +1,202 @@
+/*
+ * Operations workspaces (Documents, Imports, Automation). Shares the Sales page rhythm and the record and dialog components; this
+ * file adds only what those do not cover. Tokens only; light and dark themes apply. Motion respects reduced-motion preferences.
+ */
+
+.df-ops-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.df-ops-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.df-ops-eyebrow {
+  margin: 0;
+  font-size: var(--df-text-xs);
+  font-weight: var(--df-font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-ops-title {
+  margin: 2px 0 4px;
+  font-size: var(--df-text-xl);
+  font-weight: var(--df-font-weight-semibold);
+  color: var(--df-ink);
+}
+
+.df-ops-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.df-ops-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-full);
+  background: var(--df-surface);
+  color: var(--df-ink-soft);
+  font: inherit;
+  font-size: var(--df-text-sm);
+  cursor: pointer;
+  transition: background-color var(--df-transition-fast), border-color var(--df-transition-fast);
+}
+
+.df-ops-chip:hover {
+  background: var(--df-surface-hover);
+}
+
+.df-ops-chip:focus-visible {
+  outline: 2px solid var(--df-focus-ring);
+  outline-offset: 2px;
+}
+
+.df-ops-chip--active {
+  border-color: var(--df-primary);
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
+  font-weight: var(--df-font-weight-semibold);
+}
+
+.df-ops-chip-count {
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: var(--df-radius-full);
+  background: var(--df-neutral-soft);
+  font-size: var(--df-text-xs);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.df-ops-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.df-ops-dropzone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+  transition: border-color var(--df-transition-fast), background-color var(--df-transition-fast);
+}
+
+.df-ops-dropzone--active {
+  border-color: var(--df-primary);
+  background: var(--df-primary-soft);
+}
+
+.df-ops-dropzone--error {
+  border-color: var(--df-danger);
+}
+
+.df-ops-file {
+  display: grid;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.df-ops-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.df-ops-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.df-ops-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 0 auto;
+  object-fit: contain;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+}
+
+.df-ops-preview-frame {
+  width: 100%;
+  height: min(60vh, 520px);
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+}
+
+.df-ops-preview-text {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+  font-size: var(--df-text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.df-ops-prewrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.df-ops-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.df-ops-link-row p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-ops-chip,
+  .df-ops-dropzone {
+    transition: none;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .df-ops-intro .df-btn {
+    width: 100%;
+  }
+
+  .df-ops-preview-frame {
+    height: 50vh;
+  }
+}
