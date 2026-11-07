@@ -1,6 +1,7 @@
 /*
- * Enterprise data grid. Surfaces, borders and text use tokens, so light and dark themes both apply. The grid keeps white
- * header and table surfaces in the light theme through tokens; rows get subtle separators, not card wrapping.
+ * Enterprise data grid. Surfaces, borders and text come from tokens, so light and dark themes both apply. Header and footer use
+ * the soft surface; the table body stays on the main surface, so the three sections read as distinct. Rows get subtle
+ * separators, not card wrapping.
  */
 
 .df-grid {
@@ -10,16 +11,17 @@
   min-width: 0;
 }
 
+/* Toolbar: search on the left, the Columns button on the right. Both stay on one line, including on phones. */
 .df-grid-toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .df-grid-search {
-  flex: 1 1 280px;
+  flex: 1 1 auto;
   max-width: 420px;
   min-width: 0;
 }
@@ -28,65 +30,27 @@
   width: 100%;
 }
 
-.df-grid-config {
-  position: relative;
-  display: inline-flex;
-}
-
-.df-grid-config-panel {
-  position: absolute;
-  top: calc(var(--df-grid-header-height) + 4px);
-  right: 8px;
-  z-index: var(--df-z-dropdown);
-  width: min(420px, calc(100vw - 24px));
-  max-height: min(70vh, 560px);
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--df-border);
-  border-radius: var(--df-radius-lg);
-  background: var(--df-surface);
-  box-shadow: var(--df-shadow-md);
-}
-
-.df-grid-config-heading {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--df-subtle);
-}
-
-.df-grid-config-list {
+.df-grid-toolbar-actions {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.df-grid-config-row {
-  display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
+  gap: 8px;
 }
 
-.df-grid-config-name {
-  flex: 1 1 auto;
-  font-size: 14px;
-  font-weight: 550;
+.df-grid-hidden-count {
+  font-size: 12px;
+  color: var(--df-subtle);
+  white-space: nowrap;
 }
 
-.df-grid-config-density,
-.df-grid-config-footer {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--df-border-soft);
+@media (max-width: 575.98px) {
+  .df-grid-hidden-count {
+    display: none;
+  }
 }
 
-.df-grid-body {
+/* One container for header, body and footer: shared border, radius and width. */
+.df-grid-frame {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--df-border);
@@ -94,9 +58,15 @@
   background: var(--df-surface);
 }
 
+.df-grid-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Header and table surfaces. The header is the soft surface; the body is the main surface. */
 .df-grid-table {
   --rdg-background-color: var(--df-surface);
-  --rdg-header-background-color: var(--df-surface);
+  --rdg-header-background-color: var(--df-surface-soft);
   --rdg-row-hover-background-color: var(--df-surface-hover);
   --rdg-row-selected-background-color: var(--df-primary-soft);
   --rdg-border-color: var(--df-border-soft);
@@ -105,129 +75,15 @@
   --rdg-header-text-color: var(--df-muted);
   --rdg-font-size: 13px;
   border: 0;
+  max-width: 100%;
 }
 
 .df-grid-table .rdg-cell {
   cursor: pointer;
 }
 
-.df-grid-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 44px;
-}
-
-.df-grid-footer-count {
-  margin: 0;
-  font-size: 13px;
-  color: var(--df-muted);
-}
-
-.df-grid-footer-note {
-  color: var(--df-subtle);
-}
-
-@media (max-width: 767.98px) {
-  .df-grid-search {
-    flex-basis: 100%;
-    max-width: none;
-  }
-
-  .df-grid-config-panel {
-    position: fixed;
-    top: 56px;
-    left: 12px;
-    right: 12px;
-    width: auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .df-grid-table .rdg-cell {
-    transition: none;
-  }
-}
-
-
-/* One container for header, body and footer: shared border, radius and width. */
-.df-grid-frame {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--df-border);
-  border-radius: var(--df-radius-lg);
-  background: var(--df-surface);
-}
-
-.df-grid-frame .df-grid-body {
-  border: 0;
-  border-radius: 0;
-}
-
-/* Header cell that opens the column configuration dropdown. */
-.df-grid-config-trigger {
-  display: inline-grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: var(--df-radius-sm);
-  background: transparent;
-  color: var(--df-muted);
-  cursor: pointer;
-}
-
-.df-grid-config-trigger:hover,
-.df-grid-config-trigger[aria-expanded="true"] {
-  background: var(--df-surface-hover);
-  color: var(--df-ink);
-}
-
-.df-grid-config-trigger:focus-visible {
-  outline: 2px solid var(--df-primary);
-  outline-offset: 2px;
-}
-
-.df-grid-config-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--df-border-strong);
-  border-radius: var(--df-radius-md);
-  background: var(--df-surface);
-  color: var(--df-muted);
-}
-
-.df-grid-config-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--df-ink);
-  font: inherit;
-  font-size: 14px;
-  outline: none;
-}
-
-.df-grid-config-count {
-  font-weight: 400;
-  color: var(--df-subtle);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.df-grid-config-empty {
-  padding: 12px 8px;
-  font-size: 13px;
-  color: var(--df-muted);
-}
-
-/* Footer: subtle surface, top border, Create at the left, counts and refresh at the right. */
+/* Footer: the soft surface with a top border, so it reads as separate from the body. Create at the left; counts and refresh at
+ * the right. */
 .df-grid-footer {
   display: flex;
   flex-wrap: wrap;
@@ -254,6 +110,16 @@
   justify-content: flex-end;
 }
 
+.df-grid-footer-count {
+  margin: 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-grid-footer-note {
+  color: var(--df-subtle);
+}
+
 @media (max-width: 767.98px) {
   .df-grid-footer {
     flex-direction: column;
@@ -262,5 +128,11 @@
 
   .df-grid-footer-end {
     justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-grid-table .rdg-cell {
+    transition: none;
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GRID_WIDTH_BOUNDS,
   arrangeGridColumns,
   clampGridWidth,
   createDefaultGridLayout,
@@ -58,8 +59,24 @@ describe("grid layout model", () => {
     let layout = togglePinnedColumn(createDefaultGridLayout(COLUMNS), COLUMNS, "email");
     expect(arrangeGridColumns(COLUMNS, layout).map((column) => column.key)).toEqual(["email", "name", "actions"]);
     layout = setColumnWidth(layout, "name", 10);
-    expect(layout.widths.name).toBe(96);
-    expect(clampGridWidth(Number.NaN)).toBe(96);
+    expect(layout.widths.name).toBe(GRID_WIDTH_BOUNDS.min);
+    expect(clampGridWidth(Number.NaN)).toBe(GRID_WIDTH_BOUNDS.min);
+  });
+});
+
+describe("primary column pinning", () => {
+  const PRIMARY: GridColumnDef[] = [
+    { key: "name", label: "Contact", defaultWidth: 240, primary: true },
+    { key: "email", label: "Email", defaultWidth: 200 },
+  ];
+
+  it("starts the primary column pinned, so it stays in view while the grid scrolls", () => {
+    expect(createDefaultGridLayout(PRIMARY).pinned).toEqual(["name"]);
+  });
+
+  it("keeps a saved pinning choice, and applies the default when no pinning was saved", () => {
+    expect(normalizeGridLayout({ pinned: [] }, PRIMARY).pinned).toEqual([]);
+    expect(normalizeGridLayout({ order: ["email", "name"] }, PRIMARY).pinned).toEqual(["name"]);
   });
 });
 

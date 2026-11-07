@@ -7,7 +7,8 @@ import type { SortColumn } from "react-data-grid";
  * - order: every column key in the user's order.
  * - hidden: keys the user has hidden. At least one column always stays visible.
  * - widths: user-set column widths in pixels, clamped to GRID_WIDTH_BOUNDS.
- * - pinned: keys pinned to the left edge, shown first in their order.
+ * - pinned: keys pinned to the left edge, shown first in their order. The primary column (the record's name) starts pinned, so it
+ *   stays in view while the grid scrolls sideways on narrow screens.
  * - density: row height preset.
  */
 
@@ -20,6 +21,8 @@ export interface GridColumnDef {
   readonly defaultVisible?: boolean;
   /** Columns that cannot be hidden, reordered or pinned (for example the row actions column). */
   readonly fixed?: boolean;
+  /** The record's identity column (for example the name). Starts pinned, and is the last column hidden at narrow widths. */
+  readonly primary?: boolean;
 }
 
 export interface GridLayout {
@@ -30,7 +33,8 @@ export interface GridLayout {
   readonly density: GridDensity;
 }
 
-export const GRID_WIDTH_BOUNDS = { min: 96, max: 720 } as const;
+/** Narrowest a column can be. Keeps headers and cell text readable, and keeps the row actions reachable. */
+export const GRID_WIDTH_BOUNDS = { min: 120, max: 720 } as const;
 export const GRID_ROW_HEIGHT: Readonly<Record<GridDensity, number>> = { comfortable: 52, compact: 40 };
 
 export function clampGridWidth(value: number): number {
@@ -43,7 +47,7 @@ export function createDefaultGridLayout(columns: readonly GridColumnDef[]): Grid
     order: columns.map((column) => column.key),
     hidden: columns.filter((column) => column.defaultVisible === false).map((column) => column.key),
     widths: {},
-    pinned: [],
+    pinned: columns.filter((column) => column.primary && !column.fixed).map((column) => column.key),
     density: "comfortable",
   };
 }
@@ -73,7 +77,10 @@ export function normalizeGridLayout(value: unknown, columns: readonly GridColumn
   const dataColumns = columns.filter((column) => !column.fixed).map((column) => column.key);
   if (dataColumns.every((key) => hidden.includes(key))) hidden = [];
 
-  const pinned = [...new Set(stringList(saved.pinned).filter((key) => known.has(key) && !fixed.has(key)))];
+  // Layouts saved before pinning existed have no pinned list, so they take the default pinning.
+  const pinned = Array.isArray(saved.pinned)
+    ? [...new Set(stringList(saved.pinned).filter((key) => known.has(key) && !fixed.has(key)))]
+    : defaults.pinned;
 
   const widths: Record<string, number> = {};
   if (saved.widths && typeof saved.widths === "object") {

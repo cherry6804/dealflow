@@ -11,7 +11,7 @@ import "./sales.css";
 const PAGE_SIZE = 100;
 
 const COLUMNS: GridColumnDef[] = [
-  { key: "name", label: "Contact", defaultWidth: 260 },
+  { key: "name", label: "Contact", defaultWidth: 260, primary: true },
   { key: "email", label: "Email address", defaultWidth: 240 },
   { key: "phone", label: "Phone", defaultWidth: 170 },
   { key: "status", label: "Status", defaultWidth: 120 },

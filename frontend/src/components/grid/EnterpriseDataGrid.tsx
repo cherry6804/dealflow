@@ -8,6 +8,7 @@ import { Button, Checkbox, RadioGroup } from "../ui";
 import { ErrorState, LoadingState, EmptyState } from "../shell/RouteStates";
 import {
   GRID_ROW_HEIGHT,
+  GRID_WIDTH_BOUNDS,
   arrangeGridColumns,
   fitColumnWidths,
   moveColumn,
@@ -26,9 +27,6 @@ import "./grid.css";
 import "./grid-layout.css";
 
 export type GridStatus = "loading" | "ready" | "error";
-
-/** Width of the utility gutter at the far right of the header, holding the column configuration control. */
-const UTILITY_WIDTH = 40;
 
 export interface EnterpriseDataGridProps<T> {
   /** Stable id for personal layout storage. One id per grid. */
@@ -52,7 +50,7 @@ export interface EnterpriseDataGridProps<T> {
   emptyMessage: string;
   noMatchTitle: string;
   noMatchMessage: string;
-  /** Entity-specific create action, shown at the left of the footer inside the grid. */
+  /** Entity-specific create action, shown at the left of the footer. */
   createLabel?: string;
   onCreate?: () => void;
   onOpenRow?: (row: T) => void;
@@ -65,11 +63,11 @@ export interface EnterpriseDataGridProps<T> {
 }
 
 /**
- * The shared Dealsflo data grid. One bordered container holds three sections that share the same column layout: the header
- * (sortable labels; the column configuration control sits at its far-right end in a narrow utility gutter, not as a data
- * column), the scrollable body, and the footer (Create at the left; counts and refresh at the right). Columns stretch to the
- * available width, and horizontal scrolling stays inside the grid. The column picker is an anchored popover rendered in a
- * portal, so the grid's overflow never clips it. Layout is personal, per user and organization.
+ * The shared Dealsflo data grid. The toolbar holds the search field and the Columns button. The table holds only business
+ * columns: its header, a scrollable body and a footer (Create on the left; counts and refresh on the right) share one bordered
+ * container. Columns stretch to the available width, keep a readable minimum, and scroll sideways inside the grid when they
+ * need more room. The primary column stays pinned while scrolling. The Columns popover is portal-rendered, so it is never
+ * clipped. Layout is personal, per user and organization.
  */
 export function EnterpriseDataGrid<T>({
   gridId,
@@ -99,24 +97,26 @@ export function EnterpriseDataGrid<T>({
 }: EnterpriseDataGridProps<T>) {
   const { layout, update, resetLayout, available } = useGridLayout(gridId, columns);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
-  const [configOpen, setConfigOpen] = useState(false);
-  const configButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const columnsAnchorRef = useRef<HTMLDivElement | null>(null);
   const [measureRef, measuredWidth] = useMeasuredWidth(1200);
 
   const visibleColumns = useMemo(() => arrangeGridColumns(columns, layout), [columns, layout]);
   const sortedRows = useMemo(() => sortGridRows(rows, sortColumns, sortValue), [rows, sortColumns, sortValue]);
+  const hiddenCount = columns.filter((column) => !column.fixed && layout.hidden.includes(column.key)).length;
 
-  // Columns stretch to the available width (the utility gutter is excluded), so the grid uses the space it has.
+  // Columns use their saved or default widths, stretched to fill the container when there is room. When they need more room
+  // than the container offers, the grid scrolls sideways inside its own body.
   const gridColumns = useMemo<Column<T>[]>(() => {
     const widths = fitColumnWidths(
       visibleColumns.map((column) => layout.widths[column.key] ?? column.defaultWidth),
-      Math.max(0, measuredWidth - UTILITY_WIDTH),
+      measuredWidth,
     );
     return visibleColumns.map((column, index) => ({
       key: column.key,
       name: column.label,
       width: widths[index],
-      minWidth: 96,
+      minWidth: GRID_WIDTH_BOUNDS.min,
       resizable: true,
       sortable: true,
       frozen: layout.pinned.includes(column.key),
@@ -144,9 +144,9 @@ export function EnterpriseDataGrid<T>({
     update({ ...layout, order });
   }
 
-  function closeConfig() {
-    setConfigOpen(false);
-    configButtonRef.current?.focus();
+  function closeColumns() {
+    setColumnsOpen(false);
+    columnsAnchorRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
   }
 
   return (
@@ -162,7 +162,34 @@ export function EnterpriseDataGrid<T>({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
+        <div ref={columnsAnchorRef} className="df-grid-toolbar-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<SlidersHorizontal size={16} aria-hidden="true" />}
+            aria-haspopup="dialog"
+            aria-expanded={columnsOpen}
+            onClick={() => setColumnsOpen((value) => !value)}
+          >
+            Columns
+          </Button>
+          {hiddenCount > 0 ? (
+            <span className="df-grid-hidden-count" aria-hidden="true">
+              {hiddenCount} hidden
+            </span>
+          ) : null}
+        </div>
       </div>
+
+      <AnchoredPopover open={columnsOpen} anchorRef={columnsAnchorRef} label="Configure columns" width={360} onClose={closeColumns}>
+        <ColumnConfigPanel
+          columns={columns}
+          layout={layout}
+          onClose={closeColumns}
+          onChange={update}
+          onRestore={() => resetLayout()}
+        />
+      </AnchoredPopover>
 
       {status === "loading" ? <LoadingState title="Loading records" message="Fetching the latest records." /> : null}
 
@@ -207,54 +234,28 @@ export function EnterpriseDataGrid<T>({
           className="df-grid-frame"
           style={{ "--df-grid-header-height": `${rowHeight}px` } as CSSProperties}
         >
-          <div className="df-grid-main">
-            <div className="df-grid-body">
-              <DataGrid
-                aria-label={ariaLabel}
-                className="df-grid-table"
-                columns={gridColumns}
-                rows={sortedRows}
-                rowKeyGetter={rowKey}
-                rowHeight={rowHeight}
-                headerRowHeight={rowHeight}
-                sortColumns={sortColumns}
-                onSortColumnsChange={setSortColumns}
-                onColumnResize={onColumnResize}
-                onColumnsReorder={onColumnsReorder}
-                onCellClick={(args, event) => {
-                  if (!onOpenRow) return;
-                  event.preventDefault();
-                  onOpenRow(args.row);
-                }}
-                defaultColumnOptions={{ resizable: true, sortable: true }}
-                style={{ height: Math.min(rows.length * rowHeight + rowHeight, 640) }}
-              />
-            </div>
-            <div className="df-grid-utility">
-              <button
-                ref={configButtonRef}
-                type="button"
-                className="df-grid-config-trigger"
-                aria-label="Configure columns"
-                title="Configure columns"
-                aria-haspopup="dialog"
-                aria-expanded={configOpen}
-                onClick={() => setConfigOpen((value) => !value)}
-              >
-                <SlidersHorizontal size={16} aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-
-          <AnchoredPopover open={configOpen} anchorRef={configButtonRef} label="Configure columns" width={360} onClose={closeConfig}>
-            <ColumnConfigPanel
-              columns={columns}
-              layout={layout}
-              onClose={closeConfig}
-              onChange={update}
-              onRestore={() => resetLayout()}
+          <div className="df-grid-body">
+            <DataGrid
+              aria-label={ariaLabel}
+              className="df-grid-table"
+              columns={gridColumns}
+              rows={sortedRows}
+              rowKeyGetter={rowKey}
+              rowHeight={rowHeight}
+              headerRowHeight={rowHeight}
+              sortColumns={sortColumns}
+              onSortColumnsChange={setSortColumns}
+              onColumnResize={onColumnResize}
+              onColumnsReorder={onColumnsReorder}
+              onCellClick={(args, event) => {
+                if (!onOpenRow) return;
+                event.preventDefault();
+                onOpenRow(args.row);
+              }}
+              defaultColumnOptions={{ resizable: true, sortable: true }}
+              style={{ height: Math.min(rows.length * rowHeight + rowHeight, 640) }}
             />
-          </AnchoredPopover>
+          </div>
 
           <footer className="df-grid-footer">
             <div className="df-grid-footer-start">
@@ -298,9 +299,9 @@ const DENSITY_OPTIONS = [
 ];
 
 /**
- * Column configuration picker, shown in an AnchoredPopover. It has a title, a close control, a search field for column names,
- * one row per configurable column (checked means visible), move and pin controls for keyboard and touch users, row density,
- * and reset and done actions. Changes apply to the grid immediately.
+ * Column configuration, shown in an AnchoredPopover from the Columns button. It has a title, a close control, a search field
+ * for column names, one row per configurable column (checked means visible), pin and move controls for keyboard and touch
+ * users, row density, and reset and done actions. Changes apply to the table immediately.
  */
 function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: ColumnConfigPanelProps) {
   const [query, setQuery] = useState("");
@@ -316,7 +317,7 @@ function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: Co
       <header className="df-grid-picker-header">
         <div>
           <h2 className="df-grid-picker-title">Configure columns</h2>
-          <p className="df-grid-picker-description">Show, hide and reorder columns. Saved to your account on this browser.</p>
+          <p className="df-grid-picker-description">Show, hide, pin and reorder columns. Saved to your account on this browser.</p>
         </div>
         <Button variant="tertiary" size="sm" iconOnly aria-label="Close column settings" icon={<X size={16} aria-hidden="true" />} onClick={onClose}>
           Close
@@ -360,7 +361,6 @@ function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: Co
               <Button
                 variant="tertiary"
                 size="sm"
-                iconOnly
                 aria-label={pinned ? `Unpin ${column.label}` : `Pin ${column.label}`}
                 aria-pressed={pinned}
                 disabled={column.fixed || hidden}

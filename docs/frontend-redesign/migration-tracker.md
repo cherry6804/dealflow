@@ -178,11 +178,11 @@ Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architect
 
 ## Sales workspace (DFR-UI-SALES-001)
 
-Status: shared grid foundation and the Contacts pilot are built and tested. Browser verification of the pilot needs the dev server restarted with `VITE_DEALSFLO_SALES_CONTACTS=true`, which is not yet confirmed. The legacy pages remain the default.
+Status: shared grid and the Contacts pilot are built, tested and checked in the running app at tablet and mobile widths (desktop checked in the 1280 px layout metrics; the pane is narrower than desktop, so full desktop screenshots are not captured). Contacts runs behind `VITE_DEALSFLO_SALES_CONTACTS`. The legacy pages remain the default.
 
 | Page | Route | State | Feature flag | Notes |
 |---|---|---|---|---|
-| Shared grid | components/grid | Built, tested | none | EnterpriseDataGrid on react-data-grid. Search, personal column panel (show, order, pin, density, restore), resizing, sorting, states, footer with count and create action. |
+| Shared grid | components/grid | Built, tested, browser-verified (Contacts) | none | EnterpriseDataGrid on react-data-grid. Toolbar holds search and a Columns button; the table holds business columns only (no configuration column). Columns popover is portal-anchored, with search, show/hide, pin, move, density, reset and done; Escape and outside click close it. Columns stretch to fit, keep a 120px minimum, and scroll sideways inside the grid. The primary column is pinned by default. Header and footer use the soft surface; the body uses the main surface. Layout is saved per user and organization. |
 | Contacts | /contacts | Pilot built, tested; not yet browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Uses contactsApi list, create and update. Detail dialog with editable fields and status toggle. Owner and linked records are not in the contact contract, so they are not shown. |
 | Leads | /leads | Not started | — | Legacy page. |
 | Customers | /customers | Not started | — | Legacy page. |
@@ -192,5 +192,8 @@ Status: shared grid foundation and the Contacts pilot are built and tested. Brow
 Gaps:
 - Selection and bulk actions are not in the grid yet.
 - Client-side paging: all contacts are loaded, as the legacy page does. Server-side paging is not used.
+- Hover column menus, row selection, bulk actions and row context menus are not built.
+- Column reordering in the popover uses Up and Down buttons; drag-and-drop is not built.
+- Zoom levels (80 to 200 percent) have not been checked.
 - Column widths are personal; pinning and reordering are personal too. Browser localStorage is device-specific and is not cross-device sync.
 - The contact record detail has no comments or activity history; the contact API does not expose them.

@@ -73,7 +73,7 @@ function renderGrid(props: EnterpriseDataGridProps<Row>, user: string | null = "
 describe("EnterpriseDataGrid", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    // jsdom has no layout. Give the grid a viewport so the header renders every column, including the configuration cell.
+    // jsdom has no layout. Give the grid a viewport so the header renders every business column.
     Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1200 });
     Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
   });
@@ -114,20 +114,20 @@ describe("EnterpriseDataGrid", () => {
 
   it("hides a column from the column panel, and the change stays with that user", () => {
     const { unmount } = renderGrid(gridProps(), "alice");
-    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
+    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
     const panel = screen.getByRole("dialog", { name: "Configure columns" });
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Show Email" }));
     expect((within(panel).getByRole("checkbox", { name: "Show Email" }) as HTMLInputElement).checked).toBe(false);
     unmount();
 
     renderGrid(gridProps(), "bob");
-    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
+    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
     expect((screen.getByRole("checkbox", { name: "Show Email" }) as HTMLInputElement).checked).toBe(true);
   });
 
   it("filters the column list by name in the picker and keeps the search field focused", () => {
     renderGrid(gridProps());
-    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
+    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
     const panel = screen.getByRole("dialog", { name: "Configure columns" });
     const search = within(panel).getByRole("searchbox", { name: "Search columns" });
     search.focus();
@@ -135,6 +135,24 @@ describe("EnterpriseDataGrid", () => {
     expect(within(panel).getByText("Email", { selector: "span.df-grid-config-name" })).toBeTruthy();
     expect(within(panel).queryByText("Contact", { selector: "span.df-grid-config-name" })).toBeNull();
     expect(document.activeElement).toBe(search);
+  });
+
+  it("places the Columns button in the toolbar, and the header holds business columns only", () => {
+    renderGrid(gridProps());
+    const toolbar = document.querySelector(".df-grid-toolbar") as HTMLElement;
+    expect(within(toolbar).getByRole("button", { name: "Columns" })).toBeTruthy();
+    expect(screen.getAllByRole("columnheader")).toHaveLength(COLUMNS.length);
+    expect(screen.queryByRole("button", { name: "Configure columns" })).toBeNull();
+  });
+
+  it("closes the Columns popover with Escape and returns focus to the Columns button", () => {
+    renderGrid(gridProps());
+    const trigger = screen.getByRole("button", { name: "Columns" });
+    fireEvent.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Configure columns" });
+    fireEvent.keyDown(panel, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Configure columns" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("opens a row on click and offers the create action at the bottom", () => {
