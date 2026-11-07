@@ -270,3 +270,10 @@ Outstanding:
 - Per-entity record layouts beyond the current sections (Contacts, Customers, Leads, Site Visits) are not redesigned.
 - Settings and configuration: not standardized in this pass (SettingsMenu, SidebarCustomizer, ProfileMenu, notification preferences).
 - Browser zoom (80–200%) and the full width matrix were not re-run for this pass.
+
+## Application-wide audit (DFR-UI-AUDIT-001, Phase 1)
+
+The route audit matrix is in `route-audit-matrix.md`. It lists every route in the router with its implementation, flag, grid and overlay use, inconsistencies, status and migration work. It is based on code inspection and counts; the Operations and Overview screens were not audited in depth, and responsive and zoom checks are listed as gaps per screen.
+
+Phases: 1 audit (done). 2 shared system: nested-section components, the 8 native confirms, motion tokens, settings drawers. 3 business modules: commissions, property and customer related sections, lead history, site-visit feedback. 4 Operations: documents first, then automation, imports, agents, lead intake, workflows, approvals. 5 full QA across routes, widths, zoom, themes and accessibility.
+
