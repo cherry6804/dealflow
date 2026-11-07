@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
 import { paymentMilestonesApi, type PaymentMilestone } from "../services/dealApi";
@@ -47,6 +47,8 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  // A ref, not state: a second click in the same frame must not start a second request.
+  const inFlight = useRef(false);
   const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
   const [formError, setFormError] = useState("");
   const [payTarget, setPayTarget] = useState<PaymentMilestone | null>(null);
@@ -97,6 +99,8 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
   const overdueCount = pending.filter((item) => item.is_overdue).length;
 
   async function handleSave(values: MilestoneFormValues, target: FormTarget) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setFormError("");
     try {
@@ -112,6 +116,7 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
     } catch (error) {
       setFormError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -119,6 +124,8 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
   async function handleRecordPayment(reference: string | null) {
     if (!payTarget || busy) return;
     const target = payTarget;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setPayError("");
     try {
@@ -128,6 +135,7 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
     } catch (error) {
       setPayError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -142,6 +150,8 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
     });
     if (!confirmed) return;
 
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setActionError("");
     setNotice("");
@@ -151,6 +161,7 @@ export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, on
     } catch (error) {
       setActionError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }

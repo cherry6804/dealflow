@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
 import { dealCommissionsApi, type DealCommission, type DealCommissionType } from "../services/dealApi";
@@ -69,6 +69,8 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  // A ref, not state: a second click in the same frame must not start a second request.
+  const inFlight = useRef(false);
   const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
   const [formError, setFormError] = useState("");
   const [payTarget, setPayTarget] = useState<DealCommission | null>(null);
@@ -119,6 +121,8 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
   const paid = commissions.filter((item) => item.status === "PAID");
 
   async function handleSave(values: CommissionFormValues, target: FormTarget) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setFormError("");
     try {
@@ -134,6 +138,7 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     } catch (error) {
       setFormError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -147,6 +152,8 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     });
     if (!confirmed) return;
 
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setActionError("");
     setNotice("");
@@ -156,6 +163,7 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     } catch (error) {
       setActionError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -163,6 +171,8 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
   async function handleRecordPayment(reference: string | null) {
     if (!payTarget || busy) return;
     const target = payTarget;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setPayError("");
     try {
@@ -172,6 +182,7 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     } catch (error) {
       setPayError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -186,6 +197,8 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     });
     if (!confirmed) return;
 
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setActionError("");
     setNotice("");
@@ -195,6 +208,7 @@ export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, cur
     } catch (error) {
       setActionError(messageOf(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
