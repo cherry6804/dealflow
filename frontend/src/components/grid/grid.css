@@ -35,8 +35,8 @@
 
 .df-grid-config-panel {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  top: calc(var(--df-grid-header-height) + 4px);
+  right: 8px;
   z-index: var(--df-z-dropdown);
   width: min(420px, calc(100vw - 24px));
   max-height: min(70vh, 560px);
@@ -148,5 +148,119 @@
 @media (prefers-reduced-motion: reduce) {
   .df-grid-table .rdg-cell {
     transition: none;
+  }
+}
+
+
+/* One container for header, body and footer: shared border, radius and width. */
+.df-grid-frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+}
+
+.df-grid-frame .df-grid-body {
+  border: 0;
+  border-radius: 0;
+}
+
+/* Header cell that opens the column configuration dropdown. */
+.df-grid-config-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--df-radius-sm);
+  background: transparent;
+  color: var(--df-muted);
+  cursor: pointer;
+}
+
+.df-grid-config-trigger:hover,
+.df-grid-config-trigger[aria-expanded="true"] {
+  background: var(--df-surface-hover);
+  color: var(--df-ink);
+}
+
+.df-grid-config-trigger:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.df-grid-config-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  color: var(--df-muted);
+}
+
+.df-grid-config-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--df-ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.df-grid-config-count {
+  font-weight: 400;
+  color: var(--df-subtle);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.df-grid-config-empty {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+/* Footer: subtle surface, top border, Create at the left, counts and refresh at the right. */
+.df-grid-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--df-border);
+  background: var(--df-surface-soft);
+}
+
+.df-grid-footer-start,
+.df-grid-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.df-grid-footer-end {
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 767.98px) {
+  .df-grid-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .df-grid-footer-end {
+    justify-content: space-between;
   }
 }

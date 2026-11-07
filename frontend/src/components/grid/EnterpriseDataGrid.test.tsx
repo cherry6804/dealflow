@@ -71,7 +71,12 @@ function renderGrid(props: EnterpriseDataGridProps<Row>, user: string | null = "
 }
 
 describe("EnterpriseDataGrid", () => {
-  beforeEach(() => window.localStorage.clear());
+  beforeEach(() => {
+    window.localStorage.clear();
+    // jsdom has no layout. Give the grid a viewport so the header renders every column, including the configuration cell.
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1200 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+  });
 
   it("shows the loading state while records load", () => {
     renderGrid(gridProps({ status: "loading", rows: [] }));
@@ -109,14 +114,14 @@ describe("EnterpriseDataGrid", () => {
 
   it("hides a column from the column panel, and the change stays with that user", () => {
     const { unmount } = renderGrid(gridProps(), "alice");
-    fireEvent.click(screen.getByRole("button", { name: /Columns/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
     const panel = screen.getByRole("dialog", { name: "Configure columns" });
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Show Email" }));
     expect((within(panel).getByRole("checkbox", { name: "Show Email" }) as HTMLInputElement).checked).toBe(false);
     unmount();
 
     renderGrid(gridProps(), "bob");
-    fireEvent.click(screen.getByRole("button", { name: /Columns/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
     expect((screen.getByRole("checkbox", { name: "Show Email" }) as HTMLInputElement).checked).toBe(true);
   });
 
