@@ -1,0 +1,152 @@
+/*
+ * Enterprise data grid. Surfaces, borders and text use tokens, so light and dark themes both apply. The grid keeps white
+ * header and table surfaces in the light theme through tokens; rows get subtle separators, not card wrapping.
+ */
+
+.df-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.df-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.df-grid-search {
+  flex: 1 1 280px;
+  max-width: 420px;
+  min-width: 0;
+}
+
+.df-grid-search .df-input {
+  width: 100%;
+}
+
+.df-grid-config {
+  position: relative;
+  display: inline-flex;
+}
+
+.df-grid-config-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--df-z-dropdown);
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+  box-shadow: var(--df-shadow-md);
+}
+
+.df-grid-config-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-grid-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-grid-config-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.df-grid-config-name {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.df-grid-config-density,
+.df-grid-config-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--df-border-soft);
+}
+
+.df-grid-body {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+}
+
+.df-grid-table {
+  --rdg-background-color: var(--df-surface);
+  --rdg-header-background-color: var(--df-surface);
+  --rdg-row-hover-background-color: var(--df-surface-hover);
+  --rdg-row-selected-background-color: var(--df-primary-soft);
+  --rdg-border-color: var(--df-border-soft);
+  --rdg-summary-border-color: var(--df-border);
+  --rdg-color: var(--df-ink);
+  --rdg-header-text-color: var(--df-muted);
+  --rdg-font-size: 13px;
+  border: 0;
+}
+
+.df-grid-table .rdg-cell {
+  cursor: pointer;
+}
+
+.df-grid-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.df-grid-footer-count {
+  margin: 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-grid-footer-note {
+  color: var(--df-subtle);
+}
+
+@media (max-width: 767.98px) {
+  .df-grid-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .df-grid-config-panel {
+    position: fixed;
+    top: 56px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-grid-table .rdg-cell {
+    transition: none;
+  }
+}

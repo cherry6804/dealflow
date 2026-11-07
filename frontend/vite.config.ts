@@ -9,7 +9,7 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     // Process only stylesheets, so that ?raw imports of .css files return their contents in tests.
-    css: { include: [/\.css/] },
+    css: { include: [/^(?!.*node_modules).*\.css/] },
   },
   server: {
     port: 5174,
