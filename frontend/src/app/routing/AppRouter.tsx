@@ -6,6 +6,7 @@ import RequireAuth from "../guards/RequireAuth";
 
 import PublicLayout from "../../layouts/PublicLayout";
 import WorkspaceEntry from "../../layouts/workspace/WorkspaceEntry";
+import SpacePlaceholderRoute from "../../layouts/workspace/spaces/SpacePlaceholderRoute";
 
 // Authentication pages
 const BillingAccessPage = lazy(
@@ -189,6 +190,7 @@ export default function AppRouter() {
         <Route element={<RequireAuth />}>
           <Route element={<WorkspaceEntry />}>
             <Route index element={<TodayPage />} />
+            <Route path="/spaces/:spaceId/:tabId" element={<SpacePlaceholderRoute />} />
 
             {/* Getting started */}
             <Route

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,7 +60,7 @@ describe("WorkspaceShellBridge", () => {
   it("renders the routed page inside the shell and marks the active module", () => {
     renderBridge(contextValue());
     expect(screen.getByRole("heading", { name: "Deals page" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Deals" }).getAttribute("aria-current")).toBe("page");
+    expect(within(screen.getByRole("navigation", { name: "Workspace spaces" })).getByRole("link", { name: "Deals" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("switches organizations through the existing context", () => {

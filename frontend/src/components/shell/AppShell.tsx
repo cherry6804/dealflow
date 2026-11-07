@@ -10,7 +10,7 @@ import { CommandPalette, type CommandPaletteLabels } from "./CommandPalette";
 import { Breadcrumbs, SidebarNav } from "./Navigation";
 import { NotificationsMenu, type NotificationEntry, type NotificationsMenuLabels } from "./NotificationsMenu";
 import { OrganizationSwitcher, ProfileMenu, type OrganizationSwitcherLabels, type OrganizationOption, type ProfileMenuLabels } from "./HeaderMenus";
-import { buildBreadcrumbs, filterVisibleModules, type CanAccess, type ShellCommand } from "./shellModel";
+import { buildBreadcrumbs, filterVisibleModules, type Breadcrumb, type CanAccess, type ShellCommand } from "./shellModel";
 import { useViewport } from "./useViewport";
 
 export interface AppShellLabels {
@@ -46,7 +46,16 @@ export interface AppShellProps {
   pathname: string;
   /** Static module list, used for breadcrumbs and command lists. Permission filtering is applied inside the shell. */
   modules: readonly WorkspaceModule[];
-  sections: SidebarSections;
+  /** Module sidebar data (legacy layout). Ignored when `renderSidebar` is provided. */
+  sections?: SidebarSections;
+  /** Custom sidebar. Receives whether the rail (icons only) is showing. */
+  renderSidebar?: (railMode: boolean) => ReactNode;
+  /** Extra header controls, placed before notifications. */
+  headerActions?: ReactNode;
+  /** Replaces the computed breadcrumb trail. */
+  breadcrumbOverride?: Breadcrumb[];
+  /** Content shown above the page, below the breadcrumbs (for example a space's secondary navigation). */
+  contentHeader?: ReactNode;
   canAccess: CanAccess;
   /** Module label to permission key. Defaults to the shell's built-in map, which is empty until permissions are exposed. */
   permissionByModule?: Readonly<Record<string, string>>;
@@ -88,6 +97,10 @@ export function AppShell({
   pathname,
   modules,
   sections,
+  renderSidebar,
+  headerActions,
+  breadcrumbOverride,
+  contentHeader,
   canAccess,
   permissionByModule,
   basePath = "",
@@ -114,7 +127,8 @@ export function AppShell({
   const drawerOpen = viewport === "mobile" && drawerPath === pathname;
 
   // Permission filtering happens once, here, so every surface shows the same visible set.
-  const visibleSections = useMemo<SidebarSections>(() => {
+  const visibleSections = useMemo<SidebarSections | undefined>(() => {
+    if (!sections) return undefined;
     const spaces = sections.spaces
       .map((section) => ({ ...section, modules: filterVisibleModules(section.modules, canAccess, permissionByModule) }))
       .filter((section) => section.modules.length > 0);
@@ -130,10 +144,11 @@ export function AppShell({
     [commands, canAccess],
   );
 
-  const breadcrumbs = useMemo(
+  const computedBreadcrumbs = useMemo(
     () => buildBreadcrumbs(pathname, modules, labels.homeBreadcrumb, basePath),
     [pathname, modules, labels.homeBreadcrumb, basePath],
   );
+  const breadcrumbs = breadcrumbOverride ?? computedBreadcrumbs;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -152,7 +167,9 @@ export function AppShell({
   }, []);
 
   const railMode = sidebarCollapsed || viewport === "tablet";
-  const sidebarNav = (
+  const sidebarNav = renderSidebar ? (
+    renderSidebar(viewport === "mobile" ? false : railMode)
+  ) : visibleSections ? (
     <SidebarNav
       label={labels.mainNavigation}
       sections={visibleSections}
@@ -164,7 +181,7 @@ export function AppShell({
       onToggleSpace={onToggleSpace}
       onNavigate={() => setDrawerPath(null)}
     />
-  );
+  ) : null;
 
   return (
     <div className={`df-shell${railMode && viewport !== "mobile" ? " df-shell--rail" : ""}`}>
@@ -213,6 +230,7 @@ export function AppShell({
         </button>
 
         <div className="df-shell-header-end">
+          {headerActions}
           <NotificationsMenu
             labels={labels.notifications}
             load={notifications.load}
@@ -274,6 +292,7 @@ export function AppShell({
         <div className="df-shell-page-bar">
           <Breadcrumbs label={labels.breadcrumbs} items={breadcrumbs} />
         </div>
+        {contentHeader}
         <main id="df-shell-main" tabIndex={-1} className="df-shell-main">
           {children}
         </main>

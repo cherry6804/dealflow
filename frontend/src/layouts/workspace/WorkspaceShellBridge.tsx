@@ -1,25 +1,33 @@
 import { useCallback, useMemo, useState } from "react";
-import { useLocation, useNavigate, Outlet } from "react-router-dom";
+import { SlidersHorizontal } from "lucide-react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { AppShell } from "../../components/shell/AppShell";
 import { getNotificationResourceRoute } from "../../components/notificationRoutes";
+import { Button } from "../../components/ui";
 import type { ShellCommand } from "../../components/shell/shellModel";
 import { useAppContext } from "../../contexts/useAppContext";
 import { notificationApi } from "../../services/notificationApi";
-import WorkspaceCustomizer from "./WorkspaceCustomizer";
-import { WORKSPACE_SHELL_LABELS } from "./workspaceShellLabels";
-import { buildSidebarSections } from "./sidebarSections";
+import "./spaces/spaces.css";
+import { SidebarCustomizer } from "./spaces/SidebarCustomizer";
+import { SettingsMenu } from "./spaces/SettingsMenu";
+import { SpaceFrame } from "./spaces/SpaceFrame";
+import { WorkspaceSidebar } from "./spaces/WorkspaceSidebar";
+import { UNLISTED_ROUTES, listSpaceRoutes } from "./spaces/spaceConfig";
+import { spaceBreadcrumbs } from "./spaces/spaceNavigation";
+import { arrangeSpaces } from "./spaces/spacePreferences";
+import { useSpacePreferences } from "./spaces/useSpacePreferences";
 import {
   DEFAULT_WORKSPACE_PREFERENCES,
   loadWorkspacePreferences,
-  resetWorkspacePreferences,
   saveWorkspacePreferences,
+  type TableDensity,
   type WorkspacePreferences,
 } from "./workspacePreferences";
+import { WORKSPACE_SHELL_LABELS } from "./workspaceShellLabels";
 import { GLOBAL_MODULES, WORKSPACE_MODULES, WORKSPACE_MODULE_LABELS } from "./workspaceSpaces";
-import { getPreferenceKey, initialsFor, toNotificationEntry } from "./workspaceShellData";
+import { initialsFor, toNotificationEntry } from "./workspaceShellData";
 
-const MODULE_LABELS = [...WORKSPACE_MODULE_LABELS];
 const ALL_MODULES = (() => {
   const seen = new Map<string, (typeof WORKSPACE_MODULES)[number]>();
   for (const module of [...GLOBAL_MODULES, ...WORKSPACE_MODULES]) {
@@ -28,13 +36,15 @@ const ALL_MODULES = (() => {
   return [...seen.values()];
 })();
 
+const MODULE_LABELS = [...WORKSPACE_MODULE_LABELS];
+
 /**
- * Connects the redesigned shell to the production session. It reads the same sources as the existing layout:
- * AppContext for the user, organizations and sign-out; the stored workspace preferences for each organization and user;
- * and notificationApi for notifications. Nothing is replaced with fixtures.
+ * Connects the redesigned shell to the production session. Identity, organizations, sign-out and notifications come from
+ * the same sources as before. The sidebar layout is personal (see useSpacePreferences). Table density, which the grids
+ * read, is kept in the existing workspace preference store and is scoped the same way.
  *
- * Permissions: AppContext carries no per-user permission list, so no module is hidden here. Route guards still enforce
- * access. Entitlement and permission states remain the responsibility of the individual routes.
+ * Permissions: no per-user permission list exists in the session, so no space or module is hidden for permissions here.
+ * Route guards still enforce access.
  */
 export default function WorkspaceShellBridge() {
   const { user, organizations, selectedOrganization, selectOrganization, status, refreshOrganizations, signOut } =
@@ -44,54 +54,65 @@ export default function WorkspaceShellBridge() {
 
   const organizationId = selectedOrganization?.id ?? "";
   const userKey = String(user?.id ?? user?.email ?? "");
-  const preferenceKey = userKey && organizationId ? getPreferenceKey(organizationId, userKey) : "";
 
-  // Preferences are read from storage when the organization or user changes, and held in state after that.
-  const [stored, setStored] = useState<{ key: string; preferences: WorkspacePreferences } | null>(null);
-  const preferences = useMemo<WorkspacePreferences>(() => {
-    if (stored && stored.key === preferenceKey) return stored.preferences;
-    if (!preferenceKey) return { ...DEFAULT_WORKSPACE_PREFERENCES, navigationOrder: [...MODULE_LABELS] };
+  const spaces = useSpacePreferences(user?.id ?? null, selectedOrganization?.id ?? null);
+  const layout = spaces.preferences;
+
+  // Table density lives in the existing workspace preference store; it is loaded and saved per user and organization.
+  const [legacyStore, setLegacyStore] = useState<{ key: string; value: WorkspacePreferences } | null>(null);
+  const legacyKey = userKey && organizationId ? `${organizationId}::${userKey}` : "";
+  const legacy = useMemo<WorkspacePreferences>(() => {
+    if (legacyStore && legacyStore.key === legacyKey) return legacyStore.value;
+    if (!legacyKey) return { ...DEFAULT_WORKSPACE_PREFERENCES, navigationOrder: [...MODULE_LABELS] };
     return loadWorkspacePreferences(organizationId, userKey, MODULE_LABELS);
-  }, [stored, preferenceKey, organizationId, userKey]);
+  }, [legacyStore, legacyKey, organizationId, userKey]);
 
-  const updatePreferences = useCallback(
-    (next: WorkspacePreferences) => {
-      setStored({ key: preferenceKey, preferences: next });
-      if (preferenceKey) saveWorkspacePreferences(organizationId, userKey, next);
+  const setTableDensity = useCallback(
+    (density: TableDensity) => {
+      const next = { ...legacy, tableDensity: density };
+      setLegacyStore({ key: legacyKey, value: next });
+      if (legacyKey) saveWorkspacePreferences(organizationId, userKey, next);
     },
-    [preferenceKey, organizationId, userKey],
+    [legacy, legacyKey, organizationId, userKey],
   );
 
   const [customizerOpen, setCustomizerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
-  const sections = useMemo(() => buildSidebarSections(preferences), [preferences]);
+  const visibleSpaces = useMemo(() => arrangeSpaces(layout), [layout]);
 
   const commands = useMemo<ShellCommand[]>(
     () => [
-      ...ALL_MODULES.map((module) => ({
-        id: `nav-${module.label}`,
-        label: `Open ${module.label}`,
-        group: "Navigate",
-        keywords: module.to,
-        run: () => navigate(module.to),
+      ...listSpaceRoutes().map((route) => ({
+        id: `nav-${route.id}`,
+        label: `Open ${route.label}`,
+        group: route.space,
+        keywords: route.to,
+        run: () => navigate(route.to),
+      })),
+      ...UNLISTED_ROUTES.map((route) => ({
+        id: `nav-${route.to}`,
+        label: `Open ${route.label}`,
+        group: route.group,
+        keywords: route.to,
+        run: () => navigate(route.to),
       })),
       {
-        id: "customise-navigation",
-        label: "Customise navigation",
+        id: "customise-sidebar",
+        label: "Customize sidebar",
         group: "Preferences",
-        keywords: "sidebar order hide pin",
+        keywords: "spaces order pin hide sidebar",
         run: () => setCustomizerOpen(true),
       },
       {
         id: "toggle-sidebar",
-        label: preferences.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        label: layout.collapsed ? "Expand sidebar" : "Collapse sidebar",
         group: "Preferences",
-        keywords: "rail",
-        run: () => updatePreferences({ ...preferences, sidebarCollapsed: !preferences.sidebarCollapsed }),
+        keywords: "icons rail",
+        run: () => spaces.update({ ...layout, collapsed: !layout.collapsed }),
       },
     ],
-    [navigate, preferences, updatePreferences],
+    [navigate, layout, spaces],
   );
 
   const notifications = useMemo(
@@ -130,7 +151,32 @@ export default function WorkspaceShellBridge() {
         labels={WORKSPACE_SHELL_LABELS}
         pathname={location.pathname}
         modules={ALL_MODULES}
-        sections={sections}
+        renderSidebar={(rail) => (
+          <WorkspaceSidebar
+            spaces={visibleSpaces}
+            pathname={location.pathname}
+            rail={rail}
+            density={layout.density}
+            label="Workspace spaces"
+            heading="Spaces"
+          />
+        )}
+        headerActions={
+          <>
+            <Button
+              variant="tertiary"
+              size="sm"
+              iconOnly
+              aria-label="Customize sidebar"
+              icon={<SlidersHorizontal size={18} strokeWidth={1.8} aria-hidden="true" />}
+              onClick={() => setCustomizerOpen(true)}
+            >
+              Customize
+            </Button>
+            <SettingsMenu />
+          </>
+        }
+        breadcrumbOverride={spaceBreadcrumbs(location.pathname, WORKSPACE_SHELL_LABELS.homeBreadcrumb, "/")}
         canAccess={() => true}
         commands={commands}
         user={{
@@ -140,7 +186,7 @@ export default function WorkspaceShellBridge() {
         }}
         signingOut={signingOut}
         onSignOut={() => void handleSignOut()}
-        onOpenSettings={() => navigate("/settings")}
+        onOpenSettings={() => navigate("/notification-preferences")}
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         selectedOrganizationId={selectedOrganization?.id ?? null}
         organizationStatus={organizationStatus}
@@ -149,31 +195,23 @@ export default function WorkspaceShellBridge() {
         }}
         onRetryOrganizations={() => void refreshOrganizations()}
         notifications={notifications}
-        sidebarCollapsed={preferences.sidebarCollapsed}
-        onSidebarCollapsedChange={(collapsed) => updatePreferences({ ...preferences, sidebarCollapsed: collapsed })}
-        onToggleSpace={(spaceId) => {
-          const collapsed = new Set(preferences.collapsedSpaces);
-          if (collapsed.has(spaceId)) collapsed.delete(spaceId);
-          else collapsed.add(spaceId);
-          updatePreferences({ ...preferences, collapsedSpaces: [...collapsed] });
-        }}
+        sidebarCollapsed={layout.collapsed}
+        onSidebarCollapsedChange={(collapsed) => spaces.update({ ...layout, collapsed })}
+        onToggleSpace={() => undefined}
       >
-        <Outlet />
+        <SpaceFrame navigationSuffix="sections">
+          <Outlet />
+        </SpaceFrame>
       </AppShell>
 
-      <WorkspaceCustomizer
+      <SidebarCustomizer
         open={customizerOpen}
-        preferences={preferences}
-        availableModules={MODULE_LABELS}
         onClose={() => setCustomizerOpen(false)}
-        onChange={updatePreferences}
-        onReset={() => {
-          if (userKey && organizationId) resetWorkspacePreferences(organizationId, userKey);
-          setStored({
-            key: preferenceKey,
-            preferences: { ...DEFAULT_WORKSPACE_PREFERENCES, navigationOrder: [...MODULE_LABELS] },
-          });
-        }}
+        preferences={layout}
+        onChange={spaces.update}
+        onRestoreDefaults={spaces.restoreDefaults}
+        tableDensity={legacy.tableDensity}
+        onTableDensityChange={setTableDensity}
       />
     </>
   );

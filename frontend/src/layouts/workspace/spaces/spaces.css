@@ -1,0 +1,339 @@
+/*
+ * Personal sidebar, space layout, customizer and settings menu. Colours, type and spacing come from tokens only, so light,
+ * dark and system themes all apply. Focus, targets and motion follow the shared shell rules.
+ */
+
+/* Sidebar spaces */
+
+.df-ws-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.df-ws-sidebar-heading {
+  margin: 0 8px 4px;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-ws-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-ws-space {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--df-radius-md);
+  color: var(--df-ink-soft);
+  font-size: 14px;
+  font-weight: 550;
+  text-decoration: none;
+  transition: background-color var(--df-motion-duration-fast) var(--df-motion-ease-standard),
+    color var(--df-motion-duration-fast) var(--df-motion-ease-standard);
+}
+
+.df-ws-sidebar--compact .df-ws-space {
+  min-height: 32px;
+}
+
+.df-ws-space:hover {
+  background: var(--df-surface-hover);
+  color: var(--df-ink);
+}
+
+.df-ws-space:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.df-ws-space--active {
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
+}
+
+.df-ws-sidebar--rail .df-ws-space {
+  justify-content: center;
+  padding: 0;
+}
+
+/* Space layout */
+
+.df-space {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.df-space-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.df-space-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.df-space-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--df-radius-md);
+  background: var(--df-primary-soft);
+  color: var(--df-primary);
+}
+
+.df-space-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.df-space-description {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-space-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.df-space-tabs ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--df-border);
+}
+
+.df-space-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--df-muted);
+  font-size: 14px;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.df-space-tab:hover {
+  color: var(--df-ink);
+}
+
+.df-space-tab:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: -2px;
+  border-radius: var(--df-radius-sm);
+}
+
+.df-space-tab--active {
+  border-bottom-color: var(--df-primary);
+  color: var(--df-ink);
+}
+
+.df-space-tab-note {
+  padding: 0 6px;
+  border-radius: var(--df-radius-full);
+  background: var(--df-neutral-soft);
+  color: var(--df-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.df-space-content {
+  min-width: 0;
+}
+
+/* Customizer */
+
+.df-ws-custom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-ws-custom-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+  padding: 4px 8px;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  transition: box-shadow var(--df-motion-duration-fast) var(--df-motion-ease-standard);
+}
+
+.df-ws-custom-row--dragging {
+  box-shadow: var(--df-shadow-md);
+}
+
+.df-ws-custom-row--over {
+  box-shadow: inset 0 2px 0 var(--df-primary);
+}
+
+.df-ws-custom-handle {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px 0 -6px -6px;
+  border: 0;
+  border-radius: var(--df-radius-sm);
+  background: transparent;
+  color: var(--df-subtle);
+  cursor: grab;
+  touch-action: none;
+}
+
+.df-ws-custom-handle:hover {
+  background: var(--df-surface-hover);
+  color: var(--df-ink);
+}
+
+.df-ws-custom-handle:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.df-ws-custom-name {
+  flex: 1 1 140px;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.df-ws-custom-status {
+  font-weight: 400;
+  color: var(--df-muted);
+}
+
+.df-ws-custom-settings {
+  margin-top: 20px;
+}
+
+/* Settings menu */
+
+.df-ws-settings {
+  position: relative;
+  display: inline-flex;
+}
+
+.df-ws-settings-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--df-z-dropdown);
+  width: min(360px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+  box-shadow: var(--df-shadow-md);
+}
+
+.df-ws-settings-panel section + section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--df-border-soft);
+}
+
+.df-ws-settings-heading {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-ws-settings-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  padding: 8px;
+  border-radius: var(--df-radius-md);
+  color: var(--df-ink);
+  text-decoration: none;
+}
+
+.df-ws-settings-link:hover {
+  background: var(--df-surface-hover);
+}
+
+.df-ws-settings-link:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.df-ws-settings-link-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.df-ws-settings-link-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-ws-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-ws-space,
+  .df-ws-custom-row,
+  .df-space-tab {
+    transition: none;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .df-ws-settings-panel {
+    position: fixed;
+    top: calc(var(--df-shell-header-height) + 4px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+
+  .df-space-title {
+    font-size: 18px;
+  }
+}
