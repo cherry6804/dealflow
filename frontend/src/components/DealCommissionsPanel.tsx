@@ -1,25 +1,24 @@
-
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-} from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
-import { useConfirmation } from "./ui/useConfirmation";
+import { dealCommissionsApi, type DealCommission, type DealCommissionType } from "../services/dealApi";
 import {
-  dealCommissionsApi,
-  type DealCommission,
-  type DealCommissionCreateInput,
-  type DealCommissionStatus,
-  type DealCommissionType,
-  type DealCommissionUpdateInput,
-} from "../services/dealApi";
-
-import "./DealCommissionsPanel.css";
+  commissionDescription,
+  commissionRateLabel,
+  commissionStatus,
+  commissionToForm,
+  currencyOptions,
+  emptyCommissionForm,
+  isSameCommissionForm,
+  toCommissionCreateInput,
+  toCommissionUpdateInput,
+  validateCommissionForm,
+  type CommissionFormErrors,
+  type CommissionFormValues,
+} from "./deal-nested/deal-commission-form";
+import { NestedRecordCard, NestedSummary } from "./record/NestedRecordParts";
+import { formatDateTime, formatMoney, totalsByCurrency } from "./record/nested-records";
+import { Button, Dialog, SelectField, TextField, TextareaField, useConfirmation } from "./ui";
 
 interface DealCommissionsPanelProps {
   dealId: string;
@@ -27,878 +26,517 @@ interface DealCommissionsPanelProps {
   dealValue: number | string | null;
   currency: string;
   onClose: () => void;
+  /** Called after a successful change so the parent deal can refresh. */
+  onChanged: (message: string) => void;
 }
 
-interface CommissionForm {
-  commissionType: DealCommissionType;
-  amount: string;
-  currency: string;
-  terms: string;
+type FormTarget = { mode: "create" } | { mode: "edit"; commission: DealCommission };
+
+function messageOf(error: unknown): string {
+  if (error instanceof ApiError || error instanceof Error) return error.message;
+  return "Something went wrong. Please try again.";
 }
 
-const EMPTY_FORM: CommissionForm = {
-  commissionType: "PERCENTAGE",
-  amount: "",
-  currency: "INR",
-  terms: "",
-};
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : "Something went wrong. Please try again.";
+/**
+ * Totals of the server-calculated amounts, grouped by currency. A commission whose amount the server could not calculate (a
+ * percentage without a deal value) is counted and reported, never added as zero.
+ */
+function CommissionTotals({ rows, empty }: { rows: readonly DealCommission[]; empty: string }): ReactNode {
+  const totals = totalsByCurrency(rows.map((row) => ({ amount: row.calculated_amount, currency: row.currency })));
+  if (totals.length === 0) return empty;
+  return (
+    <span className="df-nested-total-lines">
+      {totals.map((total) => (
+        <span key={total.currency}>
+          {formatMoney(total.total, total.currency)}
+          {total.unavailable > 0 ? (
+            <span className="df-sales-muted"> · {total.unavailable} without a calculated amount</span>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
 }
 
-function formatAmount(
-  amount: number | string | null | undefined,
-  currency: string,
-): string {
-  if (amount === null || amount === undefined || amount === "") {
-    return "Not available";
-  }
-
-  const value = Number(amount);
-
-  if (!Number.isFinite(value)) {
-    return `${currency} ${amount}`;
-  }
-
-  try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2,
-    }).format(value);
-  } catch {
-    return `${currency} ${value.toLocaleString("en-IN")}`;
-  }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function statusLabel(status: DealCommissionStatus): string {
-  switch (status) {
-    case "PROPOSED":
-      return "Proposed";
-    case "AGREED":
-      return "Agreed";
-    case "PAID":
-      return "Paid";
-    case "CANCELLED":
-      return "Cancelled";
-  }
-}
-
-function statusClass(status: DealCommissionStatus): string {
-  return `deal-commission-status deal-commission-status-${status.toLowerCase()}`;
-}
-
-function commissionDescription(commission: DealCommission): string {
-  if (commission.commission_type === "PERCENTAGE") {
-    return `${Number(commission.rate_percent ?? 0).toLocaleString("en-IN", {
-      maximumFractionDigits: 4,
-    })}% commission`;
-  }
-
-  return "Fixed commission";
-}
-
-export default function DealCommissionsPanel({
-  dealId,
-  dealTitle,
-  dealValue,
-  currency,
-  onClose,
-}: DealCommissionsPanelProps) {
+/**
+ * Commission terms for a deal, shown in a nested dialog over the deal record. Amounts are calculated by the server; the panel
+ * displays them and never computes its own. Agreeing, recording payment and cancelling each confirm first.
+ */
+export default function DealCommissionsPanel({ dealId, dealTitle, dealValue, currency, onClose, onChanged }: DealCommissionsPanelProps) {
   const [commissions, setCommissions] = useState<DealCommission[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState<CommissionForm>({
-    ...EMPTY_FORM,
-    currency: currency.trim().toUpperCase() || "INR",
-  });
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
   const [formError, setFormError] = useState("");
-  const [paymentReferences, setPaymentReferences] = useState<
-    Record<string, string>
-  >({});
+  const [payTarget, setPayTarget] = useState<DealCommission | null>(null);
+  const [payError, setPayError] = useState("");
   const [confirm, confirmDialog] = useConfirmation();
 
   const loadCommissions = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
     try {
       const result = await dealCommissionsApi.list(dealId);
       setCommissions(result.items);
-    } catch (loadError) {
-      setError(getErrorMessage(loadError));
-    } finally {
-      setLoading(false);
+      setLoadError("");
+      setStatus("ready");
+    } catch (error) {
+      setLoadError(messageOf(error));
+      setStatus("error");
     }
   }, [dealId]);
 
+  // Initial load. State is set only inside the request callbacks, never synchronously in the effect body.
   useEffect(() => {
-    void loadCommissions();
-  }, [loadCommissions]);
-
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function handleKeyDown(event: KeyboardEvent) {
-      // A nested confirmation or popover that handled Escape marks the event as default-prevented; leave it alone.
-      if (event.defaultPrevented) return;
-      if (event.key === "Escape" && !saving && !isFormOpen) {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-
+    let cancelled = false;
+    dealCommissionsApi
+      .list(dealId)
+      .then((result) => {
+        if (cancelled) return;
+        setCommissions(result.items);
+        setLoadError("");
+        setStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(messageOf(error));
+        setStatus("error");
+      });
     return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
+      cancelled = true;
     };
-  }, [isFormOpen, onClose, saving]);
+  }, [dealId]);
 
-  const summary = useMemo(() => {
-    const proposed = commissions.filter(
-      (item) => item.status === "PROPOSED",
-    );
-    const agreed = commissions.filter((item) => item.status === "AGREED");
-    const paid = commissions.filter((item) => item.status === "PAID");
-
-    return {
-      total: commissions.length,
-      proposed: proposed.length,
-      agreed: agreed.length,
-      paid: paid.length,
-      agreedValue: agreed.reduce(
-        (sum, item) => sum + Number(item.calculated_amount ?? 0),
-        0,
-      ),
-      paidValue: paid.reduce(
-        (sum, item) => sum + Number(item.calculated_amount ?? 0),
-        0,
-      ),
-    };
-  }, [commissions]);
-
-  function updateForm<K extends keyof CommissionForm>(
-    key: K,
-    value: CommissionForm[K],
-  ) {
-    setForm((current) => ({ ...current, [key]: value }));
+  async function refresh(message: string) {
+    setNotice(message);
+    onChanged(message);
+    await loadCommissions();
   }
 
-  function openCreateForm() {
-    setEditingId(null);
-    setForm({
-      ...EMPTY_FORM,
-      currency: currency.trim().toUpperCase() || "INR",
-    });
+  const proposed = commissions.filter((item) => item.status === "PROPOSED");
+  const agreed = commissions.filter((item) => item.status === "AGREED");
+  const paid = commissions.filter((item) => item.status === "PAID");
+
+  async function handleSave(values: CommissionFormValues, target: FormTarget) {
+    setBusy(true);
     setFormError("");
-    setIsFormOpen(true);
-  }
-
-  function openEditForm(commission: DealCommission) {
-    if (
-      commission.status !== "PROPOSED" &&
-      commission.status !== "AGREED"
-    ) {
-      return;
-    }
-
-    setEditingId(commission.id);
-    setForm({
-      commissionType: commission.commission_type,
-      amount: String(
-        commission.commission_type === "FIXED"
-          ? commission.fixed_amount ?? ""
-          : commission.rate_percent ?? "",
-      ),
-      currency: commission.currency,
-      terms: commission.terms ?? "",
-    });
-    setFormError("");
-    setIsFormOpen(true);
-  }
-
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (saving) return;
-
-    setFormError("");
-    setError("");
-    setSuccess("");
-
-    const amount = Number(form.amount);
-    const normalizedCurrency = form.currency.trim().toUpperCase();
-    const terms = form.terms.trim() || null;
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setFormError(
-        form.commissionType === "PERCENTAGE"
-          ? "Commission percentage must be greater than zero."
-          : "Commission amount must be greater than zero.",
-      );
-      return;
-    }
-
-    if (
-      form.commissionType === "PERCENTAGE" &&
-      amount > 100
-    ) {
-      setFormError("Commission percentage cannot exceed 100%.");
-      return;
-    }
-
-    if (!/^[A-Z]{3}$/.test(normalizedCurrency)) {
-      setFormError("Enter a valid three-letter currency code.");
-      return;
-    }
-
-    setSaving(true);
-
     try {
-      if (editingId) {
-        const input: DealCommissionUpdateInput = {
-          commission_type: form.commissionType,
-          fixed_amount:
-            form.commissionType === "FIXED" ? amount : null,
-          rate_percent:
-            form.commissionType === "PERCENTAGE" ? amount : null,
-          currency: normalizedCurrency,
-          terms,
-        };
-
-        await dealCommissionsApi.update(editingId, input);
-        setSuccess(
-          "Commission updated. Review the status if its terms changed.",
-        );
+      if (target.mode === "edit") {
+        await dealCommissionsApi.update(target.commission.id, toCommissionUpdateInput(values));
+        setFormTarget(null);
+        await refresh("Commission updated. Review its status if the terms changed.");
       } else {
-        const input: DealCommissionCreateInput =
-          form.commissionType === "FIXED"
-            ? {
-                commission_type: "FIXED",
-                fixed_amount: amount,
-                currency: normalizedCurrency,
-                terms,
-              }
-            : {
-                commission_type: "PERCENTAGE",
-                rate_percent: amount,
-                currency: normalizedCurrency,
-                terms,
-              };
-
-        await dealCommissionsApi.create(dealId, input);
-        setSuccess("Commission proposal created successfully.");
+        await dealCommissionsApi.create(dealId, toCommissionCreateInput(values));
+        setFormTarget(null);
+        await refresh("Commission proposal created.");
       }
-
-      setIsFormOpen(false);
-      setEditingId(null);
-      await loadCommissions();
-    } catch (saveError) {
-      setFormError(getErrorMessage(saveError));
+    } catch (error) {
+      setFormError(messageOf(error));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
   async function handleAgree(commission: DealCommission) {
-    if (saving || commission.status !== "PROPOSED") return;
+    if (busy || commission.status !== "PROPOSED") return;
 
-    const confirmed = await confirm(
-      "Agree to these commission terms? This records the commission as agreed.",
-      { title: "Agree to commission terms?", confirmLabel: "Agree" },
-    );
-
+    const confirmed = await confirm("This records that the commission terms have been agreed. You can still cancel the commission afterwards.", {
+      title: "Agree to commission terms?",
+      confirmLabel: "Agree terms",
+    });
     if (!confirmed) return;
 
-    setSaving(true);
-    setError("");
-    setSuccess("");
-
+    setBusy(true);
+    setActionError("");
+    setNotice("");
     try {
       await dealCommissionsApi.agree(commission.id);
-      setSuccess("Commission terms agreed successfully.");
-      await loadCommissions();
-    } catch (actionError) {
-      setError(getErrorMessage(actionError));
+      await refresh("Commission terms agreed.");
+    } catch (error) {
+      setActionError(messageOf(error));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
-  async function handleMarkPaid(commission: DealCommission) {
-    if (saving || commission.status !== "AGREED") return;
-
-    const confirmed = await confirm(
-      "Record this commission as paid? Confirm that payment has actually been received or made.",
-      { title: "Record commission as paid?", confirmLabel: "Mark as paid" },
-    );
-
-    if (!confirmed) return;
-
-    setSaving(true);
-    setError("");
-    setSuccess("");
-
+  async function handleRecordPayment(reference: string | null) {
+    if (!payTarget || busy) return;
+    const target = payTarget;
+    setBusy(true);
+    setPayError("");
     try {
-      await dealCommissionsApi.markPaid(commission.id, {
-        payment_reference:
-          paymentReferences[commission.id]?.trim() || null,
-      });
-
-      setPaymentReferences((current) => ({
-        ...current,
-        [commission.id]: "",
-      }));
-      setSuccess("Commission payment recorded successfully.");
-      await loadCommissions();
-    } catch (actionError) {
-      setError(getErrorMessage(actionError));
+      await dealCommissionsApi.markPaid(target.id, { payment_reference: reference });
+      setPayTarget(null);
+      await refresh("Commission payment recorded.");
+    } catch (error) {
+      setPayError(messageOf(error));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
   async function handleCancel(commission: DealCommission) {
-    if (
-      saving ||
-      (commission.status !== "PROPOSED" &&
-        commission.status !== "AGREED")
-    ) {
-      return;
-    }
+    if (busy || (commission.status !== "PROPOSED" && commission.status !== "AGREED")) return;
 
-    const confirmed = await confirm(
-      "Cancel this commission? This action cannot be undone from this panel.",
-      { title: "Cancel commission?", confirmLabel: "Cancel commission", tone: "danger" },
-    );
-
+    const confirmed = await confirm("The commission will be cancelled. A cancelled commission cannot be edited, agreed or paid.", {
+      title: "Cancel commission?",
+      confirmLabel: "Cancel commission",
+      tone: "danger",
+    });
     if (!confirmed) return;
 
-    setSaving(true);
-    setError("");
-    setSuccess("");
-
+    setBusy(true);
+    setActionError("");
+    setNotice("");
     try {
       await dealCommissionsApi.cancel(commission.id);
-      setSuccess("Commission cancelled.");
-      await loadCommissions();
-    } catch (actionError) {
-      setError(getErrorMessage(actionError));
+      await refresh("Commission cancelled.");
+    } catch (error) {
+      setActionError(messageOf(error));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
-  return createPortal(
-    <>
-    <div
-      className="deal-commissions-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (
-          event.target === event.currentTarget &&
-          !saving &&
-          !isFormOpen
-        ) {
-          onClose();
-        }
-      }}
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Commissions"
+      eyebrow="Deal workspace"
+      description={dealTitle}
+      closeLabel="Close commissions"
+      size="lg"
+      busy={busy}
+      footer={
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          Close
+        </Button>
+      }
     >
-      <section
-        className="deal-commissions-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="deal-commissions-title"
-      >
-        <header className="deal-commissions-header">
-          <div>
-            <span className="deal-commissions-eyebrow">
-              DEAL WORKSPACE
-            </span>
-            <h2 id="deal-commissions-title">Commission tracking</h2>
-            <p>{dealTitle}</p>
-          </div>
+      <p className="df-sales-muted">
+        Deal expected value: <strong>{formatMoney(dealValue, currency)}</strong>. Percentage commissions are calculated from this value by the server.
+      </p>
 
-          <button
-            type="button"
-            className="deal-commissions-close"
-            aria-label="Close commission tracking"
-            disabled={saving}
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
+      {loadError ? (
+        <div className="df-sales-form-message df-sales-form-message--error" role="alert">
+          <span>{loadError}</span>{" "}
+          <Button variant="tertiary" size="sm" onClick={() => void loadCommissions()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {actionError ? (
+        <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {notice ? (
+        <p className="df-sales-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
 
-        <div className="deal-commissions-body">
-          {error && (
-            <div className="deal-commissions-alert error" role="alert">
-              <span>{error}</span>
-              <button
-                type="button"
-                onClick={() => void loadCommissions()}
-                disabled={loading || saving}
-              >
-                Retry
-              </button>
-            </div>
-          )}
+      {status === "loading" ? (
+        <p className="df-sales-muted" role="status">
+          Loading commissions…
+        </p>
+      ) : null}
 
-          {success && (
-            <div
-              className="deal-commissions-alert success"
-              role="status"
-            >
-              {success}
-            </div>
-          )}
+      {status === "ready" ? (
+        <>
+          <NestedSummary
+            label="Commission totals"
+            items={[
+              { label: "Total commissions", value: commissions.length },
+              { label: "Proposed", value: proposed.length },
+              { label: "Agreed", value: <CommissionTotals rows={agreed} empty="—" /> },
+              { label: "Paid", value: <CommissionTotals rows={paid} empty="—" /> },
+            ]}
+          />
 
-          <section className="deal-commissions-deal-value">
-            <div>
-              <span>Deal expected value</span>
-              <strong>{formatAmount(dealValue, currency)}</strong>
-            </div>
-            <p>
-              Percentage commissions are calculated using the deal's
-              expected value. Update that value on the deal if it changes.
-            </p>
-          </section>
-
-          <div className="deal-commissions-summary">
-            <article>
-              <span>Total commissions</span>
-              <strong>{summary.total}</strong>
-            </article>
-            <article>
-              <span>Proposed</span>
-              <strong>{summary.proposed}</strong>
-            </article>
-            <article>
-              <span>Agreed value</span>
-              <strong>{formatAmount(summary.agreedValue, currency)}</strong>
-            </article>
-            <article>
-              <span>Paid value</span>
-              <strong>{formatAmount(summary.paidValue, currency)}</strong>
-            </article>
-          </div>
-
-          <div className="deal-commissions-toolbar">
+          <div className="df-nested-toolbar">
             <div>
               <h3>Commission agreements</h3>
-              <p>
-                Define terms, record agreement, and track commission
-                payments.
-              </p>
+              <p>Define terms, record agreement, and track payment.</p>
             </div>
-
-            <button
-              type="button"
-              className="deal-commissions-primary"
-              onClick={openCreateForm}
-              disabled={saving}
-            >
-              + Add commission
-            </button>
+            <Button variant="primary" size="sm" onClick={() => setFormTarget({ mode: "create" })} disabled={busy}>
+              Add commission
+            </Button>
           </div>
 
-          {loading ? (
-            <div className="deal-commissions-state" role="status">
-              Loading commissions…
-            </div>
-          ) : commissions.length === 0 ? (
-            <div className="deal-commissions-empty">
-              <div aria-hidden="true">%</div>
+          {commissions.length === 0 ? (
+            <div className="df-nested-empty">
               <h3>No commissions recorded</h3>
-              <p>
-                Add a fixed-fee or percentage-based commission to start
-                tracking the agreement and payment.
-              </p>
-              <button
-                type="button"
-                className="deal-commissions-primary"
-                onClick={openCreateForm}
-                disabled={saving}
-              >
-                Create first commission
-              </button>
+              <p>Add a fixed or percentage commission to track its agreement and payment.</p>
+              <Button variant="primary" size="sm" onClick={() => setFormTarget({ mode: "create" })} disabled={busy}>
+                Add first commission
+              </Button>
             </div>
           ) : (
-            <div className="deal-commissions-list">
-              {commissions.map((commission) => (
-                <article
-                  className="deal-commission-card"
-                  key={commission.id}
-                >
-                  <div className="deal-commission-card-heading">
-                    <div>
-                      <span className="deal-commission-type">
-                        {commissionDescription(commission)}
-                      </span>
-                      <h4>
-                        {formatAmount(
-                          commission.calculated_amount,
-                          commission.currency,
-                        )}
-                      </h4>
-                      {commission.commission_type === "PERCENTAGE" && (
-                        <p className="deal-commission-calculation">
-                          Based on deal value of{" "}
-                          {formatAmount(dealValue, currency)}
-                        </p>
-                      )}
-                    </div>
-
-                    <span className={statusClass(commission.status)}>
-                      {statusLabel(commission.status)}
-                    </span>
-                  </div>
-
-                  <div className="deal-commission-meta">
-                    <span>
-                      <strong>Currency</strong>
-                      {commission.currency}
-                    </span>
-                    <span>
-                      <strong>Created</strong>
-                      {formatDate(commission.created_at)}
-                    </span>
-                    {commission.agreed_at && (
-                      <span>
-                        <strong>Agreed on</strong>
-                        {formatDate(commission.agreed_at)}
-                      </span>
-                    )}
-                    {commission.paid_at && (
-                      <span>
-                        <strong>Paid on</strong>
-                        {formatDate(commission.paid_at)}
-                      </span>
-                    )}
-                    {commission.payment_reference && (
-                      <span>
-                        <strong>Payment reference</strong>
-                        {commission.payment_reference}
-                      </span>
-                    )}
-                  </div>
-
-                  {commission.terms && (
-                    <p className="deal-commission-terms">
-                      {commission.terms}
-                    </p>
-                  )}
-
-                  {(commission.status === "PROPOSED" ||
-                    commission.status === "AGREED") && (
-                    <div className="deal-commission-actions">
-                      {commission.status === "AGREED" && (
-                        <label>
-                          <span>Payment reference (optional)</span>
-                          <input
-                            type="text"
-                            maxLength={200}
-                            value={paymentReferences[commission.id] ?? ""}
-                            onChange={(event) =>
-                              setPaymentReferences((current) => ({
-                                ...current,
-                                [commission.id]: event.target.value,
-                              }))
-                            }
-                            placeholder="Transaction ID or receipt number"
-                            disabled={saving}
-                          />
-                        </label>
-                      )}
-
-                      <div className="deal-commission-buttons">
-                        <button
-                          type="button"
-                          className="deal-commissions-secondary"
-                          onClick={() => openEditForm(commission)}
-                          disabled={saving}
-                        >
-                          Edit terms
-                        </button>
-
-                        {commission.status === "PROPOSED" && (
-                          <button
-                            type="button"
-                            className="deal-commissions-primary"
-                            onClick={() => void handleAgree(commission)}
-                            disabled={saving}
-                          >
-                            Agree terms
-                          </button>
-                        )}
-
-                        {commission.status === "AGREED" && (
-                          <button
-                            type="button"
-                            className="deal-commissions-paid"
-                            onClick={() => void handleMarkPaid(commission)}
-                            disabled={saving}
-                          >
-                            Mark paid
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          className="deal-commissions-cancel"
-                          onClick={() => void handleCancel(commission)}
-                          disabled={saving}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
+            <ul className="df-nested-list" aria-label="Commissions">
+              {commissions.map((commission) => {
+                const editable = commission.status === "PROPOSED" || commission.status === "AGREED";
+                const meta = [
+                  commission.commission_type === "PERCENTAGE"
+                    ? { label: "Rate", value: commissionRateLabel(commission) }
+                    : { label: "Basis", value: "Fixed amount" },
+                  { label: "Currency", value: commission.currency },
+                  ...(commission.agreed_at ? [{ label: "Agreed on", value: formatDateTime(commission.agreed_at) }] : []),
+                  ...(commission.paid_at ? [{ label: "Paid on", value: formatDateTime(commission.paid_at) }] : []),
+                  ...(commission.payment_reference ? [{ label: "Payment reference", value: commission.payment_reference }] : []),
+                ];
+                return (
+                  <li key={commission.id}>
+                    <NestedRecordCard
+                      title={commissionDescription(commission)}
+                      amount={
+                        commission.calculated_amount === null && commission.commission_type === "PERCENTAGE"
+                          ? "Not available until the deal has an expected value"
+                          : formatMoney(commission.calculated_amount, commission.currency)
+                      }
+                      status={commissionStatus(commission)}
+                      meta={meta}
+                      notes={commission.terms}
+                      actions={
+                        editable ? (
+                          <>
+                            <Button variant="secondary" size="sm" onClick={() => setFormTarget({ mode: "edit", commission })} disabled={busy}>
+                              Edit terms
+                            </Button>
+                            {commission.status === "PROPOSED" ? (
+                              <Button variant="primary" size="sm" onClick={() => void handleAgree(commission)} disabled={busy}>
+                                Agree terms
+                              </Button>
+                            ) : (
+                              <Button variant="primary" size="sm" onClick={() => setPayTarget(commission)} disabled={busy}>
+                                Record payment
+                              </Button>
+                            )}
+                            <Button variant="danger" size="sm" onClick={() => void handleCancel(commission)} disabled={busy}>
+                              Cancel commission
+                            </Button>
+                          </>
+                        ) : undefined
+                      }
+                    />
+                  </li>
+                );
+              })}
+            </ul>
           )}
+        </>
+      ) : null}
 
-          {isFormOpen && createPortal(
-            <div
-              className="deal-commission-form-backdrop"
-              role="presentation"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget && !saving) {
-                  setIsFormOpen(false);
-                  setFormError("");
-                }
-              }}
-            >
-              <section
-                className="deal-commission-form-modal"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="deal-commission-form-title"
-              >
-                <header className="deal-commission-form-header">
-                  <div>
-                    <span className="deal-commissions-eyebrow">
-                      COMMISSION TERMS
-                    </span>
-                    <h2 id="deal-commission-form-title">
-                      {editingId ? "Edit commission" : "New commission"}
-                    </h2>
-                  </div>
-                  <button
-                    type="button"
-                    className="deal-commission-form-close"
-                    aria-label="Close commission form"
-                    disabled={saving}
-                    onClick={() => {
-                      setIsFormOpen(false);
-                      setFormError("");
-                    }}
-                  >
-                    ×
-                  </button>
-                </header>
+      {formTarget ? (
+        <CommissionFormDialog
+          target={formTarget}
+          dealValue={dealValue}
+          currency={currency}
+          busy={busy}
+          serverError={formError}
+          onSubmit={(values) => void handleSave(values, formTarget)}
+          onClose={() => {
+            if (busy) return;
+            setFormTarget(null);
+            setFormError("");
+          }}
+        />
+      ) : null}
 
-                <form
-                  className="deal-commission-form"
-                  onSubmit={handleSave}
-                >
-                  <div className="deal-commission-form-body">
-                    {formError && (
-                      <div
-                        className="deal-commissions-alert error"
-                        role="alert"
-                      >
-                        {formError}
-                      </div>
-                    )}
+      {payTarget ? (
+        <RecordCommissionPaymentDialog
+          commission={payTarget}
+          busy={busy}
+          serverError={payError}
+          onConfirm={(reference) => void handleRecordPayment(reference)}
+          onClose={() => {
+            if (busy) return;
+            setPayTarget(null);
+            setPayError("");
+          }}
+        />
+      ) : null}
 
-                    {editingId && (
-                      <p className="deal-commission-edit-notice">
-                        Editing agreed terms returns the commission to
-                        Proposed status.
-                      </p>
-                    )}
+      {confirmDialog}
+    </Dialog>
+  );
+}
 
-                    <div className="deal-commission-form-grid">
-                      <label className="full">
-                        <span>Commission type *</span>
-                        <select
-                          value={form.commissionType}
-                          onChange={(event) =>
-                            updateForm(
-                              "commissionType",
-                              event.target.value as DealCommissionType,
-                            )
-                          }
-                          disabled={saving}
-                        >
-                          <option value="PERCENTAGE">
-                            Percentage of deal value
-                          </option>
-                          <option value="FIXED">Fixed amount</option>
-                        </select>
-                      </label>
+interface CommissionFormDialogProps {
+  target: FormTarget;
+  dealValue: number | string | null;
+  currency: string;
+  busy: boolean;
+  serverError: string;
+  onSubmit: (values: CommissionFormValues) => void;
+  onClose: () => void;
+}
 
-                      <label>
-                        <span>
-                          {form.commissionType === "PERCENTAGE"
-                            ? "Commission rate (%) *"
-                            : "Commission amount *"}
-                        </span>
-                        <input
-                          type="number"
-                          required
-                          min="0.01"
-                          max={
-                            form.commissionType === "PERCENTAGE"
-                              ? "100"
-                              : undefined
-                          }
-                          step={
-                            form.commissionType === "PERCENTAGE"
-                              ? "0.0001"
-                              : "0.01"
-                          }
-                          value={form.amount}
-                          onChange={(event) =>
-                            updateForm("amount", event.target.value)
-                          }
-                          placeholder={
-                            form.commissionType === "PERCENTAGE"
-                              ? "e.g. 2"
-                              : "e.g. 50000"
-                          }
-                          disabled={saving}
-                        />
-                      </label>
+function CommissionFormDialog({ target, dealValue, currency, busy, serverError, onSubmit, onClose }: CommissionFormDialogProps) {
+  const [initial] = useState<CommissionFormValues>(() =>
+    target.mode === "edit" ? commissionToForm(target.commission) : emptyCommissionForm(currency),
+  );
+  const [values, setValues] = useState<CommissionFormValues>(initial);
+  const [errors, setErrors] = useState<CommissionFormErrors>({});
+  const dirty = !isSameCommissionForm(values, initial);
+  const editing = target.mode === "edit";
+  const isPercentage = values.commissionType === "PERCENTAGE";
 
-                      <label>
-                        <span>Currency *</span>
-                        <select
-                          value={form.currency}
-                          onChange={(event) =>
-                            updateForm("currency", event.target.value)
-                          }
-                          disabled={saving}
-                        >
-                          <option value="INR">INR — Indian Rupee</option>
-                          <option value="USD">USD — US Dollar</option>
-                          <option value="AED">AED — UAE Dirham</option>
-                          <option value="GBP">GBP — Pound Sterling</option>
-                        </select>
-                      </label>
+  function update<K extends keyof CommissionFormValues>(key: K, value: CommissionFormValues[K]) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
 
-                      {form.commissionType === "PERCENTAGE" && (
-                        <div className="deal-commission-preview full">
-                          <span>Estimated commission</span>
-                          <strong>
-                            {dealValue === null ||
-                            dealValue === "" ||
-                            !Number.isFinite(Number(dealValue))
-                              ? "Deal value unavailable"
-                              : formatAmount(
-                                  (Number(dealValue) * Number(form.amount || 0)) /
-                                    100,
-                                  form.currency,
-                                )}
-                          </strong>
-                          <p>
-                            This is an estimate. The backend calculation
-                            based on the deal's expected value is authoritative.
-                          </p>
-                        </div>
-                      )}
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const found = validateCommissionForm(values);
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+    onSubmit(values);
+  }
 
-                      <label className="full">
-                        <span>Terms and conditions (optional)</span>
-                        <textarea
-                          rows={4}
-                          maxLength={10000}
-                          value={form.terms}
-                          onChange={(event) =>
-                            updateForm("terms", event.target.value)
-                          }
-                          placeholder="Payment conditions, split details, or other agreed terms"
-                          disabled={saving}
-                        />
-                      </label>
-                    </div>
-                  </div>
+  const currencyChoices = currencyOptions(values.currency).map((code) => ({ value: code, label: code }));
+  const typeChoices: { value: DealCommissionType; label: string }[] = [
+    { value: "PERCENTAGE", label: "Percentage of deal value" },
+    { value: "FIXED", label: "Fixed amount" },
+  ];
 
-                  <footer className="deal-commission-form-actions">
-                    <button
-                      type="button"
-                      className="deal-commissions-secondary"
-                      onClick={() => {
-                        setIsFormOpen(false);
-                        setFormError("");
-                      }}
-                      disabled={saving}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="submit"
-                      className="deal-commissions-primary"
-                      disabled={saving}
-                    >
-                      {saving
-                        ? "Saving…"
-                        : editingId
-                          ? "Save changes"
-                          : "Create commission"}
-                    </button>
-                  </footer>
-                </form>
-              </section>
-            </div>,
-            document.body,
-          )}
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={editing ? "Edit commission" : "New commission"}
+      eyebrow="Commission terms"
+      closeLabel="Close commission form"
+      size="md"
+      busy={busy}
+      dirty={dirty}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Back
+          </Button>
+          <Button type="submit" form="deal-commission-form" variant="primary" loading={busy} disabled={busy}>
+            {editing ? "Save changes" : "Create commission"}
+          </Button>
+        </>
+      }
+    >
+      <form id="deal-commission-form" className="df-nested-form" onSubmit={handleSubmit} noValidate>
+        {editing && target.commission.status === "AGREED" ? (
+          <p className="df-sales-notice" role="note">
+            Editing agreed terms returns the commission to Proposed. It must be agreed again.
+          </p>
+        ) : null}
+        {serverError ? (
+          <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+            {serverError}
+          </p>
+        ) : null}
+
+        <SelectField
+          label="Commission basis"
+          required
+          value={values.commissionType}
+          options={typeChoices}
+          onChange={(event) => update("commissionType", event.target.value as DealCommissionType)}
+          disabled={busy}
+        />
+        <TextField
+          label={isPercentage ? "Commission rate (%)" : "Commission amount"}
+          required
+          inputMode="decimal"
+          value={values.amount}
+          onChange={(event) => update("amount", event.target.value)}
+          placeholder={isPercentage ? "e.g. 2" : "e.g. 50000"}
+          helper={
+            isPercentage
+              ? dealValue === null || dealValue === ""
+                ? "The deal has no expected value yet, so the amount cannot be calculated until it does."
+                : `Calculated by the server from the deal's expected value of ${formatMoney(dealValue, currency)} when saved.`
+              : "Up to two decimal places."
+          }
+          disabled={busy}
+          error={errors.amount}
+        />
+        <SelectField
+          label="Currency"
+          required
+          value={values.currency}
+          options={currencyChoices}
+          onChange={(event) => update("currency", event.target.value)}
+          disabled={busy}
+          error={errors.currency}
+        />
+        <TextareaField
+          label="Terms and conditions"
+          rows={4}
+          maxLength={10000}
+          value={values.terms}
+          onChange={(event) => update("terms", event.target.value)}
+          placeholder="Payment conditions, split details or other agreed terms"
+          disabled={busy}
+          error={errors.terms}
+        />
+      </form>
+    </Dialog>
+  );
+}
+
+interface RecordCommissionPaymentDialogProps {
+  commission: DealCommission;
+  busy: boolean;
+  serverError: string;
+  onConfirm: (reference: string | null) => void;
+  onClose: () => void;
+}
+
+function RecordCommissionPaymentDialog({ commission, busy, serverError, onConfirm, onClose }: RecordCommissionPaymentDialogProps) {
+  const [reference, setReference] = useState("");
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Record commission payment"
+      eyebrow={commissionDescription(commission)}
+      closeLabel="Close record payment"
+      size="sm"
+      busy={busy}
+      dirty={reference.trim().length > 0}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} disabled={busy} onClick={() => onConfirm(reference.trim() || null)}>
+            Record payment
+          </Button>
+        </>
+      }
+    >
+      <dl className="df-nested-card-meta">
+        <div>
+          <dt>Commission</dt>
+          <dd>{formatMoney(commission.calculated_amount, commission.currency)}</dd>
         </div>
-
-        <footer className="deal-commissions-footer">
-          <button
-            type="button"
-            className="deal-commissions-secondary"
-            onClick={onClose}
-            disabled={saving}
-          >
-            Close
-          </button>
-        </footer>
-      </section>
-    </div>
-    {confirmDialog}
-    </>,
-    document.body,
+      </dl>
+      <p className="df-sales-muted">Confirm that the commission has actually been paid. A paid commission cannot be edited or cancelled.</p>
+      <TextField
+        label="Payment reference (optional)"
+        maxLength={200}
+        value={reference}
+        onChange={(event) => setReference(event.target.value)}
+        helper="Transaction ID or receipt number."
+        disabled={busy}
+      />
+      {serverError ? (
+        <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+          {serverError}
+        </p>
+      ) : null}
+    </Dialog>
   );
 }

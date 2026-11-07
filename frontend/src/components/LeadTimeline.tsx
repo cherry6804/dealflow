@@ -1,12 +1,12 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 import { ApiError } from "../lib/api";
 import {
   activityApi,
   type LeadActivity,
   type RecordableActivityType,
 } from "../services/activityApi";
+import { Button, Dialog } from "./ui";
 import SiteVisitHistory from "./SiteVisitHistory";
 import "./LeadTimeline.css";
 
@@ -237,59 +237,24 @@ export default function LeadTimeline({
     };
   }, [leadId]);
 
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={contactName}
+      eyebrow="Lead activity"
+      description="Review interactions, changes, and site visits recorded for this lead."
+      closeLabel="Close lead timeline"
+      size="lg"
+      busy={noteSaving}
+      dirty={noteTitle.trim() !== "" || noteDetails.trim() !== ""}
+      footer={
+        <Button variant="secondary" onClick={onClose} disabled={noteSaving}>
+          Close
+        </Button>
       }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="lead-timeline-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
     >
-      <section
-        className="lead-timeline-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="lead-timeline-title"
-      >
-        <header className="leads-modal-header">
-          <div>
-            <span className="leads-eyebrow">LEAD ACTIVITY</span>
-            <h2 id="lead-timeline-title">{contactName}</h2>
-            <p>
-              Review interactions, changes, and site visits recorded for this
-              lead.
-            </p>
-          </div>
-
-          <button
-            className="leads-modal-close"
-            type="button"
-            onClick={onClose}
-            aria-label="Close lead timeline"
-          >
-            ×
-          </button>
-        </header>
-
         <div className="lead-timeline-body leads-form-body">
           <form
             className="lead-timeline-note"
@@ -448,19 +413,6 @@ export default function LeadTimeline({
           </div>
         </div>
 
-        <footer className="leads-form-actions lead-timeline-footer">
-          <p>Activity and site-visit history</p>
-
-          <button
-            className="leads-secondary-button"
-            type="button"
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </footer>
-      </section>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }

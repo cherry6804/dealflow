@@ -1929,7 +1929,9 @@ async function handleStageTransition(deal: Deal) {
       )} · ${propertyAddress(
         propertyById.get(paymentMilestoneDeal.property_id),
       )}`}
+      currency={paymentMilestoneDeal.currency || "INR"}
       onClose={() => setPaymentMilestoneDeal(null)}
+      onChanged={() => void loadDeals()}
     />
   )}
 
@@ -1944,6 +1946,7 @@ async function handleStageTransition(deal: Deal) {
       dealValue={commissionDeal.expected_value}
       currency={commissionDeal.currency || "INR"}
       onClose={() => setCommissionDeal(null)}
+      onChanged={() => void loadDeals()}
     />
   )}
 

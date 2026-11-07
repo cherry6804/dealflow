@@ -402,9 +402,24 @@ export default function DealRecordDialog({ deal, lookups, onClose, onChanged }: 
         }
       />
 
-      {milestonesOpen ? <PaymentMilestonesPanel dealId={deal.id} dealTitle={title} onClose={() => setMilestonesOpen(false)} /> : null}
+      {milestonesOpen ? (
+        <PaymentMilestonesPanel
+          dealId={deal.id}
+          dealTitle={title}
+          currency={deal.currency || "INR"}
+          onClose={() => setMilestonesOpen(false)}
+          onChanged={onChanged}
+        />
+      ) : null}
       {commissionsOpen ? (
-        <DealCommissionsPanel dealId={deal.id} dealTitle={title} dealValue={deal.expected_value} currency={deal.currency || "INR"} onClose={() => setCommissionsOpen(false)} />
+        <DealCommissionsPanel
+          dealId={deal.id}
+          dealTitle={title}
+          dealValue={deal.expected_value}
+          currency={deal.currency || "INR"}
+          onClose={() => setCommissionsOpen(false)}
+          onChanged={onChanged}
+        />
       ) : null}
     </>
   );

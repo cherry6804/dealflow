@@ -2,6 +2,7 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -49,6 +50,33 @@ export interface DialogProps {
  * the backdrop, so text selection that ends outside the dialog never closes it. Clicks inside the dialog, and inside portals
  * opened from it (menus, popovers, date pickers), never reach that path.
  */
+/*
+ * Document scroll lock shared by every open dialog. Dialogs nest, so the lock is reference-counted: the page stops scrolling when
+ * the first dialog opens and resumes only when the last one closes. Each release is idempotent.
+ */
+let scrollLockCount = 0;
+let savedDocumentOverflow = "";
+
+function lockDocumentScroll(): () => void {
+  if (scrollLockCount === 0) {
+    savedDocumentOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+  }
+  scrollLockCount += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    scrollLockCount -= 1;
+    if (scrollLockCount === 0) document.documentElement.style.overflow = savedDocumentOverflow;
+  };
+}
+
+function closeNativeDialog(dialog: HTMLDialogElement) {
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}
+
 export function Dialog({
   open,
   onClose,
@@ -66,6 +94,9 @@ export function Dialog({
   dirty = false,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
+  // Keeps the last mounted node so the unmount cleanup can still reach it after React detaches the ref.
+  const lastNode = useRef<HTMLDialogElement | null>(null);
+  const releaseScroll = useRef<(() => void) | null>(null);
   const confirmRef = useRef<HTMLDialogElement | null>(null);
   const opener = useRef<Element | null>(null);
   const pressStartedOnBackdrop = useRef(false);
@@ -73,6 +104,11 @@ export function Dialog({
   const titleId = useId();
   const descriptionId = useId();
   const confirmTitleId = useId();
+
+  const setNode = useCallback((node: HTMLDialogElement | null) => {
+    ref.current = node;
+    if (node) lastNode.current = node;
+  }, []);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -84,13 +120,28 @@ export function Dialog({
         dialog.setAttribute("open", "");
         dialog.querySelector<HTMLElement>("button, [href], input, select, textarea")?.focus();
       }
+      releaseScroll.current = lockDocumentScroll();
     } else if (!open && dialog.open) {
-      if (typeof dialog.close === "function") dialog.close();
-      else dialog.removeAttribute("open");
+      closeNativeDialog(dialog);
       setConfirmOpen(false);
+      releaseScroll.current?.();
+      releaseScroll.current = null;
       if (opener.current instanceof HTMLElement) opener.current.focus();
     }
   }, [open]);
+
+  // A parent that unmounts an open dialog (for example when a nested panel is removed) must not leave the native dialog in the
+  // top layer, the page locked, or focus stranded inside a removed node. Focus goes back to the control that opened it.
+  useEffect(() => {
+    return () => {
+      const node = lastNode.current;
+      const wasOpen = node?.open ?? false;
+      if (node && wasOpen) closeNativeDialog(node);
+      releaseScroll.current?.();
+      releaseScroll.current = null;
+      if (wasOpen && opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus();
+    };
+  }, []);
 
   // The discard confirmation is mounted only while it is needed, so closed dialogs never add hidden buttons to the page.
   useEffect(() => {
@@ -121,7 +172,7 @@ export function Dialog({
 
   return (
     <dialog
-      ref={ref}
+      ref={setNode}
       className={`df-dialog df-dialog--${placement}${size === "lg" ? " df-dialog--lg" : ""}${size === "sm" ? " df-dialog--sm" : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
