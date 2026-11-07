@@ -331,7 +331,7 @@ Not yet verified: widths 320, 390–430, 768, 1024, 1920; browser zoom; light th
 
 **Automation** (`pages/operations/automation`). Rules workspace: overview counts, what the supported rule does in plain language, planned capabilities listed as not available, rules grid with trigger, action, last run, owner and status; detail dialog with recent runs and activate or disable (confirmed). Rule editor is a shared dialog with the server's limits. Activity: every recorded run with its trigger, record, action outcomes and failure reason; the page states that runs cannot be retried.
 
-**Shared fixes.** The API client shows the backend's error message instead of a bare status code. Dialog footers that have Cancel or Back now go through the unsaved-change guard (`footer` can be a function receiving the guarded close); this was bypassed in 13 dialogs. Automation sections are linked from the rules, activity, workflows and approvals pages.
+**Shared fixes.** The API client shows the backend's error message instead of a bare status code. Dialog footers that have Cancel or Back now go through the unsaved-change guard (`footer` can be a function receiving the guarded close); this was bypassed in 11 dialog files (15 footers). Automation sections are linked from the rules, activity, workflows and approvals pages.
 
 **Verification.** Typecheck, lint and 433 unit tests pass (new: 6 document-rule, 2 document-dialog, 10 automation-model, 25 import-rule and wizard, 2 footer-guard tests). Browser: all four pages checked for horizontal overflow at 360, 768 and 1440 px (none). Document upload, import upload and rule creation were attempted on the dev server and refused: see blockers.
 
