@@ -5,13 +5,14 @@ import { AppProvider } from "./app/providers/AppProvider";
 import { ThemeProvider } from "./theme/ThemeProvider";
 
 export default function App() {
+  // ThemeProvider sits inside AppProvider so the theme can follow the signed-in user.
   return (
-    <ThemeProvider>
-      <BrowserRouter>
-        <AppProvider>
+    <BrowserRouter>
+      <AppProvider>
+        <ThemeProvider>
           <AppRouter />
-        </AppProvider>
-      </BrowserRouter>
-    </ThemeProvider>
+        </ThemeProvider>
+      </AppProvider>
+    </BrowserRouter>
   );
 }
