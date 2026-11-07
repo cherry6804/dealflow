@@ -608,10 +608,7 @@ export default function ContactsPage() {
   return (
     <main className="contacts-page contacts-workspace">
       <header className="contacts-page-header">
-        <div className="contacts-heading-copy">
-          <h1>Contacts</h1>
-          <p>Keep your relationships organized and contact details ready when you need them.</p>
-        </div>
+        <h1 className="df-visually-hidden">Contacts</h1>
       </header>
 
       {success && (

@@ -251,12 +251,7 @@ export default function ContactsWorkspacePage() {
 
   return (
     <div className="df-sales-page">
-      <header className="df-sales-page-header">
-        <div>
-          <h1 className="df-sales-title">Contacts</h1>
-          <p className="df-sales-description">People you work with, with their contact details.</p>
-        </div>
-      </header>
+      <h1 className="df-visually-hidden">Contacts</h1>
 
       {notice ? (
         <p className="df-sales-notice" role="status">

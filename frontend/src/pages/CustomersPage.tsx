@@ -596,12 +596,7 @@ export default function CustomersPage() {
   return (
     <section className="customers-page">
       <header className="customers-header">
-        <div>
-          <h1>Customers</h1>
-          <p className="customers-subtitle">
-            Manage customer profiles linked to your existing contacts.
-          </p>
-        </div>
+        <h1 className="df-visually-hidden">Customers</h1>
       </header>
 
       {error && (
