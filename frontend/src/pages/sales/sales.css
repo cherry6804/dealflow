@@ -189,3 +189,10 @@
   font-weight: 600;
   color: var(--df-danger);
 }
+
+.df-sales-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
