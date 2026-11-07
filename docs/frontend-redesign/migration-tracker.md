@@ -285,3 +285,38 @@ All eight native `window.confirm` calls now use `useConfirmation` (components/ui
 Escape handling in DealCommissionsPanel and PaymentMilestonesPanel now ignores a keydown that a nested confirmation already handled (`defaultPrevented`), so Escape cancels only the confirmation.
 
 Verification: typecheck, lint and the full unit suite (366 tests) pass. Browser checks were not run for these eight sites: the legacy CustomersPage and ReferralsPage only render with their flags off, and the commissions and milestones panels need a deal with records. The Customers workspace (flag on) was checked in an earlier pass.
+
+## Nested dialogs and deal payment/commission workflows (DFR-UI-NESTED-001)
+
+**Root cause.** The payment milestones and commissions panels were portalled to `document.body`. The deal record is a native `<dialog>` shown with showModal, which sits in the top layer, so the panels rendered beneath it: covered and inert. The same defect affected `LeadTimeline` (opened from the lead record).
+
+**Fix (shared primitive).** `Dialog` now (a) reference-counts a document scroll lock, so page scrolling stays locked until the last open dialog closes; and (b) when an open dialog unmounts, closes itself, releases the lock and returns focus to the control that opened it. Nested dialogs use the native top layer, so a child always stacks above its parent. Escape is handled on keydown and skipped when a child has already handled it, so Escape closes only the topmost dialog. Backdrop clicks are scoped to the dialog that owns the backdrop.
+
+**Payment milestones.** Lists milestones with amount, due date, paid date, reference and status (Pending, Overdue from the API's `is_overdue` flag, Paid, Cancelled). The API has no partially-paid state, so none is shown. Create and edit use a nested form dialog, with the dirty prompt on close. Record payment is its own nested step with an optional reference. Cancel asks for confirmation. Every change reloads the list and tells the parent deal.
+
+**Commissions.** Lists commissions by type (percentage or fixed), rate or basis, currency, status, agreed and paid dates, and reference. Amounts come from the API's `calculated_amount`. The client-side "estimated commission" figure was removed, and the form now says the server calculates the amount. Totals are grouped by currency, and a commission with no calculated amount is reported, not counted as zero. Agree and cancel confirm first. Record payment is a nested step. Every change refreshes the deal.
+
+**Not supported by the backend, so not built.** Assigned beneficiary or recipient on a commission (the model has no such field); partially-paid milestone states; any commission or milestone field outside the schemas in `backend/app/*/schemas.py`.
+
+**Duplicate submissions.** Each mutating handler is guarded by a ref, so a second click in the same frame cannot start a second request. Buttons are disabled and show progress while a request runs, and the dialog cannot be dismissed mid-request.
+
+**Nested overlay audit.**
+
+| Surface | Overlay | Result |
+|---|---|---|
+| Deal record | Payment milestones, commissions (and their forms, record-payment and confirm steps) | Fixed: nested `Dialog` |
+| Lead record | Lead activity timeline | Fixed: nested `Dialog`; own Escape and scroll handling removed |
+| Lead record | Follow-ups | Already a nested `Dialog` |
+| Site visits, referrals, customers, properties, requirements | Record dialogs and forms | Already `Dialog` / `RecordDialog`; no portal |
+| Grids (all pages) | Column and filter popovers (`AnchoredPopover`) | Not nested in dialogs; a grid is never placed inside a dialog |
+| Header | Notifications (`NotificationBell`) | Top-level; not nested |
+| Legacy pages behind flags (Deals, Leads, Contacts, Customers, Properties, Requirements, Referrals, Site visits, Automation rules) | Hand-built portal overlays | Not changed. They render only with their flags off and never inside a dialog. Migrate with their pages |
+| Documents (legacy) | Not audited in this pass | Phase 4 |
+
+**Verification.** Typecheck, lint (exit 0) and production build pass. 396 unit tests pass, including new tests for nested dismissal, focus return, the scroll lock, validation, currency totals and both panels' workflows against a mocked API.
+
+Browser check (dev database, 746px pane and 1440px desktop, 360px phone emulation). A QA-named deal was used. Created a QA milestone and a QA commission, and edited the milestone name. Verified: nested form stacks above the milestones dialog; the unsaved-change prompt appears on top of the form; Escape closes only the innermost step with focus returned; backdrop click closes only the commissions dialog and the deal stays open; the cancel confirmation dismisses without cancelling; the server-calculated commission (2% of ₹25,00,000 = ₹50,000.00) displays. Phone layout at 360px is full-screen with two-column summary tiles.
+
+Not done in the browser: recording a payment or agreeing a commission on the dev data. Both change financial status, and a paid or agreed record cannot be reverted through the API. They are covered by the unit tests. The QA milestone and commission remain on the dev deal as Pending and Proposed.
+
+Not yet verified: widths 320, 390–430, 768, 1024, 1920; browser zoom; light theme; keyboard-only pass on each nested step.

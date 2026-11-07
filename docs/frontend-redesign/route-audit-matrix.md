@@ -35,7 +35,7 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 
 | Route | Implementation | Flag | Grid | Record UI | Status |
 |---|---|---|---|---|---|
-| /deals | `pages/deals/DealsWorkspacePage.tsx` + `DealRecordDialog.tsx`, `DealCreateDialog.tsx` | VITE_DEALSFLO_DEALS | EnterpriseDataGrid | RecordDialog with stage, closing, negotiation sections; PaymentMilestonesPanel and DealCommissionsPanel open as their own overlays | Migrated. Those two panels now use ConfirmationDialog (was `window.confirm`); their own overlay styling remains |
+| /deals | `pages/deals/DealsWorkspacePage.tsx` + `DealRecordDialog.tsx`, `DealCreateDialog.tsx` | VITE_DEALSFLO_DEALS | EnterpriseDataGrid | RecordDialog with stage, closing, negotiation sections; PaymentMilestonesPanel and DealCommissionsPanel open as their own overlays | Migrated. Payment milestones and commissions are nested `Dialog`s (DFR-UI-NESTED-001); they no longer portal under the record |
 | /commissions | `ModulePlaceholder` in `AppRouter.tsx` (title and description only, no data) | none | — | — | **Placeholder**: shows a description but no records. Commission records exist only inside deals (DealCommissionsPanel) |
 
 ## Partners
