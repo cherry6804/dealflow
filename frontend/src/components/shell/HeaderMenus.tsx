@@ -2,7 +2,6 @@ import { Check, ChevronDown, Building2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 
-import { Menu } from "../ui";
 import { useDismissOnOutside } from "../ui/useDismissOnOutside";
 
 /* ---------- Organization switcher ---------- */
@@ -170,24 +169,94 @@ export interface ProfileMenuProps {
   onSignOut: () => void;
 }
 
-/** Account menu. The signed-in identity is shown in the trigger and the header; the menu holds only actions. */
+/**
+ * Account control. The header shows only the avatar. Activating it opens a dialog with the account information and the
+ * supported account actions. Escape and an outside press close it and return focus to the avatar; focus moves into the
+ * dialog when it opens.
+ */
 export function ProfileMenu({ labels, name, email, initials, signingOut, onOpenSettings, onSignOut }: ProfileMenuProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const panelId = useId();
+  useDismissOnOutside(hostRef, open, () => setOpen(false));
+
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
   return (
-    <div className="df-shell-profile">
-      <Menu
-        triggerLabel={labels.trigger}
-        triggerClassName="df-shell-avatar-trigger"
-        triggerContent={<span className="df-shell-avatar" aria-hidden="true">{initials}</span>}
-        align="end"
-        items={[
-          { id: "settings", label: labels.settings, onSelect: onOpenSettings, disabled: signingOut },
-          { id: "sign-out", label: signingOut ? labels.signingOut : labels.signOut, onSelect: onSignOut, disabled: signingOut },
-        ]}
-      />
-      <span className="df-shell-profile-text">
-        <span className="df-shell-profile-name">{name}</span>
-        <span className="df-shell-profile-email">{email}</span>
-      </span>
+    <div ref={hostRef} className="df-shell-popover-host df-shell-profile">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="df-shell-avatar-trigger"
+        aria-label={labels.trigger}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="df-shell-avatar" aria-hidden="true">
+          {initials}
+        </span>
+      </button>
+
+      {open ? (
+        <div
+          ref={panelRef}
+          id={panelId}
+          role="dialog"
+          aria-label={labels.trigger}
+          className="df-shell-panel df-shell-panel--end df-shell-profile-panel"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            }
+          }}
+        >
+          <div className="df-shell-account">
+            <span className="df-shell-avatar" aria-hidden="true">
+              {initials}
+            </span>
+            <div className="df-shell-account-text">
+              <p className="df-shell-account-name">{name}</p>
+              <p className="df-shell-account-email">{email}</p>
+            </div>
+          </div>
+          <div className="df-shell-account-actions">
+            <button
+              type="button"
+              className="df-shell-menu-action"
+              disabled={signingOut}
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+            >
+              {labels.settings}
+            </button>
+            <button
+              type="button"
+              className="df-shell-menu-action df-shell-menu-action--danger"
+              disabled={signingOut}
+              onClick={() => {
+                setOpen(false);
+                onSignOut();
+              }}
+            >
+              {signingOut ? labels.signingOut : labels.signOut}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

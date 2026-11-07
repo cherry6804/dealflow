@@ -1,16 +1,16 @@
 import { Menu as MenuIcon, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import "./shell.css";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SidebarSections } from "../../layouts/workspace/sidebarSections";
 import type { WorkspaceModule } from "../../layouts/workspace/workspaceSpaces";
 import { Dialog } from "../ui";
 import { CommandPalette, type CommandPaletteLabels } from "./CommandPalette";
-import { Breadcrumbs, SidebarNav } from "./Navigation";
+import { SidebarNav } from "./Navigation";
 import { NotificationsMenu, type NotificationEntry, type NotificationsMenuLabels } from "./NotificationsMenu";
 import { OrganizationSwitcher, ProfileMenu, type OrganizationSwitcherLabels, type OrganizationOption, type ProfileMenuLabels } from "./HeaderMenus";
-import { buildBreadcrumbs, filterVisibleModules, type Breadcrumb, type CanAccess, type ShellCommand } from "./shellModel";
+import { filterVisibleModules, type CanAccess, type ShellCommand } from "./shellModel";
 import { useViewport } from "./useViewport";
 
 export interface AppShellLabels {
@@ -53,8 +53,6 @@ export interface AppShellProps {
   renderSidebar?: (railMode: boolean) => ReactNode;
   /** Extra header controls, placed before notifications. */
   headerActions?: ReactNode;
-  /** Replaces the computed breadcrumb trail. */
-  breadcrumbOverride?: Breadcrumb[];
   /** Content shown above the page, below the breadcrumbs (for example a space's secondary navigation). */
   contentHeader?: ReactNode;
   canAccess: CanAccess;
@@ -81,7 +79,6 @@ export interface AppShellProps {
   };
   /** Sidebar preferences. The caller decides where they are stored (device or account). */
   sidebarCollapsed: boolean;
-  onSidebarCollapsedChange: (collapsed: boolean) => void;
   /** Sidebar removed from the screen (distinct from collapsed). Restored from the header. */
   sidebarHidden?: boolean;
   onSidebarHiddenChange?: (hidden: boolean) => void;
@@ -172,11 +169,9 @@ function SidebarResizeHandle({
 export function AppShell({
   labels,
   pathname,
-  modules,
   sections,
   renderSidebar,
   headerActions,
-  breadcrumbOverride,
   contentHeader,
   canAccess,
   permissionByModule,
@@ -193,7 +188,6 @@ export function AppShell({
   onRetryOrganizations,
   notifications,
   sidebarCollapsed,
-  onSidebarCollapsedChange,
   sidebarHidden = false,
   onSidebarHiddenChange,
   sidebarWidth = 208,
@@ -203,6 +197,12 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const viewport = useViewport();
+  const mainRef = useRef<HTMLElement | null>(null);
+  // A new page starts at the top, so the reader does not inherit the previous page's scroll position.
+  useEffect(() => {
+    const main = mainRef.current;
+    if (main) main.scrollTop = 0;
+  }, [pathname]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The drawer belongs to the route it was opened on and to the mobile band, so navigating or resizing closes it.
   const [drawerPath, setDrawerPath] = useState<string | null>(null);
@@ -226,11 +226,6 @@ export function AppShell({
     [commands, canAccess],
   );
 
-  const computedBreadcrumbs = useMemo(
-    () => buildBreadcrumbs(pathname, modules, labels.homeBreadcrumb, basePath),
-    [pathname, modules, labels.homeBreadcrumb, basePath],
-  );
-  const breadcrumbs = breadcrumbOverride ?? computedBreadcrumbs;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -309,16 +304,13 @@ export function AppShell({
             <button
               type="button"
               className="df-shell-icon-button"
-              aria-expanded={!sidebarCollapsed}
+              aria-expanded={true}
               aria-controls="df-shell-sidebar"
-              aria-label={sidebarCollapsed ? labels.expandSidebar : labels.collapseSidebar}
-              onClick={() => onSidebarCollapsedChange(!sidebarCollapsed)}
+              aria-label={labels.collapseSidebar}
+              title={labels.collapseSidebar}
+              onClick={() => onSidebarHiddenChange?.(true)}
             >
-              {sidebarCollapsed ? (
-                <PanelLeftOpen size={18} aria-hidden="true" />
-              ) : (
-                <PanelLeftClose size={18} aria-hidden="true" />
-              )}
+              <PanelLeftClose size={18} aria-hidden="true" />
             </button>
           )}
 
@@ -401,11 +393,8 @@ export function AppShell({
       ) : null}
 
       <div className="df-shell-content">
-        <div className="df-shell-page-bar">
-          <Breadcrumbs label={labels.breadcrumbs} items={breadcrumbs} />
-        </div>
         {contentHeader}
-        <main id="df-shell-main" tabIndex={-1} className="df-shell-main">
+        <main ref={mainRef} id="df-shell-main" tabIndex={-1} className="df-shell-main">
           {children}
         </main>
       </div>

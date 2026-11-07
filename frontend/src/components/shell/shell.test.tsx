@@ -160,17 +160,18 @@ describe("shell model", () => {
 });
 
 describe("AppShell", () => {
-  it("marks the active route with aria-current and shows breadcrumbs", () => {
+  it("marks the active route with aria-current", () => {
     renderShell();
     const active = screen.getByRole("link", { name: "Deals" });
     expect(active.getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("navigation", { name: "Breadcrumbs" }).textContent).toContain("Home");
+    expect(screen.queryByRole("navigation", { name: "Breadcrumbs" })).toBeNull();
   });
 
-  it("collapses the sidebar through its toggle and reports the new state", () => {
-    const props = renderShell();
+  it("hides the sidebar with the header toggle in one click", () => {
+    const onSidebarHiddenChange = vi.fn();
+    renderShell({ onSidebarHiddenChange });
     fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
-    expect(props.onSidebarCollapsedChange).toHaveBeenCalledWith(true);
+    expect(onSidebarHiddenChange).toHaveBeenCalledWith(true);
   });
 
   it("toggles a space disclosure and exposes its expanded state", () => {

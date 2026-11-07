@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { PanelLeftClose, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { AppShell } from "../../components/shell/AppShell";
@@ -14,7 +14,6 @@ import { SettingsMenu } from "./spaces/SettingsMenu";
 import { SpaceFrame } from "./spaces/SpaceFrame";
 import { WorkspaceSidebar } from "./spaces/WorkspaceSidebar";
 import { UNLISTED_ROUTES, listSpaceRoutes } from "./spaces/spaceConfig";
-import { spaceBreadcrumbs } from "./spaces/spaceNavigation";
 import { arrangeSpaces, resetSidebarWidth, setSidebarWidth } from "./spaces/spacePreferences";
 import { useSpacePreferences } from "./spaces/useSpacePreferences";
 import {
@@ -174,21 +173,10 @@ export default function WorkspaceShellBridge() {
               >
                 Customize sidebar
               </Button>
-              <Button
-                variant="tertiary"
-                size="sm"
-                iconOnly={rail}
-                aria-label="Hide sidebar"
-                icon={<PanelLeftClose size={16} strokeWidth={1.8} aria-hidden="true" />}
-                onClick={() => spaces.update({ ...layout, sidebarHidden: true })}
-              >
-                Hide sidebar
-              </Button>
             </div>
           </>
         )}
         headerActions={<SettingsMenu />}
-        breadcrumbOverride={spaceBreadcrumbs(location.pathname, WORKSPACE_SHELL_LABELS.homeBreadcrumb, "/")}
         canAccess={() => true}
         commands={commands}
         user={{
@@ -213,7 +201,6 @@ export default function WorkspaceShellBridge() {
         sidebarWidth={layout.sidebarWidth}
         onSidebarWidthChange={(width) => spaces.update(setSidebarWidth(layout, width))}
         onSidebarWidthReset={() => spaces.update(resetSidebarWidth(layout))}
-        onSidebarCollapsedChange={(collapsed) => spaces.update({ ...layout, collapsed })}
         onToggleSpace={() => undefined}
       >
         <SpaceFrame navigationSuffix="sections">

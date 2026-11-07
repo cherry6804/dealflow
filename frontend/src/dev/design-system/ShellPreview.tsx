@@ -9,7 +9,6 @@ import { SettingsMenu } from "../../layouts/workspace/spaces/SettingsMenu";
 import { SpaceFrame } from "../../layouts/workspace/spaces/SpaceFrame";
 import { WorkspaceSidebar } from "../../layouts/workspace/spaces/WorkspaceSidebar";
 import { listSpaceRoutes, UNLISTED_ROUTES } from "../../layouts/workspace/spaces/spaceConfig";
-import { spaceBreadcrumbs } from "../../layouts/workspace/spaces/spaceNavigation";
 import {
   DEFAULT_SPACE_PREFERENCES,
   arrangeSpaces,
@@ -304,7 +303,6 @@ export default function ShellPreview() {
         </>
       )}
       headerActions={<SettingsMenu />}
-      breadcrumbOverride={spaceBreadcrumbs(route, LABELS.homeBreadcrumb, BASE)}
       canAccess={canAccess}
       permissionByModule={PREVIEW_PERMISSION_BY_MODULE}
       commands={commands}
@@ -322,7 +320,6 @@ export default function ShellPreview() {
       onRetryOrganizations={() => undefined}
       notifications={notifications}
       sidebarCollapsed={layout.collapsed}
-      onSidebarCollapsedChange={(collapsed) => setLayout((current) => setCollapsed(current, collapsed))}
       onToggleSpace={() => undefined}
       contentHeader={undefined}
     >

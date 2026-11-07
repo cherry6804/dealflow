@@ -30,7 +30,9 @@ export function SpaceFrame({
       navigationLabel={`${space.label} ${navigationSuffix}`}
       basePath={basePath}
     >
-      {children}
+      <div key={pathname} className="df-page-enter">
+        {children}
+      </div>
     </SpaceLayout>
   );
 }

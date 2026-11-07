@@ -75,7 +75,7 @@ describe("WorkspaceShellBridge", () => {
     const value = contextValue();
     renderBridge(value);
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(value.signOut).toHaveBeenCalledTimes(1));
   });
 

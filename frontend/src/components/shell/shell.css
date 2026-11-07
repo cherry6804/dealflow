@@ -775,3 +775,104 @@
 .df-shell--hidden .df-shell-sidebar {
   display: none;
 }
+
+/*
+ * Common header: always white with a subtle bottom border, in both application themes. Light values are scoped to the
+ * header, so the rest of the application keeps its theme.
+ */
+.df-shell-header {
+  --df-ink: #172b4d;
+  --df-ink-soft: #44546f;
+  --df-muted: #626f86;
+  --df-subtle: #8993a5;
+  --df-surface: #ffffff;
+  --df-surface-soft: #f4f6f9;
+  --df-surface-hover: #f1f4f9;
+  --df-surface-selected: #e9f2ff;
+  --df-border: #dfe1e6;
+  --df-border-strong: #c9d1de;
+  --df-primary-soft: #e9f2ff;
+  --df-neutral-soft: #eef0f3;
+  color-scheme: light;
+  background: #ffffff;
+  color: #172b4d;
+  border-bottom: 1px solid #dfe1e6;
+}
+
+.df-shell-profile-panel {
+  width: 280px;
+  padding: 12px;
+}
+
+.df-shell-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 4px 12px;
+  border-bottom: 1px solid var(--df-border-soft);
+}
+
+.df-shell-account-text {
+  min-width: 0;
+}
+
+.df-shell-account-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.df-shell-account-email {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-shell-account-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.df-shell-menu-action {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--df-radius-sm);
+  background: transparent;
+  color: var(--df-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+
+.df-shell-menu-action:hover:not(:disabled),
+.df-shell-menu-action:focus-visible {
+  background: var(--df-surface-hover);
+}
+
+.df-shell-menu-action:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: -2px;
+}
+
+.df-shell-menu-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.df-shell-menu-action--danger {
+  color: var(--df-danger);
+}
