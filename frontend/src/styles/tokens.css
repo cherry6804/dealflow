@@ -173,3 +173,15 @@
   --df-tone-accent-line: #8b83ff;
   --df-tone-accent-strong: #5147c7;
 }
+
+/* Shell geometry and motion timing. Theme-neutral; the reduced-motion override lives in theme.css. */
+:root {
+  --df-motion-duration-fast: 120ms;
+  --df-motion-duration-normal: 180ms;
+  --df-motion-duration-slow: 280ms;
+  --df-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --df-shell-header-height: 60px;
+  --df-shell-sidebar-width: 208px;
+  --df-shell-rail-width: 64px;
+  --df-shell-breadcrumb-height: 46px;
+}

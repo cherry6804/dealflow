@@ -143,3 +143,10 @@ Not available as an aggregate. Each requires an API before the dashboard can sho
 - Activity aggregates over time.
 
 Phase 2 is not started. The dashboard should use the summary endpoint plus list totals first, and show the gaps above as explicit "not yet available" states.
+
+## Design system: single token source
+
+Status: established. Module migration is progressive; see `design-system.md`.
+- Tokens: `styles/tokens.css` (light, on `:root`) and `styles/theme.css` (dark). Shell geometry and motion timing now live in `tokens.css`.
+- Contract tests (`styles/designTokens.test.ts`): new components reference only defined tokens; every colour token has a dark value; theme.css defines no undeclared token. The test environment now processes CSS so raw stylesheet imports can be read.
+- Legacy: about 2,650 literal colours remain in legacy stylesheets. They are removed module by module as each module migrates.

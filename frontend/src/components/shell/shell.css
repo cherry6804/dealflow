@@ -5,11 +5,6 @@
  */
 
 .df-shell {
-  --df-shell-header-height: 60px;
-  --df-shell-sidebar-width: 208px;
-  --df-shell-rail-width: 64px;
-  --df-shell-breadcrumb-height: 46px;
-
   display: grid;
   grid-template-columns: var(--df-shell-sidebar-width) minmax(0, 1fr);
   grid-template-rows: var(--df-shell-header-height) minmax(0, 1fr);

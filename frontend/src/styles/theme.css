@@ -114,13 +114,6 @@
   --df-shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
 }
 
-/* Motion. Durations are tokens so one rule controls every transition. Reduced motion removes them. */
-:root {
-  --df-motion-duration-fast: 120ms;
-  --df-motion-duration-normal: 180ms;
-  --df-motion-duration-slow: 280ms;
-  --df-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-}
 
 @media (prefers-reduced-motion: reduce) {
   :root {
