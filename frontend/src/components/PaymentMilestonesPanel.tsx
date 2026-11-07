@@ -353,16 +353,16 @@ function MilestoneFormDialog({ target, currency, busy, serverError, onSubmit, on
       size="md"
       busy={busy}
       dirty={dirty}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={close} disabled={busy}>
             Back
           </Button>
           <Button type="submit" form="payment-milestone-form" variant="primary" loading={busy} disabled={busy}>
             {editing ? "Save changes" : "Create milestone"}
           </Button>
         </>
-      }
+      )}
     >
       <form id="payment-milestone-form" onSubmit={handleSubmit} noValidate>
         {serverError ? (
@@ -449,16 +449,16 @@ function RecordPaymentDialog({ milestone, busy, serverError, onConfirm, onClose 
       size="sm"
       busy={busy}
       dirty={reference.trim().length > 0}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={close} disabled={busy}>
             Cancel
           </Button>
           <Button variant="primary" loading={busy} disabled={busy} onClick={() => onConfirm(reference.trim() || null)}>
             Record payment
           </Button>
         </>
-      }
+      )}
     >
       <dl className="df-nested-card-meta">
         <div>

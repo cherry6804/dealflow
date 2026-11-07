@@ -135,16 +135,16 @@ export default function PropertyCreateDialog({ onClose, onCreated }: PropertyCre
       closeLabel="Close add property"
       busy={saving}
       dirty={dirty && partialId === null}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" form="property-create-form" variant="primary" loading={saving} disabled={partialId !== null}>
             Create property
           </Button>
         </>
-      }
+      )}
       main={
         <form id="property-create-form" className="df-sales-form" onSubmit={submit} noValidate>
           {message ? (

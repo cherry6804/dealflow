@@ -88,16 +88,16 @@ export function ScheduleVisitDialog({ properties, leads, customers, leadLabel, o
       description="Choose the property, the person visiting, and the time."
       busy={saving}
       dirty={Boolean(propertyId || leadId || customerId || notes.trim())}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" form="schedule-visit-form" variant="primary" loading={saving}>
             Schedule visit
           </Button>
         </>
-      }
+      )}
     >
       <form id="schedule-visit-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">
@@ -204,16 +204,16 @@ export function AttendanceDialog({ visit, onClose, onSaved }: AttendanceProps) {
       description={visitDescription(visit)}
       busy={saving}
       dirty={outcome !== (visit.outcome ?? "") || feedback !== (visit.feedback ?? "")}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" form="attendance-form" variant="primary" loading={saving}>
             Save attendance
           </Button>
         </>
-      }
+      )}
     >
       <form id="attendance-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">
@@ -301,16 +301,16 @@ export function VisitFollowUpDialog({ visit, onClose, onSaved }: FollowUpProps) 
       description={visitDescription(visit)}
       busy={saving}
       dirty={description.trim() !== "" || title !== "Follow up after site visit"}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" form="follow-up-form" variant="primary" loading={saving} disabled={!visit.lead_id}>
             Create follow-up
           </Button>
         </>
-      }
+      )}
     >
       <form id="follow-up-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">

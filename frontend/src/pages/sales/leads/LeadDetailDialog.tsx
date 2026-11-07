@@ -158,9 +158,9 @@ export default function LeadDetailDialog({
         closeLabel="Close lead"
         busy={saving}
         dirty={nextActionDirty}
-        footer={
+        footer={(close) => (
           <>
-            <Button variant="secondary" onClick={onClose} disabled={saving}>
+            <Button variant="secondary" onClick={close} disabled={saving}>
               Close
             </Button>
             <Button
@@ -173,7 +173,7 @@ export default function LeadDetailDialog({
               Save next action
             </Button>
           </>
-        }
+        )}
         main={
           <div className="df-sales-form">
             <div className="df-sales-form-grid">

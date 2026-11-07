@@ -121,16 +121,16 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
       status={referral ? <Badge tone={referralStatusTone(referral.status)}>{referralStatusLabel(referral.status)}</Badge> : undefined}
       busy={saving}
       dirty={dirty}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             {referral ? "Close" : "Cancel"}
           </Button>
           <Button type="submit" form="referral-form" variant="primary" disabled={referral !== undefined && !dirty} loading={saving}>
             {referral ? "Save changes" : "Create referral"}
           </Button>
         </>
-      }
+      )}
       main={
         <form id="referral-form" className="df-sales-form" onSubmit={submit} noValidate>
           {message ? (

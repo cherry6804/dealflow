@@ -148,3 +148,30 @@ describe("nested dialogs", () => {
     document.documentElement.style.overflow = "";
   });
 });
+
+describe("footer Cancel on a dirty dialog", () => {
+  it("asks before discarding when the footer's Cancel is used, and keeps the form when the user keeps editing", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Draft" closeLabel="Close draft" dirty footer={(close) => <button type="button" onClick={close}>Cancel</button>}>
+        <input aria-label="Draft text" />
+      </Dialog>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText("Discard unsaved changes?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes without a prompt when nothing has changed", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Clean" closeLabel="Close clean" footer={(close) => <button type="button" onClick={close}>Cancel</button>}>
+        <p>Nothing typed</p>
+      </Dialog>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

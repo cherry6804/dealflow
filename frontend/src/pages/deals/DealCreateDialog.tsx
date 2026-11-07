@@ -65,16 +65,16 @@ export default function DealCreateDialog({ lookups, onClose, onCreated }: DealCr
       closeLabel="Close new deal"
       busy={saving}
       dirty={dirty}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
+          <Button variant="secondary" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" form="deal-create-form" variant="primary" loading={saving}>
             Create deal
           </Button>
         </>
-      }
+      )}
       main={
         <form id="deal-create-form" className="df-sales-form" onSubmit={submit} noValidate>
           {message ? (

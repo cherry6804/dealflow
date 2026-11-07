@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { Dialog } from "../ui";
+import { Dialog, type DialogProps } from "../ui";
 import "./record.css";
 
 export interface RecordDialogProps {
@@ -21,7 +21,7 @@ export interface RecordDialogProps {
   /** Contextual sidebar: status, owner, dates and supported actions. Omit for single-column records. */
   aside?: ReactNode;
   /** Fixed footer with the primary and secondary actions. Omit for read-only records. */
-  footer?: ReactNode;
+  footer?: DialogProps["footer"];
   /** True while a request runs; dismissal is blocked until it settles. */
   busy?: boolean;
   /** True when the form has unsaved changes; dismissal asks for confirmation. */

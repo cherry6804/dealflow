@@ -150,16 +150,16 @@ export function DocumentUploadDialog({ recordOptions, onClose, onUploaded }: Doc
       size="md"
       busy={busy}
       dirty={dirty && !busy}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={close} disabled={busy}>
             Cancel
           </Button>
           <Button type="submit" form="document-upload-form" variant="primary" loading={busy} disabled={busy}>
             Upload document
           </Button>
         </>
-      }
+      )}
     >
       <form id="document-upload-form" className="df-nested-form" onSubmit={(event) => void handleSubmit(event)} noValidate>
         {submitError ? (

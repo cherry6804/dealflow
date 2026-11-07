@@ -85,10 +85,10 @@ const LeadIntakePage = lazy(() => import("../../pages/LeadIntakePage"));
 const WorkflowsPage = lazy(() => import("../../pages/WorkflowsPage"));
 const ApprovalsPage = lazy(() => import("../../pages/ApprovalsPage"));
 const AutomationRulesPage = lazy(
-  () => import("../../pages/AutomationRulesPage"),
+  () => import("../../pages/operations/automation/AutomationRulesWorkspace"),
 );
 const AutomationHistoryPage = lazy(
-  () => import("../../pages/AutomationExecutionHistoryPage"),
+  () => import("../../pages/operations/automation/AutomationActivityPage"),
 );
 const NotificationPreferencesPage = lazy(
   () => import("../../pages/NotificationPreferencesPage"),

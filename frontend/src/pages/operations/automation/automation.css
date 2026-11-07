@@ -1,0 +1,75 @@
+/*
+ * Automation workspace. Tokens only; light and dark themes apply. Stacks to one column on phones.
+ */
+
+.df-ops-subnav {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--df-border-soft);
+  scrollbar-width: thin;
+}
+
+.df-ops-subnav-link {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  color: var(--df-muted);
+  font-size: var(--df-text-sm);
+  text-decoration: none;
+  transition: color var(--df-transition-fast), border-color var(--df-transition-fast);
+}
+
+.df-ops-subnav-link:hover {
+  color: var(--df-ink);
+}
+
+.df-ops-subnav-link:focus-visible {
+  outline: 2px solid var(--df-focus-ring);
+  outline-offset: -2px;
+}
+
+.df-ops-subnav-link--active {
+  border-bottom-color: var(--df-primary);
+  color: var(--df-primary);
+  font-weight: var(--df-font-weight-semibold);
+}
+
+.df-ops-two-column {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.df-ops-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--df-text-sm);
+  color: var(--df-ink-soft);
+}
+
+.df-ops-planned {
+  display: grid;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--df-border-soft);
+}
+
+.df-ops-planned:last-of-type {
+  border-bottom: 0;
+}
+
+.df-ops-planned-area {
+  margin: 0;
+  font-size: var(--df-text-sm);
+  font-weight: var(--df-font-weight-semibold);
+  color: var(--df-ink);
+}
+
+.df-ops-planned p {
+  overflow-wrap: anywhere;
+}

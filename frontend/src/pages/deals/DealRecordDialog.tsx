@@ -242,16 +242,16 @@ export default function DealRecordDialog({ deal, lookups, onClose, onChanged }: 
         status={<Badge tone={dealStageTone(deal.stage)}>{dealStageLabel(deal.stage)}</Badge>}
         busy={saving}
         dirty={fieldsDirty}
-        footer={
+        footer={(close) => (
           <>
-            <Button variant="secondary" onClick={onClose} disabled={saving}>
+            <Button variant="secondary" onClick={close} disabled={saving}>
               Close
             </Button>
             <Button type="submit" form="deal-fields-form" variant="primary" disabled={!fieldsDirty} loading={saving}>
               Save changes
             </Button>
           </>
-        }
+        )}
         main={
           <div className="df-sales-form">
             {message ? (

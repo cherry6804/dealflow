@@ -23,8 +23,11 @@ export interface DialogProps {
   closeLabel: string;
   description?: string;
   children: ReactNode;
-  /** Fixed footer below the scrolling content. Put the primary action here so it stays reachable. */
-  footer?: ReactNode;
+  /**
+   * Fixed footer below the scrolling content. Put the primary action here so it stays reachable. A footer that has a Cancel or Back
+   * button should take the guarded close as a function, so that Cancel asks before discarding unsaved changes like the close control does.
+   */
+  footer?: ReactNode | ((requestClose: () => void) => ReactNode);
   /** Drawers slide in from the right and use the full height. */
   placement?: "center" | "end";
   /** Small for confirmations, medium by default, large for two-column record layouts. Small dialogs stay compact on phones too. */
@@ -225,7 +228,7 @@ export function Dialog({
         </p>
       ) : null}
       <div className="df-dialog-body">{children}</div>
-      {footer ? <footer className="df-dialog-footer">{footer}</footer> : null}
+      {footer ? <footer className="df-dialog-footer">{typeof footer === "function" ? footer(requestClose) : footer}</footer> : null}
 
       {confirmOpen ? (
         <dialog

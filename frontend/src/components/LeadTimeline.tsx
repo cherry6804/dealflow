@@ -249,11 +249,11 @@ export default function LeadTimeline({
       size="lg"
       busy={noteSaving}
       dirty={noteTitle.trim() !== "" || noteDetails.trim() !== ""}
-      footer={
-        <Button variant="secondary" onClick={onClose} disabled={noteSaving}>
+      footer={(close) => (
+        <Button variant="secondary" onClick={close} disabled={noteSaving}>
           Close
         </Button>
-      }
+      )}
     >
         <div className="lead-timeline-body leads-form-body">
           <form

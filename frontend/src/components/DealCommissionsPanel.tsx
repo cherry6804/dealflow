@@ -427,16 +427,16 @@ function CommissionFormDialog({ target, dealValue, currency, busy, serverError, 
       size="md"
       busy={busy}
       dirty={dirty}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={close} disabled={busy}>
             Back
           </Button>
           <Button type="submit" form="deal-commission-form" variant="primary" loading={busy} disabled={busy}>
             {editing ? "Save changes" : "Create commission"}
           </Button>
         </>
-      }
+      )}
     >
       <form id="deal-commission-form" className="df-nested-form" onSubmit={handleSubmit} noValidate>
         {editing && target.commission.status === "AGREED" ? (
@@ -520,16 +520,16 @@ function RecordCommissionPaymentDialog({ commission, busy, serverError, onConfir
       size="sm"
       busy={busy}
       dirty={reference.trim().length > 0}
-      footer={
+      footer={(close) => (
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={close} disabled={busy}>
             Cancel
           </Button>
           <Button variant="primary" loading={busy} disabled={busy} onClick={() => onConfirm(reference.trim() || null)}>
             Record payment
           </Button>
         </>
-      }
+      )}
     >
       <dl className="df-nested-card-meta">
         <div>
