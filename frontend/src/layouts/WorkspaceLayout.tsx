@@ -18,6 +18,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../contexts/useAppContext";
 import "../styles/workspace-layout-responsive.css";
 import dealsfloMark from "../assets/brand/dealsflo-mark.png";
+import { ThemeToggle } from "../theme/ThemeToggle";
 import GlobalSidebarNav from "./workspace/GlobalSidebarNav";
 import {
   WORKSPACE_MODULE_LABELS,
@@ -559,6 +560,7 @@ export default function WorkspaceLayout() {
           </form>
 
           <div className="workspace-topbar-actions">
+            <ThemeToggle />
             {organizations.length > 1 && (
               <div
                 className="workspace-topbar-organization"

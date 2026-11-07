@@ -137,3 +137,51 @@
     --df-header-height: 52px;
   }
 }
+
+/* Tone tokens: light values of colours migrated from literals. Dark values live in theme.css. */
+:root {
+  --df-tone-ink-navy: #172b4d;
+  --df-tone-ink-deep: #172033;
+  --df-tone-ink-deepest: #102a43;
+  --df-tone-ink-2: #243b53;
+  --df-tone-ink-3: #263b57;
+  --df-tone-ink-4: #34445c;
+  --df-tone-ink-5: #344054;
+  --df-tone-slate: #64748b;
+  --df-tone-slate-2: #71819a;
+  --df-tone-slate-3: #687386;
+  --df-tone-danger-text: #b42318;
+  --df-tone-tint-1: #fbfcff;
+  --df-tone-tint-2: #f8faff;
+  --df-tone-tint-3: #f6f8fc;
+  --df-tone-tint-4: #f0f3f8;
+  --df-tone-tint-5: #f5f7fb;
+  --df-tone-primary-tint: #f0f5ff;
+  --df-tone-danger-tint: #fff5f5;
+  --df-tone-line-1: #dce4f0;
+  --df-tone-line-2: #dce3ed;
+  --df-tone-line-3: #e0e6f0;
+  --df-tone-line-4: #d5deeb;
+  --df-tone-line-5: #cfd9eb;
+  --df-tone-line-6: #d5deed;
+  --df-tone-line-7: #d0d7de;
+  --df-tone-line-8: #d8e0ec;
+  --df-tone-line-9: #e1e7f0;
+  --df-tone-line-soft-1: #edf0f5;
+  --df-tone-line-soft-2: #e2e8f2;
+  --df-tone-line-soft-3: #e8edf5;
+  --df-tone-accent-line: #8b83ff;
+  --df-tone-accent-strong: #5147c7;
+}
+
+/* Shell geometry and motion timing. Theme-neutral; the reduced-motion override lives in theme.css. */
+:root {
+  --df-motion-duration-fast: 120ms;
+  --df-motion-duration-normal: 180ms;
+  --df-motion-duration-slow: 280ms;
+  --df-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --df-shell-header-height: 60px;
+  --df-shell-sidebar-width: 208px;
+  --df-shell-rail-width: 64px;
+  --df-shell-breadcrumb-height: 46px;
+}

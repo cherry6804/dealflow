@@ -8,7 +8,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
-    css: false,
+    // Process only stylesheets, so that ?raw imports of .css files return their contents in tests.
+    css: { include: [/^(?!.*node_modules).*\.css/] },
   },
   server: {
     port: 5174,

@@ -1,0 +1,601 @@
+/*
+ * Shared component foundation. Every colour is a token from styles/tokens.css or styles/theme.css, so light and dark
+ * themes both apply. Sizes follow the design-system sheet: control heights 32 / 36 / 40px, touch targets 44px on
+ * coarse pointers, focus ring 2px with a 2px offset, type 14/550 for controls and 13/400 for body text.
+ */
+
+.df-btn,
+.df-input,
+.df-tab,
+.df-menu-item {
+  font: inherit;
+  font-weight: 550;
+  font-size: 14px;
+  line-height: 1;
+}
+
+:where(.df-btn, .df-input, .df-tab, .df-menu-item, .df-checkbox, .df-radio, .df-tooltip-host button):focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+/* Buttons */
+
+.df-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--df-control-height-md);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--df-radius-md);
+  cursor: pointer;
+  transition: background-color var(--df-motion-duration-fast) var(--df-motion-ease-standard),
+    border-color var(--df-motion-duration-fast) var(--df-motion-ease-standard);
+}
+
+.df-btn--sm {
+  min-height: var(--df-control-height-sm);
+  padding: 0 10px;
+}
+
+.df-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.df-btn--primary {
+  background: var(--df-primary);
+  color: var(--df-on-primary);
+}
+
+.df-btn--primary:hover:not(:disabled) {
+  background: var(--df-primary-hover);
+}
+
+.df-btn--primary:active:not(:disabled) {
+  background: var(--df-primary-active);
+}
+
+.df-btn--secondary {
+  background: var(--df-surface);
+  border-color: var(--df-border-strong);
+  color: var(--df-ink);
+}
+
+.df-btn--secondary:hover:not(:disabled) {
+  background: var(--df-surface-hover);
+}
+
+.df-btn--tertiary {
+  background: transparent;
+  color: var(--df-primary);
+}
+
+.df-btn--tertiary:hover:not(:disabled) {
+  background: var(--df-primary-soft);
+}
+
+.df-btn--danger {
+  background: var(--df-danger);
+  color: var(--df-on-primary);
+}
+
+.df-btn--danger:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.df-btn--icon-only {
+  width: var(--df-control-height-md);
+  padding: 0;
+}
+
+.df-btn--icon-only.df-btn--sm {
+  width: var(--df-control-height-sm);
+}
+
+.df-btn--loading {
+  cursor: progress;
+}
+
+.df-btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: df-spin 800ms linear infinite;
+}
+
+@keyframes df-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Fields */
+
+.df-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.df-field-label {
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--df-ink);
+}
+
+.df-field-required {
+  color: var(--df-danger);
+}
+
+.df-field-helper {
+  margin: 0;
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-field-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--df-danger);
+}
+
+.df-input {
+  min-height: var(--df-control-height-md);
+  padding: 0 12px;
+  border: 1px solid var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  color: var(--df-ink);
+}
+
+.df-input::placeholder {
+  color: var(--df-subtle);
+}
+
+.df-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.df-textarea {
+  min-height: 88px;
+  padding: 8px 12px;
+  resize: vertical;
+}
+
+.df-field--error .df-input,
+.df-input[aria-invalid="true"] {
+  border-color: var(--df-danger);
+}
+
+/* Choices */
+
+.df-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--df-control-height-sm);
+  font-size: 14px;
+  color: var(--df-ink);
+  cursor: pointer;
+}
+
+.df-checkbox,
+.df-radio {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--df-primary);
+}
+
+.df-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Badges */
+
+.df-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: var(--df-radius-full);
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.df-badge--neutral {
+  background: var(--df-neutral-soft);
+  color: var(--df-muted);
+}
+
+.df-badge--success {
+  background: var(--df-success-soft);
+  color: var(--df-success);
+}
+
+.df-badge--active {
+  background: var(--df-info-soft);
+  color: var(--df-info);
+}
+
+.df-badge--pending {
+  background: var(--df-warning-soft);
+  color: var(--df-warning);
+}
+
+.df-badge--danger {
+  background: var(--df-danger-soft);
+  color: var(--df-danger);
+}
+
+.df-badge--automated {
+  background: var(--df-purple-soft);
+  color: var(--df-purple);
+}
+
+/* Notifications */
+
+.df-notification {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--df-border);
+  border-left-width: 4px;
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+  color: var(--df-ink);
+}
+
+.df-notification--info {
+  border-left-color: var(--df-info);
+}
+
+.df-notification--success {
+  border-left-color: var(--df-success);
+}
+
+.df-notification--warning {
+  border-left-color: var(--df-warning);
+}
+
+.df-notification--danger {
+  border-left-color: var(--df-danger);
+}
+
+.df-notification-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.df-notification-text {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-notification-action {
+  margin-top: 8px;
+}
+
+/* Tabs */
+
+.df-tablist {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--df-border);
+}
+
+.df-tab {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--df-muted);
+  cursor: pointer;
+}
+
+.df-tab[aria-selected="true"] {
+  border-bottom-color: var(--df-primary);
+  color: var(--df-ink);
+}
+
+.df-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.df-tabpanel {
+  padding: 16px 0;
+}
+
+/* Menus, popovers and tooltips */
+
+.df-menu,
+.df-popover {
+  position: relative;
+  display: inline-block;
+}
+
+.df-menu-panel,
+.df-popover-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: var(--df-z-dropdown);
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+  box-shadow: var(--df-shadow-md);
+}
+
+.df-menu-panel--start,
+.df-popover-panel {
+  left: 0;
+}
+
+.df-menu-panel--end {
+  right: 0;
+}
+
+.df-popover-panel {
+  width: 280px;
+  padding: 12px;
+}
+
+.df-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--df-control-height-md);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--df-radius-sm);
+  background: transparent;
+  color: var(--df-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.df-menu-item:hover:not(:disabled),
+.df-menu-item:focus-visible {
+  background: var(--df-surface-hover);
+}
+
+.df-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.df-menu-item--destructive {
+  color: var(--df-danger);
+}
+
+.df-tooltip-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.df-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: var(--df-z-dropdown);
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: var(--df-radius-sm);
+  background: var(--df-ink);
+  color: var(--df-surface);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Dialog and drawer */
+
+/* Reduced motion: remove decorative animation; the spinner keeps a static indicator. */
+@media (prefers-reduced-motion: reduce) {
+  .df-btn-spinner {
+    animation: none;
+  }
+}
+
+/* Coarse pointers get 44px targets. */
+@media (pointer: coarse) {
+  .df-btn {
+    min-height: 44px;
+  }
+
+  .df-input {
+    min-height: 44px;
+  }
+
+  .df-btn--icon-only {
+    width: 44px;
+  }
+}
+
+/* Large dialogs (record details). On phones every centred dialog fills the screen. */
+
+/* ---------- Dialog layout (shared Dialog primitive) ----------
+ * The dialog is a column: header and footer are fixed, and only the body scrolls. Tokens only; light and dark themes apply.
+ */
+
+.df-dialog {
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-xl);
+  background: var(--df-surface);
+  color: var(--df-ink);
+  box-shadow: var(--df-shadow-lg);
+  overflow: hidden;
+}
+
+.df-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.df-dialog--lg {
+  width: min(1040px, calc(100vw - 48px));
+}
+
+.df-dialog--confirm,
+.df-dialog--sm {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.df-dialog::backdrop {
+  background: rgb(9 14 24 / 46%);
+  animation: df-dialog-fade 160ms ease-out;
+}
+
+@keyframes df-dialog-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.df-dialog--end {
+  margin: 0 0 0 auto;
+  width: min(420px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+}
+
+.df-dialog-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--df-border-soft);
+  background: var(--df-surface);
+}
+
+.df-dialog-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.df-dialog-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-dialog-titlerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.df-dialog-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.df-dialog-status {
+  display: inline-flex;
+  align-items: center;
+}
+
+.df-dialog-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.df-dialog-description {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 20px 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-dialog-description-plain {
+  margin: 0;
+  font-size: 14px;
+  color: var(--df-muted);
+}
+
+.df-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.df-dialog-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--df-border-soft);
+  background: var(--df-surface);
+}
+
+/* Phones: the dialog fills the screen. Header and footer keep clear of the device's safe areas. */
+@media (max-width: 767.98px) {
+  .df-dialog--center:not(.df-dialog--sm),
+  .df-dialog:not(.df-dialog--confirm):not(.df-dialog--sm):not(.df-dialog--end) {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .df-dialog-header {
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+
+  .df-dialog-footer .df-btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .df-dialog-body {
+    padding: 16px;
+  }
+}

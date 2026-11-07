@@ -112,6 +112,11 @@ function getErrorMessage(
     }
   }
 
+  // The error envelope carries a user-safe message. Show it instead of a bare status code.
+  if (envelope && typeof envelope.message === "string" && envelope.message.trim()) {
+    return envelope.message;
+  }
+
   const detail = isRecord(responseData)
     ? responseData.detail
     : undefined;
@@ -241,10 +246,8 @@ async function request<T>(
   return responseData as T;
 }
 
-async function download(
-  path: string,
-  filename: string,
-): Promise<void> {
+/** Fetches a file as a Blob with the same auth headers and error mapping as the JSON client. */
+async function fetchBlob(path: string): Promise<Blob> {
   let response: Response;
 
   try {
@@ -270,7 +273,14 @@ async function download(
     );
   }
 
-  const blob = await response.blob();
+  return response.blob();
+}
+
+async function download(
+  path: string,
+  filename: string,
+): Promise<void> {
+  const blob = await fetchBlob(path);
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
 
@@ -328,5 +338,10 @@ export const api = {
 
   download(path: string, filename: string): Promise<void> {
     return download(path, filename);
+  },
+
+  /** Fetches a file for in-page preview. The caller owns the Blob and must revoke any object URL it creates. */
+  blob(path: string): Promise<Blob> {
+    return fetchBlob(path);
   },
 };

@@ -176,6 +176,15 @@ export const documentApi = {
     );
   },
 
+  /** Fetches the file for preview. Each call is an audited download on the server. */
+  async fetchFile(documentId: string): Promise<Blob> {
+    if (!documentId.trim()) {
+      throw new Error("A document ID is required to preview a file.");
+    }
+
+    return api.blob(`/documents/${encodeURIComponent(documentId)}/download`);
+  },
+
   async download(documentId: string, filename: string): Promise<void> {
     if (!documentId.trim()) {
       throw new Error("A document ID is required to download a file.");

@@ -1,0 +1,127 @@
+/*
+ * Columns popover (portal-rendered, so the grid's overflow never clips it) and its picker content. Surfaces and text come from
+ * tokens, so light and dark themes both apply.
+ */
+
+.df-popover-surface {
+  z-index: var(--df-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+  box-shadow: var(--df-shadow-lg);
+  color: var(--df-ink);
+}
+
+.df-grid-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+}
+
+.df-grid-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.df-grid-picker-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.df-grid-picker-description {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-grid-config-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--df-border-strong);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  color: var(--df-muted);
+}
+
+.df-grid-config-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--df-ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.df-grid-config-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-grid-picker .df-grid-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.df-grid-config-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.df-grid-config-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.df-grid-config-empty {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-grid-config-density,
+.df-grid-picker .df-grid-config-footer {
+  margin-top: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--df-border-soft);
+}
+
+.df-grid-picker .df-grid-config-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 767.98px) {
+  .df-popover-surface {
+    max-height: calc(100dvh - 24px);
+  }
+}

@@ -10,6 +10,7 @@ import {
   type CustomerProfile,
 } from "../services/customerProfileApi";
 import SiteVisitHistory from "../components/SiteVisitHistory";
+import { useConfirmation } from "../components/ui/useConfirmation";
 import "./CustomersPage.css";
 
 const MODAL_EXIT_DURATION = 200;
@@ -161,6 +162,7 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirm, confirmDialog] = useConfirmation();
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [isDialogClosing, setIsDialogClosing] = useState(false);
@@ -444,11 +446,16 @@ export default function CustomersPage() {
     const action = customer.is_active ? "deactivate" : "reactivate";
     const name = displayName(customer.contact) || "this customer";
 
-    if (
-      !window.confirm(
-        `Are you sure you want to ${action} ${name}'s customer profile?`,
-      )
-    ) {
+    const confirmed = await confirm(
+      `Are you sure you want to ${action} ${name}'s customer profile?`,
+      {
+        title: customer.is_active ? "Deactivate customer?" : "Reactivate customer?",
+        confirmLabel: customer.is_active ? "Deactivate" : "Reactivate",
+        tone: customer.is_active ? "danger" : "default",
+      },
+    );
+
+    if (!confirmed) {
       return;
     }
 
@@ -596,12 +603,7 @@ export default function CustomersPage() {
   return (
     <section className="customers-page">
       <header className="customers-header">
-        <div>
-          <h1>Customers</h1>
-          <p className="customers-subtitle">
-            Manage customer profiles linked to your existing contacts.
-          </p>
-        </div>
+        <h1 className="df-visually-hidden">Customers</h1>
       </header>
 
       {error && (
@@ -1038,6 +1040,7 @@ export default function CustomersPage() {
         </div>,
         document.body,
       )}
+      {confirmDialog}
     </section>
   );
 }

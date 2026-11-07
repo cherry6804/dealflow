@@ -1,0 +1,181 @@
+/*
+ * Enterprise data grid. Surfaces, borders and text come from tokens, so light and dark themes both apply. Header and footer use
+ * the soft surface; the table body stays on the main surface, so the three sections read as distinct. Rows get subtle
+ * separators, not card wrapping.
+ */
+
+.df-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Toolbar: search on the left, the Columns button on the right. Both stay on one line, including on phones. */
+.df-grid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.df-grid-search {
+  flex: 1 1 auto;
+  max-width: 420px;
+  min-width: 0;
+}
+
+.df-grid-search .df-input {
+  width: 100%;
+}
+
+.df-grid-toolbar-filters {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+
+.df-grid-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-grid-hidden-count {
+  font-size: 12px;
+  color: var(--df-subtle);
+  white-space: nowrap;
+}
+
+@media (max-width: 575.98px) {
+  .df-grid-hidden-count {
+    display: none;
+  }
+}
+
+/* Narrow screens: search takes a full row; filters and the Columns button share the row below and never squeeze out of view. */
+@media (max-width: 767.98px) {
+  .df-grid-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .df-grid-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .df-grid-toolbar-filters {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .df-grid-toolbar-filters .df-input {
+    flex: 1 1 140px;
+    min-width: 0;
+    width: auto;
+  }
+
+  .df-grid-toolbar-actions {
+    margin-left: auto;
+  }
+}
+
+/* One container for header, body and footer: shared border, radius and width. */
+.df-grid-frame {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface);
+}
+
+.df-grid-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Header and table surfaces. The header is the soft surface; the body is the main surface. */
+.df-grid-table {
+  --rdg-background-color: var(--df-surface);
+  --rdg-header-background-color: var(--df-surface-soft);
+  --rdg-row-hover-background-color: var(--df-surface-hover);
+  --rdg-row-selected-background-color: var(--df-primary-soft);
+  --rdg-border-color: var(--df-border-soft);
+  --rdg-summary-border-color: var(--df-border);
+  --rdg-color: var(--df-ink);
+  --rdg-header-text-color: var(--df-muted);
+  --rdg-font-size: 13px;
+  border: 0;
+  max-width: 100%;
+}
+
+.df-grid-table .rdg-cell {
+  cursor: pointer;
+}
+
+/* Footer: the soft surface with a top border, so it reads as separate from the body. Create at the left; counts and refresh at
+ * the right. */
+.df-grid-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--df-border);
+  background: var(--df-surface-soft);
+}
+
+.df-grid-footer-start,
+.df-grid-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.df-grid-footer-end {
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.df-grid-footer-count {
+  margin: 0;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-grid-footer-note {
+  color: var(--df-subtle);
+}
+
+@media (max-width: 767.98px) {
+  .df-grid-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .df-grid-footer-end {
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-grid-table .rdg-cell {
+    transition: none;
+  }
+}
+
+.df-grid-nomatch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

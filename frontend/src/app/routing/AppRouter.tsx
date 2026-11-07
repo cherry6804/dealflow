@@ -5,7 +5,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import RequireAuth from "../guards/RequireAuth";
 
 import PublicLayout from "../../layouts/PublicLayout";
-import WorkspaceLayout from "../../layouts/WorkspaceLayout";
+import WorkspaceEntry from "../../layouts/workspace/WorkspaceEntry";
+import SpacePlaceholderRoute from "../../layouts/workspace/spaces/SpacePlaceholderRoute";
 
 // Authentication pages
 const BillingAccessPage = lazy(
@@ -27,6 +28,14 @@ const ResetPasswordPage = lazy(
   () => import("../../features/auth/pages/ResetPasswordPage"),
 );
 
+// Development-only component preview. Not registered in production builds.
+const ComponentPreview = import.meta.env.DEV
+  ? lazy(() => import("../../dev/design-system/ComponentPreview"))
+  : null;
+const ShellPreview = import.meta.env.DEV
+  ? lazy(() => import("../../dev/design-system/ShellPreview"))
+  : null;
+
 // SIBVO single sign-on callback
 const SsoCallbackPage = lazy(
   () => import("../../features/auth/pages/SsoCallbackPage"),
@@ -47,30 +56,39 @@ const TodayPage = lazy(() => import("../../pages/TodayPage"));
 const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
 const FollowUpsPage = lazy(() => import("../../pages/FollowUpsPage"));
 const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
+const ContactsWorkspacePage = lazy(() => import("../../pages/sales/ContactsWorkspacePage"));
+const CustomersWorkspacePage = lazy(() => import("../../pages/sales/CustomersWorkspacePage"));
+const LeadsWorkspacePage = lazy(() => import("../../pages/sales/LeadsWorkspacePage"));
+const PipelineWorkspacePage = lazy(() => import("../../pages/sales/PipelineWorkspacePage"));
+const SiteVisitsWorkspacePage = lazy(() => import("../../pages/sales/SiteVisitsWorkspacePage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
   () => import("../../pages/RequirementsPage"),
 );
+const RequirementsWorkspacePage = lazy(() => import("../../pages/requirements/RequirementsWorkspacePage"));
 const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
 const DealsPage = lazy(() => import("../../pages/DealsPage"));
+const DealsWorkspacePage = lazy(() => import("../../pages/deals/DealsWorkspacePage"));
 const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
+const ReferralsWorkspacePage = lazy(() => import("../../pages/referrals/ReferralsWorkspacePage"));
 const PropertiesPage = lazy(() => import("../../pages/PropertiesPage"));
+const PropertiesWorkspacePage = lazy(() => import("../../pages/properties/PropertiesWorkspacePage"));
 const SiteVisitsPage = lazy(
   () => import("../../pages/SiteVisitsPage"),
 );
 
 // Operations
-const ImportsPage = lazy(() => import("../../pages/ImportsPage"));
-const DocumentsPage = lazy(() => import("../../pages/DocumentsPage"));
+const ImportsPage = lazy(() => import("../../pages/operations/imports/ImportCenterPage"));
+const DocumentsPage = lazy(() => import("../../pages/operations/documents/DocumentsWorkspacePage"));
 const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const LeadIntakePage = lazy(() => import("../../pages/LeadIntakePage"));
 const WorkflowsPage = lazy(() => import("../../pages/WorkflowsPage"));
 const ApprovalsPage = lazy(() => import("../../pages/ApprovalsPage"));
 const AutomationRulesPage = lazy(
-  () => import("../../pages/AutomationRulesPage"),
+  () => import("../../pages/operations/automation/AutomationRulesWorkspace"),
 );
 const AutomationHistoryPage = lazy(
-  () => import("../../pages/AutomationExecutionHistoryPage"),
+  () => import("../../pages/operations/automation/AutomationActivityPage"),
 );
 const NotificationPreferencesPage = lazy(
   () => import("../../pages/NotificationPreferencesPage"),
@@ -138,6 +156,14 @@ export default function AppRouter() {
           element={<SsoCallbackPage />}
         />
 
+        {ComponentPreview ? (
+          <Route path="/design-system" element={<ComponentPreview />} />
+        ) : null}
+
+        {ShellPreview ? (
+          <Route path="/design-system/shell/*" element={<ShellPreview />} />
+        ) : null}
+
         {/* Public authentication pages */}
         <Route element={<PublicLayout />}>
           <Route path="/login" element={<SibvoSignInRedirectPage />} />
@@ -171,8 +197,9 @@ export default function AppRouter() {
 
         {/* Authenticated workspace */}
         <Route element={<RequireAuth />}>
-          <Route element={<WorkspaceLayout />}>
+          <Route element={<WorkspaceEntry />}>
             <Route index element={<TodayPage />} />
+            <Route path="/spaces/:spaceId/:tabId" element={<SpacePlaceholderRoute />} />
 
             {/* Getting started */}
             <Route
@@ -181,23 +208,67 @@ export default function AppRouter() {
             />
 
             {/* CRM */}
-            <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/contacts" element={<ContactsPage />} />
-            <Route path="/customers" element={<CustomersPage />} />
+            <Route
+              path="/leads"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_LEADS === "true" ? <LeadsWorkspacePage /> : <LeadsPage />
+              }
+            />
+            <Route
+              path="/contacts"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_CONTACTS === "true" ? (
+                  <ContactsWorkspacePage />
+                ) : (
+                  <ContactsPage />
+                )
+              }
+            />
+            <Route
+              path="/customers"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_CUSTOMERS === "true" ? (
+                  <CustomersWorkspacePage />
+                ) : (
+                  <CustomersPage />
+                )
+              }
+            />
             <Route
               path="/requirements"
-              element={<RequirementsPage />}
+              element={
+                import.meta.env.VITE_DEALSFLO_REQUIREMENTS === "true" ? <RequirementsWorkspacePage /> : <RequirementsPage />
+              }
             />
-            <Route path="/pipeline" element={<PipelinePage />} />
-            <Route path="/deals" element={<DealsPage />} />
+            <Route
+              path="/pipeline"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_PIPELINE === "true" ? <PipelineWorkspacePage /> : <PipelinePage />
+              }
+            />
+            <Route
+              path="/deals"
+              element={
+                import.meta.env.VITE_DEALSFLO_DEALS === "true" ? <DealsWorkspacePage /> : <DealsPage />
+              }
+            />
             <Route
               path="/properties"
-              element={<PropertiesPage />}
+              element={
+                import.meta.env.VITE_DEALSFLO_PROPERTIES === "true" ? <PropertiesWorkspacePage /> : <PropertiesPage />
+              }
             />
-            <Route path="/referrals" element={<ReferralsPage />} />
+            <Route
+              path="/referrals"
+              element={
+                import.meta.env.VITE_DEALSFLO_REFERRALS === "true" ? <ReferralsWorkspacePage /> : <ReferralsPage />
+              }
+            />
             <Route
               path="/site-visits"
-              element={<SiteVisitsPage />}
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_SITE_VISITS === "true" ? <SiteVisitsWorkspacePage /> : <SiteVisitsPage />
+              }
             />
 
             {/* Operations */}

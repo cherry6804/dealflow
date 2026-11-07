@@ -23,6 +23,7 @@ import {
   type ReferralStatus,
 } from "../services/referralApi";
 import "./ReferralsPage.css";
+import { useConfirmation } from "../components/ui/useConfirmation";
 
 const PAGE_SIZE = 10;
 
@@ -186,6 +187,7 @@ export default function ReferralsPage() {
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [confirm, confirmDialog] = useConfirmation();
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingReferral, setEditingReferral] = useState<Referral | null>(
@@ -485,8 +487,9 @@ export default function ReferralsPage() {
   }
 
   async function handleDeactivate(referral: Referral) {
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Deactivate the referral "${referral.referral_name}"?`,
+      { title: "Deactivate referral?", confirmLabel: "Deactivate", tone: "danger" },
     );
 
     if (!confirmed) {
@@ -962,6 +965,7 @@ export default function ReferralsPage() {
         </div>,
         document.body,
       )}
+      {confirmDialog}
     </section>
   );
 }

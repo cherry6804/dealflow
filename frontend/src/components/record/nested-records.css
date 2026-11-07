@@ -1,0 +1,208 @@
+/*
+ * Records nested inside a dialog (payment milestones, commissions). Tokens only; light and dark themes apply.
+ * Summary tiles and cards reflow to one column on the smallest phones, and every action wraps instead of overflowing.
+ */
+
+.df-nested-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.df-nested-summary-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+}
+
+.df-nested-summary-tile dt {
+  font-size: var(--df-text-xs);
+  color: var(--df-subtle);
+}
+
+.df-nested-summary-tile dd {
+  margin: 0;
+  font-size: var(--df-text-md);
+  font-weight: var(--df-font-weight-semibold);
+  color: var(--df-ink);
+  overflow-wrap: anywhere;
+}
+
+.df-nested-summary-tile--attention dd {
+  color: var(--df-danger);
+}
+
+.df-nested-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.df-nested-toolbar h3 {
+  margin: 0;
+  font-size: var(--df-text-md);
+  font-weight: var(--df-font-weight-semibold);
+}
+
+.df-nested-toolbar p {
+  margin: 2px 0 0;
+  font-size: var(--df-text-sm);
+  color: var(--df-muted);
+}
+
+.df-nested-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-nested-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+}
+
+.df-nested-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.df-nested-card-heading {
+  min-width: 0;
+}
+
+.df-nested-card-title {
+  margin: 0;
+  font-size: var(--df-text-md);
+  font-weight: var(--df-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.df-nested-card-amount {
+  margin: 2px 0 0;
+  font-size: var(--df-text-lg);
+  font-weight: var(--df-font-weight-semibold);
+  color: var(--df-ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.df-nested-card-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.df-nested-card-meta div {
+  min-width: 0;
+}
+
+.df-nested-card-meta dt {
+  font-size: var(--df-text-xs);
+  color: var(--df-subtle);
+}
+
+.df-nested-card-meta dd {
+  margin: 0;
+  font-size: var(--df-text-sm);
+  color: var(--df-ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.df-nested-card-notes {
+  margin: 0;
+  font-size: var(--df-text-sm);
+  color: var(--df-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.df-nested-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--df-border-soft);
+}
+
+.df-nested-card-actions .df-btn {
+  min-height: 36px;
+}
+
+.df-nested-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 20px;
+  border: 1px dashed var(--df-border);
+  border-radius: var(--df-radius-md);
+}
+
+.df-nested-empty h3 {
+  margin: 0;
+  font-size: var(--df-text-md);
+  font-weight: var(--df-font-weight-semibold);
+}
+
+.df-nested-empty p {
+  margin: 0;
+  font-size: var(--df-text-sm);
+  color: var(--df-muted);
+}
+
+@media (max-width: 479.98px) {
+  .df-nested-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .df-nested-card-actions .df-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* Two fields side by side on wide screens, stacked on phones. */
+.df-nested-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  gap: 12px;
+  align-items: start;
+}
+
+.df-nested-total-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 479.98px) {
+  .df-nested-form-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Form stack for nested dialogs: one column, consistent spacing. */
+.df-nested-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}

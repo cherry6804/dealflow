@@ -785,10 +785,7 @@ async function handleFollowUpSubmit(
   return (
     <main className="site-visits-page">
       <header className="site-visits-header">
-        <div className="site-visits-heading-copy">
-          <h1>Site visits</h1>
-          <p>Manage property appointments and keep every customer visit on track.</p>
-        </div>
+        <h1 className="df-visually-hidden">Site visits</h1>
         <button type="button" className="site-visits-primary-button" onClick={openForm}>
           <span aria-hidden="true">＋</span> Schedule visit
         </button>

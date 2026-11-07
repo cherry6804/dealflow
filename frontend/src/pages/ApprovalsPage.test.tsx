@@ -5,6 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api";
 import { humanTaskApi, type HumanTask, type HumanTaskDetail } from "../services/humanTaskApi";
 import ApprovalsPage from "./ApprovalsPage";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactElement } from "react";
+
+
+/** The pages link between automation sections, so they render inside a router as they do in the app. */
+function renderWithRouter(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 vi.mock("../services/humanTaskApi", () => ({
   humanTaskApi: {
@@ -67,7 +75,7 @@ describe("ApprovalsPage", () => {
   it("lists tasks and opens one with its decision controls and history", async () => {
     vi.mocked(humanTaskApi.list).mockResolvedValue({ items: [pending] });
     vi.mocked(humanTaskApi.get).mockResolvedValue(detail);
-    render(<ApprovalsPage />);
+    renderWithRouter(<ApprovalsPage />);
 
     const item = await screen.findByRole("button", { name: /Approve step score/ });
     await userEvent.click(item);
@@ -80,14 +88,14 @@ describe("ApprovalsPage", () => {
 
   it("shows the empty state when nothing needs a decision", async () => {
     vi.mocked(humanTaskApi.list).mockResolvedValue({ items: [] });
-    render(<ApprovalsPage />);
+    renderWithRouter(<ApprovalsPage />);
 
     expect(await screen.findByText("No approvals to show.")).toBeTruthy();
   });
 
   it("explains an access refusal without showing any task", async () => {
     vi.mocked(humanTaskApi.list).mockRejectedValue(new ApiError("Forbidden", 403, {}));
-    render(<ApprovalsPage />);
+    renderWithRouter(<ApprovalsPage />);
 
     expect((await screen.findByRole("alert")).textContent).toContain("You do not have access to approvals");
   });
@@ -96,7 +104,7 @@ describe("ApprovalsPage", () => {
     vi.mocked(humanTaskApi.list).mockResolvedValue({ items: [pending] });
     vi.mocked(humanTaskApi.get).mockResolvedValueOnce(detail).mockResolvedValueOnce(closed);
     vi.mocked(humanTaskApi.decide).mockResolvedValue({ ...closed, changed: true });
-    render(<ApprovalsPage />);
+    renderWithRouter(<ApprovalsPage />);
 
     await userEvent.click(await screen.findByRole("button", { name: /Approve step score/ }));
     await userEvent.type(await screen.findByLabelText("Comment"), "Looks right.");
@@ -114,7 +122,7 @@ describe("ApprovalsPage", () => {
     vi.mocked(humanTaskApi.decide).mockRejectedValue(
       new ApiError("Conflict", 409, { detail: { reason: "already_decided" } }),
     );
-    render(<ApprovalsPage />);
+    renderWithRouter(<ApprovalsPage />);
 
     await userEvent.click(await screen.findByRole("button", { name: /Approve step score/ }));
     const detailPanel = screen.getByRole("heading", { name: "Decision" }).closest("section") as HTMLElement;

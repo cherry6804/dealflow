@@ -8,6 +8,7 @@ import {
   type HumanTaskStatus,
 } from "../services/humanTaskApi";
 import "./ApprovalsPage.css";
+import { AutomationNav } from "./operations/automation/AutomationNav";
 
 type Filter = "open" | "all";
 
@@ -131,6 +132,7 @@ export default function ApprovalsPage() {
 
   return (
     <main className="approvals-page">
+      <AutomationNav current="approvals" />
       <header className="approvals-header">
         <h1>Approvals</h1>
         <p className="approvals-subtle">

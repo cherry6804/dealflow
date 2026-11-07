@@ -4,8 +4,8 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 14px 16px 22px;
-  background: #f5f7fb;
-  color: #172b4d;
+  background: var(--df-tone-tint-5);
+  color: var(--df-tone-ink-navy);
   font-size: 13px;
 }
 
@@ -55,7 +55,7 @@
   justify-content: center;
   min-height: 40px;
   padding: 8px 12px;
-  border: 1px solid #d5deeb;
+  border: 1px solid var(--df-tone-line-4);
   border-radius: 8px;
   background: #fff;
   color: #405570;
@@ -104,7 +104,7 @@
 
 .site-visits-page .site-visits-alert-error {
   border-color: #f1c3c3;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #9f2929;
 }
 
@@ -162,7 +162,7 @@
 
 .site-visits-page .site-visits-heading-copy h1 {
   margin: 0;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: clamp(23px,2.1vw,30px);
   font-weight: 700;
   line-height: 1.25;
@@ -171,7 +171,7 @@
 
 .site-visits-page .site-visits-heading-copy p {
   margin: 6px 0 0;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 13px;
   line-height: 1.55;
 }
@@ -192,14 +192,14 @@
   flex: 1 1 420px;
   min-width: 180px;
   height: 42px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   background: #fff;
   color: #6b7b93;
 }
 
 .visits-search-field:focus-within {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
@@ -218,7 +218,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #172b4d;
+  color: var(--df-tone-ink-navy);
   font: inherit;
 }
 
@@ -232,7 +232,7 @@
   margin-right: 5px;
   border: 0;
   background: transparent;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 20px;
   cursor: pointer;
 }
@@ -255,10 +255,10 @@
   width: 100%;
   min-height: 42px;
   padding: 9px 34px 9px 11px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   background: #fff;
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font: inherit;
 }
 
@@ -267,7 +267,7 @@
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #d5deed;
+  border: 1px solid var(--df-tone-line-6);
   border-radius: 13px;
   background: #fff;
   box-shadow: 0 2px 6px rgb(24 45 80 / 3%);
@@ -292,8 +292,8 @@
 
 .visits-react-data-grid .rdg-header-row,
 .visits-react-data-grid .rdg-header-row .rdg-cell {
-  background: #f0f3f8 !important;
-  color: #34445c;
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-weight: 750;
   box-shadow: 0 1px 0 #d7e0ed;
 }
@@ -301,7 +301,7 @@
 .visits-react-data-grid .rdg-header-row .rdg-cell {
   display: flex;
   align-items: center;
-  border-right: 1px solid #d8e0ec;
+  border-right: 1px solid var(--df-tone-line-8);
 }
 
 .visits-react-data-grid .rdg-cell {
@@ -309,13 +309,13 @@
   align-items: center;
   min-width: 0;
   padding: 0 12px;
-  border-right: 1px solid #e0e6f0;
+  border-right: 1px solid var(--df-tone-line-3);
   line-height: 1.35;
   overflow: hidden;
 }
 
 .visits-react-data-grid .rdg-row {
-  border-bottom: 1px solid #e0e6f0;
+  border-bottom: 1px solid var(--df-tone-line-3);
 }
 
 .visits-react-data-grid .rdg-row:hover {
@@ -338,7 +338,7 @@
 
 .visits-grid-primary-cell strong {
   overflow: hidden;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: 12px;
   font-weight: 750;
   text-overflow: ellipsis;
@@ -400,7 +400,7 @@
   justify-content: center;
   min-height: 31px;
   padding: 5px 9px;
-  border: 1px solid #d5deeb;
+  border: 1px solid var(--df-tone-line-4);
   border-radius: 7px;
   background: #fff;
   color: #3f5675;
@@ -412,7 +412,7 @@
 
 .visits-grid-action-button:hover:not(:disabled) {
   border-color: #aebbd0;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .visits-grid-action-primary {
@@ -476,9 +476,9 @@
   gap: 12px;
   min-height: 48px;
   padding: 10px 16px;
-  border-top: 1px solid #e2e8f2;
+  border-top: 1px solid var(--df-tone-line-soft-2);
   background: #fff;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 12px;
 }
 
@@ -492,7 +492,7 @@
 
 .visits-grid-footer-count strong,
 .requirements-grid-footer-count strong {
-  color: #263b57;
+  color: var(--df-tone-ink-3);
   font-weight: 750;
 }
 
@@ -539,7 +539,7 @@
 .requirements-pagination-controls button {
   min-height: 30px;
   padding: 5px 10px;
-  border: 1px solid #d5deeb;
+  border: 1px solid var(--df-tone-line-4);
   border-radius: 7px;
   background: #fff;
   color: #526783;
@@ -570,7 +570,7 @@
   border-radius: 11px;
   background: #fff;
   box-shadow: 0 14px 40px rgb(20 38 65 / 18%);
-  color: #263b57;
+  color: var(--df-tone-ink-3);
 }
 
 .visits-column-menu-heading,
@@ -608,7 +608,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 19px;
   cursor: pointer;
 }
@@ -679,13 +679,13 @@
   justify-content: space-between;
   gap: 16px;
   padding: 24px 28px 20px;
-  border-bottom: 1px solid #e2e8f2;
-  background: #fbfcff;
+  border-bottom: 1px solid var(--df-tone-line-soft-2);
+  background: var(--df-tone-tint-1);
 }
 
 .site-visits-modal-header h2 {
   margin: 4px 0 0;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: 25px;
   line-height: 1.25;
 }
@@ -728,8 +728,8 @@
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 28px;
-  border-top: 1px solid #e2e8f2;
-  background: #fbfcff;
+  border-top: 1px solid var(--df-tone-line-soft-2);
+  background: var(--df-tone-tint-1);
 }
 
 .site-visits-modal-body label {
@@ -747,10 +747,10 @@
   width: 100%;
   min-height: 42px;
   padding: 10px 12px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   background: #fff;
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font: inherit;
 }
 
@@ -763,7 +763,7 @@
 .site-visits-modal-body select:focus,
 .site-visits-modal-body textarea:focus {
   outline: 0;
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
@@ -855,7 +855,7 @@
 
 .site-visits-modal .site-visits-modal-header h2 {
   margin: 5px 0 0;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: 25px;
   font-weight: 700;
   line-height: 1.25;
@@ -898,8 +898,8 @@
 .site-visits-modal .site-visits-form-section-title {
   margin: 0 0 14px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #e2e8f2;
-  color: #263b57;
+  border-bottom: 1px solid var(--df-tone-line-soft-2);
+  color: var(--df-tone-ink-3);
   font-size: 14px;
   font-weight: 750;
   line-height: 1.4;
@@ -949,11 +949,11 @@
   min-height: 42px;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   outline: none;
   background-color: #ffffff;
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
@@ -986,7 +986,7 @@
 .site-visits-modal .site-visits-field input:focus,
 .site-visits-modal .site-visits-field select:focus,
 .site-visits-modal .site-visits-field textarea:focus {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 12%);
 }
 
@@ -1053,8 +1053,8 @@
   justify-content: space-between;
   gap: 12px;
   padding: 14px 28px;
-  border-top: 1px solid #e2e8f2;
-  background: #fbfcff;
+  border-top: 1px solid var(--df-tone-line-soft-2);
+  background: var(--df-tone-tint-1);
 }
 
 .site-visits-modal .site-visits-modal-footer p {
@@ -1104,14 +1104,14 @@
 }
 
 .site-visits-modal button.site-visits-secondary-button {
-  border-color: #d5deeb;
+  border-color: var(--df-tone-line-4);
   background: #ffffff;
   color: #334b68;
 }
 
 .site-visits-modal .site-visits-secondary-button:hover:not(:disabled) {
   border-color: #aebbd0;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .site-visits-modal .site-visits-primary-button:disabled,
@@ -1272,7 +1272,7 @@
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #d5deed;
+  border: 1px solid var(--df-tone-line-6);
   border-radius: 13px;
   background: #ffffff;
   box-shadow: 0 2px 6px rgb(24 45 80 / 3%);
@@ -1299,8 +1299,8 @@
 
 .visits-react-data-grid .rdg-header-row {
   z-index: 2;
-  background: #f0f3f8 !important;
-  color: #34445c;
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-weight: 750;
   box-shadow: 0 1px 0 #d7e0ed, 0 2px 5px rgb(20 38 65 / 4%);
 }
@@ -1308,9 +1308,9 @@
 .visits-react-data-grid .rdg-header-row .rdg-cell {
   display: flex;
   align-items: center;
-  border-right: 1px solid #d8e0ec;
-  background: #f0f3f8 !important;
-  color: #34445c;
+  border-right: 1px solid var(--df-tone-line-8);
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-size: 12px;
   font-weight: 750;
 }
@@ -1321,7 +1321,7 @@
   min-width: 0;
   padding: 0 12px;
   overflow: hidden;
-  border-right: 1px solid #e0e6f0;
+  border-right: 1px solid var(--df-tone-line-3);
   line-height: 1.35;
 }
 
@@ -1330,7 +1330,7 @@
 }
 
 .visits-react-data-grid .rdg-row {
-  border-bottom: 1px solid #e0e6f0;
+  border-bottom: 1px solid var(--df-tone-line-3);
 }
 
 .visits-react-data-grid .rdg-row:hover {
@@ -1368,7 +1368,7 @@
   min-height: 100px;
   place-items: center;
   padding: 20px;
-  color: #71819a;
+  color: var(--df-tone-slate-2);
   text-align: center;
 }
 
@@ -1405,14 +1405,14 @@
   gap: 12px;
   min-height: 48px;
   padding: 10px 16px;
-  border-top: 1px solid #e2e8f2;
+  border-top: 1px solid var(--df-tone-line-soft-2);
   background: #ffffff;
-  color: #64748b;
+  color: var(--df-tone-slate);
   font-size: 12px;
 }
 
 .visits-grid-footer-count strong {
-  color: #263b57;
+  color: var(--df-tone-ink-3);
   font-weight: 750;
 }
 
@@ -1489,13 +1489,13 @@
 .site-visits-modal .site-visits-modal-header {
   flex: 0 0 auto;
   padding: 21px 23px 18px;
-  border-bottom: 1px solid #e8edf5;
-  background: #fbfcff;
+  border-bottom: 1px solid var(--df-tone-line-soft-3);
+  background: var(--df-tone-tint-1);
 }
 
 .site-visits-modal .site-visits-modal-header h2 {
   margin: 5px 0 0;
-  color: #172b4d;
+  color: var(--df-tone-ink-navy);
   font-size: 21px;
   font-weight: 700;
   line-height: 1.3;
@@ -1504,7 +1504,7 @@
 
 .site-visits-modal .site-visits-modal-header p {
   margin: 7px 0 0;
-  color: #71819a;
+  color: var(--df-tone-slate-2);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -1513,7 +1513,7 @@
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
-  border: 1px solid #e1e7f0;
+  border: 1px solid var(--df-tone-line-9);
   border-radius: 8px;
   background: #ffffff;
   color: #66758b;
@@ -1531,7 +1531,7 @@
 .site-visits-modal .site-visits-form-section-title {
   margin: 0 0 14px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #e2e8f2;
+  border-bottom: 1px solid var(--df-tone-line-soft-2);
   color: #2e435e;
   font-size: 13px;
   font-weight: 750;
@@ -1570,11 +1570,11 @@
   min-height: 40px;
   margin: 0;
   padding: 9px 11px;
-  border: 1px solid #cfd9eb;
+  border: 1px solid var(--df-tone-line-5);
   border-radius: 8px;
   outline: none;
   background: #ffffff;
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
@@ -1605,7 +1605,7 @@
 .site-visits-modal .site-visits-field input:focus,
 .site-visits-modal .site-visits-field select:focus,
 .site-visits-modal .site-visits-field textarea:focus {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
@@ -1621,13 +1621,13 @@
   align-items: center;
   gap: 9px;
   padding: 14px 23px;
-  border-top: 1px solid #e8edf5;
-  background: #fbfcff;
+  border-top: 1px solid var(--df-tone-line-soft-3);
+  background: var(--df-tone-tint-1);
 }
 
 .site-visits-modal .site-visits-modal-footer p {
   margin: 0 auto 0 0;
-  color: #71819a;
+  color: var(--df-tone-slate-2);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -1642,7 +1642,7 @@
 .site-visits-modal button:not(.site-visits-modal-close) {
   min-height: 36px;
   padding: 8px 12px;
-  border: 1px solid #d5deeb;
+  border: 1px solid var(--df-tone-line-4);
   border-radius: 8px;
   background: #ffffff;
   color: #334b68;
@@ -1670,7 +1670,7 @@
 }
 
 .site-visits-modal button.site-visits-secondary-button {
-  border-color: #d5deeb;
+  border-color: var(--df-tone-line-4);
   background: #ffffff;
   color: #334b68;
 }

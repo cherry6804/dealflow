@@ -1,0 +1,262 @@
+/*
+ * Dealsflo theme layer.
+ *
+ * Light values are defined in tokens.css on :root. This file redefines the semantic colour tokens for dark mode.
+ * It applies in two cases: the operating system prefers dark and the user has not chosen light, or the user chose dark.
+ * Components never read colours directly; they read these tokens, so both themes apply to every token-based surface.
+ */
+
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --df-canvas: #0e1116;
+    --df-surface: #161b22;
+    --df-surface-soft: #1c222b;
+    --df-surface-hover: #1f2630;
+    --df-surface-selected: #15294a;
+
+    --df-ink: #e6edf5;
+    --df-ink-soft: #b4bfcd;
+    --df-muted: #a3adbd;
+    --df-subtle: #8a95a6;
+    --df-disabled: #5d6878;
+
+    --df-border: #2b3441;
+    --df-border-soft: #222a35;
+    --df-border-strong: #3d4858;
+
+    --df-primary: #5b9cf6;
+    --df-primary-hover: #7bb0ff;
+    --df-primary-active: #a9ccff;
+    --df-primary-soft: #15294a;
+    --df-focus-ring: rgb(91 156 246 / 40%);
+    --df-on-primary: #0b1220;
+
+    --df-success: #4cc38a;
+    --df-success-soft: #123626;
+    --df-warning: #f0b35a;
+    --df-warning-soft: #3a2c12;
+    --df-danger: #ff7b72;
+    --df-danger-soft: #3d1d1b;
+    --df-info: #5b9cf6;
+    --df-info-soft: #15294a;
+
+    --df-purple: #a898ff;
+    --df-purple-soft: #2a2442;
+    --df-teal: #5fc3c9;
+    --df-teal-soft: #123333;
+    --df-orange: #f0b35a;
+    --df-orange-soft: #3a2c12;
+
+    --df-neutral: #a3adbd;
+    --df-neutral-soft: #222a35;
+    --df-scrollbar: #3d4858;
+
+    --df-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --df-shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+    --df-shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --df-canvas: #0e1116;
+  --df-surface: #161b22;
+  --df-surface-soft: #1c222b;
+  --df-surface-hover: #1f2630;
+  --df-surface-selected: #15294a;
+
+  --df-ink: #e6edf5;
+  --df-ink-soft: #b4bfcd;
+  --df-muted: #a3adbd;
+  --df-subtle: #8a95a6;
+  --df-disabled: #5d6878;
+
+  --df-border: #2b3441;
+  --df-border-soft: #222a35;
+  --df-border-strong: #3d4858;
+
+  --df-primary: #5b9cf6;
+  --df-primary-hover: #7bb0ff;
+  --df-primary-active: #a9ccff;
+  --df-primary-soft: #15294a;
+  --df-focus-ring: rgb(91 156 246 / 40%);
+  --df-on-primary: #0b1220;
+
+  --df-success: #4cc38a;
+  --df-success-soft: #123626;
+  --df-warning: #f0b35a;
+  --df-warning-soft: #3a2c12;
+  --df-danger: #ff7b72;
+  --df-danger-soft: #3d1d1b;
+  --df-info: #5b9cf6;
+  --df-info-soft: #15294a;
+
+  --df-purple: #a898ff;
+  --df-purple-soft: #2a2442;
+  --df-teal: #5fc3c9;
+  --df-teal-soft: #123333;
+  --df-orange: #f0b35a;
+  --df-orange-soft: #3a2c12;
+
+  --df-neutral: #a3adbd;
+  --df-neutral-soft: #222a35;
+  --df-scrollbar: #3d4858;
+
+  --df-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --df-shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+  --df-shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --df-motion-duration-fast: 0ms;
+    --df-motion-duration-normal: 0ms;
+    --df-motion-duration-slow: 0ms;
+    --df-transition-fast: 0ms;
+    --df-transition-normal: 0ms;
+  }
+}
+
+/* Screen-reader-only text, shared by controls that need a name without a visible label. */
+.df-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Theme control in the workspace header. */
+.df-theme-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.df-theme-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface-soft);
+}
+
+.df-theme-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--df-radius-sm);
+  background: transparent;
+  color: var(--df-muted);
+  cursor: pointer;
+  transition: background-color var(--df-motion-duration-fast) var(--df-motion-ease-standard),
+    color var(--df-motion-duration-fast) var(--df-motion-ease-standard);
+}
+
+.df-theme-toggle-option[aria-checked="true"] {
+  background: var(--df-surface);
+  color: var(--df-ink);
+  box-shadow: var(--df-shadow-sm);
+}
+
+.df-theme-toggle-option:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+}
+
+.df-theme-toggle-note {
+  margin: 0;
+  max-width: 220px;
+  font-size: var(--df-type-meta-size);
+  line-height: var(--df-type-meta-line);
+  color: var(--df-muted);
+}
+
+/* Tone tokens in dark mode. Keep this list in step with tokens.css. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  --df-tone-ink-navy: #e6edf5;
+  --df-tone-ink-deep: #e6edf5;
+  --df-tone-ink-deepest: #eef3f9;
+  --df-tone-ink-2: #dfe7f2;
+  --df-tone-ink-3: #dfe7f2;
+  --df-tone-ink-4: #c9d3e0;
+  --df-tone-ink-5: #c9d3e0;
+  --df-tone-slate: #a3adbd;
+  --df-tone-slate-2: #9aa6b8;
+  --df-tone-slate-3: #9aa6b8;
+  --df-tone-danger-text: #ff8a80;
+  --df-tone-tint-1: #161b22;
+  --df-tone-tint-2: #161b22;
+  --df-tone-tint-3: #161b22;
+  --df-tone-tint-4: #1c222b;
+  --df-tone-tint-5: #0e1116;
+  --df-tone-primary-tint: #15294a;
+  --df-tone-danger-tint: #3d1d1b;
+  --df-tone-line-1: #2b3441;
+  --df-tone-line-2: #2b3441;
+  --df-tone-line-3: #2b3441;
+  --df-tone-line-4: #2b3441;
+  --df-tone-line-5: #2b3441;
+  --df-tone-line-6: #2b3441;
+  --df-tone-line-7: #2b3441;
+  --df-tone-line-8: #2b3441;
+  --df-tone-line-9: #2b3441;
+  --df-tone-line-soft-1: #222a35;
+  --df-tone-line-soft-2: #222a35;
+  --df-tone-line-soft-3: #222a35;
+  --df-tone-accent-line: #a898ff;
+  --df-tone-accent-strong: #a898ff;
+}
+
+}
+:root[data-theme="dark"] {
+  --df-tone-ink-navy: #e6edf5;
+  --df-tone-ink-deep: #e6edf5;
+  --df-tone-ink-deepest: #eef3f9;
+  --df-tone-ink-2: #dfe7f2;
+  --df-tone-ink-3: #dfe7f2;
+  --df-tone-ink-4: #c9d3e0;
+  --df-tone-ink-5: #c9d3e0;
+  --df-tone-slate: #a3adbd;
+  --df-tone-slate-2: #9aa6b8;
+  --df-tone-slate-3: #9aa6b8;
+  --df-tone-danger-text: #ff8a80;
+  --df-tone-tint-1: #161b22;
+  --df-tone-tint-2: #161b22;
+  --df-tone-tint-3: #161b22;
+  --df-tone-tint-4: #1c222b;
+  --df-tone-tint-5: #0e1116;
+  --df-tone-primary-tint: #15294a;
+  --df-tone-danger-tint: #3d1d1b;
+  --df-tone-line-1: #2b3441;
+  --df-tone-line-2: #2b3441;
+  --df-tone-line-3: #2b3441;
+  --df-tone-line-4: #2b3441;
+  --df-tone-line-5: #2b3441;
+  --df-tone-line-6: #2b3441;
+  --df-tone-line-7: #2b3441;
+  --df-tone-line-8: #2b3441;
+  --df-tone-line-9: #2b3441;
+  --df-tone-line-soft-1: #222a35;
+  --df-tone-line-soft-2: #222a35;
+  --df-tone-line-soft-3: #222a35;
+  --df-tone-accent-line: #a898ff;
+  --df-tone-accent-strong: #a898ff;
+}

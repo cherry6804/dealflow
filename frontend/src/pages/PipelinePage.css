@@ -345,7 +345,7 @@
 .pipeline-board::-webkit-scrollbar-track,
 .pipeline-column-cards::-webkit-scrollbar-track {
   border-radius: 10px;
-  background: #f5f7fb;
+  background: var(--df-tone-tint-5);
 }
 
 .pipeline-board::-webkit-scrollbar-thumb,

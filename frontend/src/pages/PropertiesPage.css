@@ -143,7 +143,7 @@
 .properties-clear-filters:hover,
 .properties-page-button:hover:not(:disabled) {
   border-color: #aebdd3;
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 .properties-primary-button:disabled,
@@ -209,7 +209,7 @@
 }
 
 .properties-search-field:focus-within {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 11%);
 }
 
@@ -284,7 +284,7 @@
   border-radius: 8px;
   outline: 0;
   background: var(--properties-surface);
-  color: #243b53;
+  color: var(--df-tone-ink-2);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
@@ -309,7 +309,7 @@
 .properties-form-field input:focus,
 .properties-form-field select:focus,
 .properties-form-field textarea:focus {
-  border-color: #8b83ff;
+  border-color: var(--df-tone-accent-line);
   box-shadow: 0 0 0 3px rgb(12 102 228 / 10%);
 }
 
@@ -325,7 +325,7 @@
 .properties-filter-field select option,
 .properties-form-field select option {
   background: #ffffff;
-  color: #263b57;
+  color: var(--df-tone-ink-3);
   font-weight: 500;
 }
 
@@ -371,7 +371,7 @@
 
 .properties-alert-error {
   border-color: #f1c5ca;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #a12b35;
 }
 
@@ -486,7 +486,7 @@
 .properties-grid-property strong,
 .properties-grid-price strong {
   overflow: hidden;
-  color: #102a43;
+  color: var(--df-tone-ink-deepest);
   font-size: 12px;
   font-weight: 750;
   line-height: 1.4;
@@ -908,7 +908,7 @@
   gap: 20px;
   padding: 26px 28px 22px;
   border-bottom: 1px solid #e3e9f3;
-  background: #fbfcff;
+  background: var(--df-tone-tint-1);
 }
 
 .properties-modal-header > div {
@@ -1045,8 +1045,8 @@
   justify-content: flex-end;
   gap: 10px;
   padding: 14px 28px;
-  border-top: 1px solid #e2e8f2;
-  background: #fbfcff;
+  border-top: 1px solid var(--df-tone-line-soft-2);
+  background: var(--df-tone-tint-1);
 }
 
 .properties-form-actions .properties-primary-button,
@@ -1066,7 +1066,7 @@
   padding: 12px 14px;
   border: 1px solid #f1c5ca;
   border-radius: 9px;
-  background: #fff5f5;
+  background: var(--df-tone-danger-tint);
   color: #a12b35;
 }
 
@@ -1303,7 +1303,7 @@
 
 .properties-page {
   padding: 14px 16px 22px;
-  background: #f5f7fb;
+  background: var(--df-tone-tint-5);
   font-size: 13px;
 }
 
@@ -1313,7 +1313,7 @@
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #d5deed;
+  border: 1px solid var(--df-tone-line-6);
   border-radius: 13px;
   background: #ffffff;
   box-shadow: 0 2px 6px rgb(24 45 80 / 3%);
@@ -1381,16 +1381,16 @@
 }
 
 .properties-page .properties-react-data-grid .rdg-header-row {
-  background: #f0f3f8 !important;
-  color: #34445c;
+  background: var(--df-tone-tint-4) !important;
+  color: var(--df-tone-ink-4);
   font-weight: 750;
   box-shadow: 0 1px 0 #d7e0ed, 0 2px 5px rgb(20 38 65 / 4%);
 }
 
 .properties-page .properties-react-data-grid .rdg-header-cell {
   padding: 0 12px;
-  border-right: 1px solid #d8e0ec;
-  background: #f0f3f8 !important;
+  border-right: 1px solid var(--df-tone-line-8);
+  background: var(--df-tone-tint-4) !important;
   font-size: 12px;
   font-weight: 750;
 }
@@ -1398,12 +1398,12 @@
 .properties-page .properties-react-data-grid .rdg-cell {
   min-width: 0;
   padding: 0 12px;
-  border-right: 1px solid #e0e6f0;
+  border-right: 1px solid var(--df-tone-line-3);
   line-height: 1.35;
 }
 
 .properties-page .properties-react-data-grid .rdg-row {
-  border-bottom: 1px solid #e0e6f0;
+  border-bottom: 1px solid var(--df-tone-line-3);
 }
 
 .properties-page .properties-react-data-grid .rdg-row:hover {

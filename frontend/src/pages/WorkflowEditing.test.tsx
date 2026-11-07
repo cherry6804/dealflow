@@ -6,6 +6,14 @@ import { workflowApi, type WorkflowDetail } from "../services/workflowApi";
 import WorkflowCanvas from "./WorkflowCanvas";
 import { connectionsFor } from "./workflowCanvasModel";
 import WorkflowsPage from "./WorkflowsPage";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactElement } from "react";
+
+
+/** The pages link between automation sections, so they render inside a router as they do in the app. */
+function renderWithRouter(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 vi.mock("../services/workflowApi", () => ({
   workflowApi: {
@@ -94,7 +102,7 @@ describe("workflow editing", () => {
   it("keeps the approval gate, failure policy, retries and timeout when a draft is saved", async () => {
     const user = userEvent.setup();
     vi.mocked(workflowApi.saveDraft).mockResolvedValue(gatedDetail);
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Gated follow-up/ }));
     await screen.findByRole("heading", { name: "Definition" });
@@ -112,7 +120,7 @@ describe("workflow editing", () => {
 
   it("selects a node on the canvas and shows that step's settings", async () => {
     const user = userEvent.setup();
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Gated follow-up/ }));
     const nodes = await screen.findAllByRole("button", { name: /CRM action/ });
@@ -126,7 +134,7 @@ describe("workflow editing", () => {
     const user = userEvent.setup();
     vi.mocked(workflowApi.createFromTemplate).mockResolvedValue({ id: "wf-3", name: "Pilot", status: "draft", revision: 1 });
     vi.mocked(workflowApi.get).mockResolvedValue({ ...gatedDetail, id: "wf-3", name: "Pilot" });
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.selectOptions(await screen.findByLabelText("Start from"), "new_lead");
     await user.type(screen.getByLabelText("Name"), "Pilot");
@@ -149,7 +157,7 @@ describe("workflow editing", () => {
       not_performed: ["CRM actions were not run and no CRM record was changed."],
       plan: [{ step_id: "score", type: "crm_action", branch: "main", outcome: "would_run", target: "lead.calculate_priority" }],
     });
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Gated follow-up/ }));
     const sample = await screen.findByLabelText("Sample input (JSON object)");
@@ -164,7 +172,7 @@ describe("workflow editing", () => {
 
   it("refuses a sample input that is not a JSON object without calling the service", async () => {
     const user = userEvent.setup();
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Gated follow-up/ }));
     fireEvent.change(await screen.findByLabelText("Sample input (JSON object)"), { target: { value: "[1]" } });
@@ -184,7 +192,7 @@ describe("workflow editing", () => {
   });
 
   it("shows an empty canvas message when there are no steps", () => {
-    render(<WorkflowCanvas nodes={[]} entry="" selectedIndex={null} onSelect={() => undefined} />);
+    renderWithRouter(<WorkflowCanvas nodes={[]} entry="" selectedIndex={null} onSelect={() => undefined} />);
     expect(screen.getByText("Add a step to see the workflow here.")).toBeTruthy();
   });
 });

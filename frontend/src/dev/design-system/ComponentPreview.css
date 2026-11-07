@@ -1,0 +1,68 @@
+/* Layout for the development-only component preview. Colours come from tokens, so both themes apply. */
+
+.df-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  background: var(--df-canvas);
+  color: var(--df-ink);
+  min-height: 100dvh;
+}
+
+.df-preview-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.df-preview-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.df-preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-xl);
+  background: var(--df-surface);
+}
+
+.df-preview-section h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.df-preview-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.df-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.df-preview-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

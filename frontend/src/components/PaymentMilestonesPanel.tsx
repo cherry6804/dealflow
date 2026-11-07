@@ -1,764 +1,489 @@
-
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-} from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
-import {
-  paymentMilestonesApi,
-  type PaymentMilestone,
-  type PaymentMilestoneCreateInput,
-  type PaymentMilestoneUpdateInput,
-} from "../services/dealApi";
-
-import "./PaymentMilestonesPanel.css";
+import { paymentMilestonesApi, type PaymentMilestone } from "../services/dealApi";
+import { milestoneStatus, currencyOptions, emptyMilestoneForm, isSameMilestoneForm, milestoneToForm, toMilestoneCreateInput, toMilestoneUpdateInput, validateMilestoneForm, type MilestoneFormErrors, type MilestoneFormValues } from "./deal-nested/payment-milestone-form";
+import { NestedRecordCard, NestedSummary } from "./record/NestedRecordParts";
+import { formatDateTime, formatMoney, totalsByCurrency } from "./record/nested-records";
+import { Button, Dialog, SelectField, TextField, TextareaField, useConfirmation } from "./ui";
 
 interface PaymentMilestonesPanelProps {
   dealId: string;
   dealTitle: string;
-  onClose: () => void;
-}
-
-interface MilestoneForm {
-  name: string;
-  amount: string;
+  /** Currency preselected for new milestones (the deal's currency). */
   currency: string;
-  dueAt: string;
-  notes: string;
+  onClose: () => void;
+  /** Called after a successful change so the parent deal can refresh. */
+  onChanged: (message: string) => void;
 }
 
-const EMPTY_FORM: MilestoneForm = {
-  name: "",
-  amount: "",
-  currency: "INR",
-  dueAt: "",
-  notes: "",
-};
+type FormTarget = { mode: "create" } | { mode: "edit"; milestone: PaymentMilestone };
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : "Something went wrong. Please try again.";
+function messageOf(error: unknown): string {
+  if (error instanceof ApiError || error instanceof Error) return error.message;
+  return "Something went wrong. Please try again.";
 }
 
-function formatAmount(
-  amount: number | string,
-  currency: string,
-): string {
-  const value = Number(amount);
-
-  if (!Number.isFinite(value)) {
-    return `${currency} ${amount}`;
-  }
-
-  try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2,
-    }).format(value);
-  } catch {
-    return `${currency} ${value.toLocaleString("en-IN")}`;
-  }
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
-}
-
-function toLocalDateTime(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "";
-
-  const localDate = new Date(
-    date.getTime() - date.getTimezoneOffset() * 60_000,
+function TotalLines({ rows, empty }: { rows: readonly PaymentMilestone[]; empty: string }): ReactNode {
+  const totals = totalsByCurrency(rows);
+  if (totals.length === 0) return empty;
+  return (
+    <span className="df-nested-total-lines">
+      {totals.map((total) => (
+        <span key={total.currency}>{formatMoney(total.total, total.currency)}</span>
+      ))}
+    </span>
   );
-
-  return localDate.toISOString().slice(0, 16);
 }
 
-function toUtcIso(value: string): string {
-  return new Date(value).toISOString();
-}
-
-function statusLabel(milestone: PaymentMilestone): string {
-  if (milestone.status === "PAID") return "Paid";
-  if (milestone.status === "CANCELLED") return "Cancelled";
-  return milestone.is_overdue ? "Overdue" : "Pending";
-}
-
-function statusClass(milestone: PaymentMilestone): string {
-  if (milestone.status === "PAID") {
-    return "payment-milestone-status payment-milestone-status-paid";
-  }
-
-  if (milestone.status === "CANCELLED") {
-    return "payment-milestone-status payment-milestone-status-cancelled";
-  }
-
-  if (milestone.is_overdue) {
-    return "payment-milestone-status payment-milestone-status-overdue";
-  }
-
-  return "payment-milestone-status payment-milestone-status-pending";
-}
-
-export default function PaymentMilestonesPanel({
-  dealId,
-  dealTitle,
-  onClose,
-}: PaymentMilestonesPanelProps) {
+/**
+ * Payment milestones for a deal, shown in a nested dialog over the deal record. Creating and editing use a nested form dialog;
+ * recording a payment asks for the optional reference in its own step. Every change reloads the list and tells the parent deal.
+ */
+export default function PaymentMilestonesPanel({ dealId, dealTitle, currency, onClose, onChanged }: PaymentMilestonesPanelProps) {
   const [milestones, setMilestones] = useState<PaymentMilestone[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState<MilestoneForm>(EMPTY_FORM);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
+  // A ref, not state: a second click in the same frame must not start a second request.
+  const inFlight = useRef(false);
+  const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
   const [formError, setFormError] = useState("");
-  const [paymentReferences, setPaymentReferences] = useState<
-    Record<string, string>
-  >({});
+  const [payTarget, setPayTarget] = useState<PaymentMilestone | null>(null);
+  const [payError, setPayError] = useState("");
+  const [confirm, confirmDialog] = useConfirmation();
 
   const loadMilestones = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
     try {
       const result = await paymentMilestonesApi.list(dealId);
       setMilestones(result.items);
-    } catch (loadError) {
-      setError(getErrorMessage(loadError));
-    } finally {
-      setLoading(false);
+      setLoadError("");
+      setStatus("ready");
+    } catch (error) {
+      setLoadError(messageOf(error));
+      setStatus("error");
     }
   }, [dealId]);
 
+  // Initial load. State is set only inside the request callbacks, never synchronously in the effect body.
   useEffect(() => {
-    void loadMilestones();
-  }, [loadMilestones]);
-
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !saving) {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose, saving]);
-
-  const summary = useMemo(() => {
-    const pending = milestones.filter(
-      (item) => item.status === "PENDING",
-    );
-
-    const paid = milestones.filter(
-      (item) => item.status === "PAID",
-    );
-
-    const overdue = pending.filter((item) => item.is_overdue);
-
-    return {
-      total: milestones.length,
-      pending: pending.length,
-      paid: paid.length,
-      overdue: overdue.length,
-      pendingValue: pending.reduce(
-        (sum, item) => sum + Number(item.amount || 0),
-        0,
-      ),
-      paidValue: paid.reduce(
-        (sum, item) => sum + Number(item.amount || 0),
-        0,
-      ),
-    };
-  }, [milestones]);
-
-  function openCreateForm() {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setFormError("");
-    setIsFormOpen(true);
-  }
-
-  function openEditForm(milestone: PaymentMilestone) {
-    if (milestone.status !== "PENDING") return;
-
-    setEditingId(milestone.id);
-    setForm({
-      name: milestone.name,
-      amount: String(milestone.amount),
-      currency: milestone.currency,
-      dueAt: toLocalDateTime(milestone.due_at),
-      notes: milestone.notes ?? "",
-    });
-    setFormError("");
-    setIsFormOpen(true);
-  }
-
-  function updateForm<K extends keyof MilestoneForm>(
-    key: K,
-    value: MilestoneForm[K],
-  ) {
-    setForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }
-
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (saving) return;
-
-    setFormError("");
-    setSuccess("");
-
-    const name = form.name.trim();
-    const amount = Number(form.amount);
-    const currency = form.currency.trim().toUpperCase();
-
-    if (!name) {
-      setFormError("Enter a milestone name.");
-      return;
-    }
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setFormError("Amount must be greater than zero.");
-      return;
-    }
-
-    if (!/^[A-Z]{3}$/.test(currency)) {
-      setFormError("Enter a valid three-letter currency code.");
-      return;
-    }
-
-    if (
-      !form.dueAt ||
-      Number.isNaN(new Date(form.dueAt).getTime())
-    ) {
-      setFormError("Select a valid due date and time.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      if (editingId) {
-        const input: PaymentMilestoneUpdateInput = {
-          name,
-          amount,
-          currency,
-          due_at: toUtcIso(form.dueAt),
-          notes: form.notes.trim() || null,
-        };
-
-        await paymentMilestonesApi.update(editingId, input);
-        setSuccess("Payment milestone updated successfully.");
-      } else {
-        const input: PaymentMilestoneCreateInput = {
-          name,
-          amount,
-          currency,
-          due_at: toUtcIso(form.dueAt),
-          notes: form.notes.trim() || null,
-        };
-
-        await paymentMilestonesApi.create(dealId, input);
-        setSuccess("Payment milestone created successfully.");
-      }
-
-      setIsFormOpen(false);
-      setEditingId(null);
-      setForm(EMPTY_FORM);
-      await loadMilestones();
-    } catch (saveError) {
-      setFormError(getErrorMessage(saveError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleMarkPaid(milestone: PaymentMilestone) {
-    if (saving || milestone.status !== "PENDING") return;
-
-    setError("");
-    setSuccess("");
-    setSaving(true);
-
-    try {
-      await paymentMilestonesApi.markPaid(milestone.id, {
-        payment_reference:
-          paymentReferences[milestone.id]?.trim() || null,
+    let cancelled = false;
+    paymentMilestonesApi
+      .list(dealId)
+      .then((result) => {
+        if (cancelled) return;
+        setMilestones(result.items);
+        setLoadError("");
+        setStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(messageOf(error));
+        setStatus("error");
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [dealId]);
 
-      setSuccess(`"${milestone.name}" marked as paid.`);
-      setPaymentReferences((current) => ({
-        ...current,
-        [milestone.id]: "",
-      }));
+  async function refresh(message: string) {
+    setNotice(message);
+    onChanged(message);
+    await loadMilestones();
+  }
 
-      await loadMilestones();
-    } catch (actionError) {
-      setError(getErrorMessage(actionError));
+  const pending = milestones.filter((item) => item.status === "PENDING");
+  const paid = milestones.filter((item) => item.status === "PAID");
+  const overdueCount = pending.filter((item) => item.is_overdue).length;
+
+  async function handleSave(values: MilestoneFormValues, target: FormTarget) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setFormError("");
+    try {
+      if (target.mode === "edit") {
+        await paymentMilestonesApi.update(target.milestone.id, toMilestoneUpdateInput(values));
+        setFormTarget(null);
+        await refresh("Payment milestone updated.");
+      } else {
+        await paymentMilestonesApi.create(dealId, toMilestoneCreateInput(values));
+        setFormTarget(null);
+        await refresh("Payment milestone created.");
+      }
+    } catch (error) {
+      setFormError(messageOf(error));
     } finally {
-      setSaving(false);
+      inFlight.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function handleRecordPayment(reference: string | null) {
+    if (!payTarget || busy) return;
+    const target = payTarget;
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setPayError("");
+    try {
+      await paymentMilestonesApi.markPaid(target.id, { payment_reference: reference });
+      setPayTarget(null);
+      await refresh(`"${target.name}" marked as paid.`);
+    } catch (error) {
+      setPayError(messageOf(error));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
     }
   }
 
   async function handleCancel(milestone: PaymentMilestone) {
-    if (saving || milestone.status !== "PENDING") return;
+    if (busy || milestone.status !== "PENDING") return;
 
-    const confirmed = window.confirm(
-      `Cancel the "${milestone.name}" payment milestone?`,
-    );
-
+    const confirmed = await confirm(`"${milestone.name}" will be cancelled. A cancelled milestone cannot be edited or paid.`, {
+      title: "Cancel payment milestone?",
+      confirmLabel: "Cancel milestone",
+      tone: "danger",
+    });
     if (!confirmed) return;
 
-    setError("");
-    setSuccess("");
-    setSaving(true);
-
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setActionError("");
+    setNotice("");
     try {
       await paymentMilestonesApi.cancel(milestone.id);
-      setSuccess(`"${milestone.name}" cancelled.`);
-      await loadMilestones();
-    } catch (actionError) {
-      setError(getErrorMessage(actionError));
+      await refresh(`"${milestone.name}" cancelled.`);
+    } catch (error) {
+      setActionError(messageOf(error));
     } finally {
-      setSaving(false);
+      inFlight.current = false;
+      setBusy(false);
     }
   }
 
-  return createPortal(
-    <div
-      className="payment-milestones-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (
-          event.target === event.currentTarget &&
-          !saving
-        ) {
-          onClose();
-        }
-      }}
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Payment milestones"
+      eyebrow="Deal workspace"
+      description={dealTitle}
+      closeLabel="Close payment milestones"
+      size="lg"
+      busy={busy}
+      footer={
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          Close
+        </Button>
+      }
     >
-      <section
-        className="payment-milestones-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="payment-milestones-title"
-      >
-        <header className="payment-milestones-header">
-          <div>
-            <span className="payment-milestones-eyebrow">
-              DEAL WORKSPACE
-            </span>
-            <h2 id="payment-milestones-title">
-              Payment milestones
-            </h2>
-            <p>{dealTitle}</p>
-          </div>
+      {loadError ? (
+        <div className="df-sales-form-message df-sales-form-message--error" role="alert">
+          <span>{loadError}</span>{" "}
+          <Button variant="tertiary" size="sm" onClick={() => void loadMilestones()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {actionError ? (
+        <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {notice ? (
+        <p className="df-sales-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
 
-          <button
-            type="button"
-            className="payment-milestones-close"
-            aria-label="Close payment milestones"
-            disabled={saving}
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
+      {status === "loading" ? (
+        <p className="df-sales-muted" role="status">
+          Loading payment milestones…
+        </p>
+      ) : null}
 
-        <div className="payment-milestones-body">
-          {error && (
-            <div className="payment-milestones-alert error" role="alert">
-              <span>{error}</span>
-              <button
-                type="button"
-                onClick={() => void loadMilestones()}
-                disabled={loading}
-              >
-                Retry
-              </button>
-            </div>
-          )}
+      {status === "ready" ? (
+        <>
+          <NestedSummary
+            label="Milestone totals"
+            items={[
+              { label: "Total milestones", value: milestones.length },
+              { label: "Pending", value: <TotalLines rows={pending} empty="—" /> },
+              { label: "Paid", value: <TotalLines rows={paid} empty="—" /> },
+              { label: "Overdue", value: overdueCount, attention: overdueCount > 0 },
+            ]}
+          />
 
-          {success && (
-            <div
-              className="payment-milestones-alert success"
-              role="status"
-            >
-              {success}
-            </div>
-          )}
-
-          <div className="payment-milestones-summary">
-            <article>
-              <span>Total milestones</span>
-              <strong>{summary.total}</strong>
-            </article>
-            <article>
-              <span>Pending amount</span>
-              <strong>
-                {formatAmount(summary.pendingValue, "INR")}
-              </strong>
-            </article>
-            <article>
-              <span>Paid amount</span>
-              <strong>
-                {formatAmount(summary.paidValue, "INR")}
-              </strong>
-            </article>
-            <article className={summary.overdue ? "has-overdue" : ""}>
-              <span>Overdue</span>
-              <strong>{summary.overdue}</strong>
-            </article>
-          </div>
-
-          <div className="payment-milestones-toolbar">
+          <div className="df-nested-toolbar">
             <div>
               <h3>Milestone schedule</h3>
-              <p>
-                Track expected payments and record completed payments.
-              </p>
+              <p>Track expected payments and record completed ones.</p>
             </div>
-
-            <button
-              type="button"
-              className="payment-milestones-primary"
-              onClick={openCreateForm}
-              disabled={saving}
-            >
-              + Add milestone
-            </button>
+            <Button variant="primary" size="sm" onClick={() => setFormTarget({ mode: "create" })} disabled={busy}>
+              Add milestone
+            </Button>
           </div>
 
-          {loading ? (
-            <div className="payment-milestones-state" role="status">
-              Loading payment milestones…
-            </div>
-          ) : milestones.length === 0 ? (
-            <div className="payment-milestones-empty">
-              <div aria-hidden="true">₹</div>
+          {milestones.length === 0 ? (
+            <div className="df-nested-empty">
               <h3>No payment milestones yet</h3>
-              <p>
-                Add booking advances, installment payments, or final
-                payment milestones for this deal.
-              </p>
-              <button
-                type="button"
-                className="payment-milestones-primary"
-                onClick={openCreateForm}
-              >
-                Create first milestone
-              </button>
+              <p>Add booking advances, instalments or final payments for this deal.</p>
+              <Button variant="primary" size="sm" onClick={() => setFormTarget({ mode: "create" })} disabled={busy}>
+                Add first milestone
+              </Button>
             </div>
           ) : (
-            <div className="payment-milestones-list">
-              {milestones.map((milestone) => (
-                <article
-                  className="payment-milestone-card"
-                  key={milestone.id}
-                >
-                  <div className="payment-milestone-card-heading">
-                    <div>
-                      <h4>{milestone.name}</h4>
-                      <p className="payment-milestone-amount">
-                        {formatAmount(
-                          milestone.amount,
-                          milestone.currency,
-                        )}
-                      </p>
-                    </div>
-
-                    <span className={statusClass(milestone)}>
-                      {statusLabel(milestone)}
-                    </span>
-                  </div>
-
-                  <div className="payment-milestone-meta">
-                    <span>
-                      <strong>Due date</strong>
-                      {formatDate(milestone.due_at)}
-                    </span>
-                    {milestone.paid_at && (
-                      <span>
-                        <strong>Paid on</strong>
-                        {formatDate(milestone.paid_at)}
-                      </span>
-                    )}
-                    {milestone.payment_reference && (
-                      <span>
-                        <strong>Reference</strong>
-                        {milestone.payment_reference}
-                      </span>
-                    )}
-                  </div>
-
-                  {milestone.notes && (
-                    <p className="payment-milestone-notes">
-                      {milestone.notes}
-                    </p>
-                  )}
-
-                  {milestone.status === "PENDING" && (
-                    <div className="payment-milestone-actions">
-                      <label>
-                        <span>Payment reference (optional)</span>
-                        <input
-                          type="text"
-                          maxLength={200}
-                          value={
-                            paymentReferences[milestone.id] ?? ""
-                          }
-                          onChange={(event) =>
-                            setPaymentReferences((current) => ({
-                              ...current,
-                              [milestone.id]: event.target.value,
-                            }))
-                          }
-                          placeholder="Transaction ID or receipt number"
-                          disabled={saving}
-                        />
-                      </label>
-
-                      <div className="payment-milestone-buttons">
-                        <button
-                          type="button"
-                          className="payment-milestones-secondary"
-                          onClick={() => openEditForm(milestone)}
-                          disabled={saving}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="payment-milestones-paid"
-                          onClick={() => void handleMarkPaid(milestone)}
-                          disabled={saving}
-                        >
-                          Mark paid
-                        </button>
-                        <button
-                          type="button"
-                          className="payment-milestones-cancel"
-                          onClick={() => void handleCancel(milestone)}
-                          disabled={saving}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
+            <ul className="df-nested-list" aria-label="Payment milestones">
+              {milestones.map((milestone) => {
+                const info = milestoneStatus(milestone);
+                const meta = [
+                  { label: "Due", value: formatDateTime(milestone.due_at) },
+                  ...(milestone.paid_at ? [{ label: "Paid on", value: formatDateTime(milestone.paid_at) }] : []),
+                  ...(milestone.payment_reference ? [{ label: "Payment reference", value: milestone.payment_reference }] : []),
+                ];
+                return (
+                  <li key={milestone.id}>
+                    <NestedRecordCard
+                      title={milestone.name}
+                      amount={formatMoney(milestone.amount, milestone.currency)}
+                      status={info}
+                      meta={meta}
+                      notes={milestone.notes}
+                      actions={
+                        milestone.status === "PENDING" ? (
+                          <>
+                            <Button variant="secondary" size="sm" onClick={() => setFormTarget({ mode: "edit", milestone })} disabled={busy}>
+                              Edit milestone
+                            </Button>
+                            <Button variant="primary" size="sm" onClick={() => setPayTarget(milestone)} disabled={busy}>
+                              Record payment
+                            </Button>
+                            <Button variant="danger" size="sm" onClick={() => void handleCancel(milestone)} disabled={busy}>
+                              Cancel milestone
+                            </Button>
+                          </>
+                        ) : undefined
+                      }
+                    />
+                  </li>
+                );
+              })}
+            </ul>
           )}
+        </>
+      ) : null}
 
-          {isFormOpen &&
-            createPortal(
-              <div
-                className="payment-milestone-form-backdrop"
-                role="presentation"
-                onMouseDown={(event) => {
-                  if (event.target === event.currentTarget && !saving) {
-                    setIsFormOpen(false);
-                    setFormError("");
-                  }
-                }}
-              >
-                <section
-                  className="payment-milestone-form-modal"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="payment-milestone-form-title"
-                >
-                  <header className="payment-milestone-form-modal-header">
-                    <div>
-                      <span className="payment-milestones-eyebrow">
-                        PAYMENT SCHEDULE
-                      </span>
-                      <h2 id="payment-milestone-form-title">
-                        {editingId ? "Edit milestone" : "New milestone"}
-                      </h2>
-                    </div>
-                    <button
-                      type="button"
-                      className="payment-milestone-form-close"
-                      aria-label="Close milestone form"
-                      disabled={saving}
-                      onClick={() => {
-                        setIsFormOpen(false);
-                        setFormError("");
-                      }}
-                    >
-                      ×
-                    </button>
-                  </header>
+      {formTarget ? (
+        <MilestoneFormDialog
+          target={formTarget}
+          currency={currency}
+          busy={busy}
+          serverError={formError}
+          onSubmit={(values) => void handleSave(values, formTarget)}
+          onClose={() => {
+            if (busy) return;
+            setFormTarget(null);
+            setFormError("");
+          }}
+        />
+      ) : null}
 
-                  <div className="payment-milestone-form-wrap">
-                    <form className="payment-milestone-form" onSubmit={handleSave}>
-                      <div className="payment-milestone-form-body">
-                {formError && (
-                  <div
-                    className="payment-milestones-alert error"
-                    role="alert"
-                  >
-                    {formError}
-                  </div>
-                )}
+      {payTarget ? (
+        <RecordPaymentDialog
+          milestone={payTarget}
+          busy={busy}
+          serverError={payError}
+          onConfirm={(reference) => void handleRecordPayment(reference)}
+          onClose={() => {
+            if (busy) return;
+            setPayTarget(null);
+            setPayError("");
+          }}
+        />
+      ) : null}
 
-                <div className="payment-milestone-form-grid">
-                  <label className="full">
-                    <span>Milestone name *</span>
-                    <input
-                      type="text"
-                      required
-                      maxLength={150}
-                      value={form.name}
-                      onChange={(event) =>
-                        updateForm("name", event.target.value)
-                      }
-                      placeholder="e.g. Booking advance"
-                      disabled={saving}
-                    />
-                  </label>
+      {confirmDialog}
+    </Dialog>
+  );
+}
 
-                  <label>
-                    <span>Amount *</span>
-                    <input
-                      type="number"
-                      required
-                      min="0.01"
-                      step="0.01"
-                      value={form.amount}
-                      onChange={(event) =>
-                        updateForm("amount", event.target.value)
-                      }
-                      placeholder="500000"
-                      disabled={saving}
-                    />
-                  </label>
+interface MilestoneFormDialogProps {
+  target: FormTarget;
+  currency: string;
+  busy: boolean;
+  serverError: string;
+  onSubmit: (values: MilestoneFormValues) => void;
+  onClose: () => void;
+}
 
-                  <label>
-                    <span>Currency *</span>
-                    <select
-                      value={form.currency}
-                      onChange={(event) =>
-                        updateForm("currency", event.target.value)
-                      }
-                      disabled={saving}
-                    >
-                      <option value="INR">INR — Indian Rupee</option>
-                      <option value="USD">USD — US Dollar</option>
-                      <option value="AED">AED — UAE Dirham</option>
-                      <option value="GBP">GBP — Pound Sterling</option>
-                    </select>
-                  </label>
+function MilestoneFormDialog({ target, currency, busy, serverError, onSubmit, onClose }: MilestoneFormDialogProps) {
+  const [initial] = useState<MilestoneFormValues>(() => (target.mode === "edit" ? milestoneToForm(target.milestone) : emptyMilestoneForm(currency)));
+  const [values, setValues] = useState<MilestoneFormValues>(initial);
+  const [errors, setErrors] = useState<MilestoneFormErrors>({});
+  const dirty = !isSameMilestoneForm(values, initial);
+  const editing = target.mode === "edit";
 
-                  <label className="full">
-                    <span>Due date and time *</span>
-                    <input
-                      type="datetime-local"
-                      required
-                      value={form.dueAt}
-                      onChange={(event) =>
-                        updateForm("dueAt", event.target.value)
-                      }
-                      disabled={saving}
-                    />
-                  </label>
+  function update<K extends keyof MilestoneFormValues>(key: K, value: MilestoneFormValues[K]) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
 
-                  <label className="full">
-                    <span>Notes</span>
-                    <textarea
-                      rows={3}
-                      maxLength={2000}
-                      value={form.notes}
-                      onChange={(event) =>
-                        updateForm("notes", event.target.value)
-                      }
-                      placeholder="Payment terms or additional details"
-                      disabled={saving}
-                    />
-                  </label>
-                </div>
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const found = validateMilestoneForm(values);
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+    onSubmit(values);
+  }
 
-                      </div>
-                <footer className="payment-milestone-form-actions">
-                  <button
-                    type="button"
-                    className="payment-milestones-secondary"
-                    onClick={() => {
-                      setIsFormOpen(false);
-                      setFormError("");
-                    }}
-                    disabled={saving}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="submit"
-                    className="payment-milestones-primary"
-                    disabled={saving}
-                  >
-                    {saving
-                      ? "Saving…"
-                      : editingId
-                        ? "Save changes"
-                        : "Create milestone"}
-                  </button>
-                </footer>
-                    </form>
-                  </div>
-                </section>
-              </div>,
-              document.body,
-            )}
+  const currencyChoices = currencyOptions(values.currency).map((code) => ({ value: code, label: code }));
 
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={editing ? "Edit payment milestone" : "New payment milestone"}
+      eyebrow="Payment schedule"
+      closeLabel="Close milestone form"
+      size="md"
+      busy={busy}
+      dirty={dirty}
+      footer={(close) => (
+        <>
+          <Button variant="secondary" onClick={close} disabled={busy}>
+            Back
+          </Button>
+          <Button type="submit" form="payment-milestone-form" variant="primary" loading={busy} disabled={busy}>
+            {editing ? "Save changes" : "Create milestone"}
+          </Button>
+        </>
+      )}
+    >
+      <form id="payment-milestone-form" onSubmit={handleSubmit} noValidate>
+        {serverError ? (
+          <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+            {serverError}
+          </p>
+        ) : null}
+        <div className="df-nested-form">
+          <TextField
+            label="Milestone name"
+            required
+            maxLength={150}
+            value={values.name}
+            onChange={(event) => update("name", event.target.value)}
+            placeholder="e.g. Booking advance"
+            disabled={busy}
+            error={errors.name}
+          />
+          <div className="df-nested-form-row">
+            <TextField
+              label="Amount"
+              required
+              inputMode="decimal"
+              value={values.amount}
+              onChange={(event) => update("amount", event.target.value)}
+              placeholder="e.g. 500000"
+              helper="Up to two decimal places."
+              disabled={busy}
+              error={errors.amount}
+            />
+            <SelectField
+              label="Currency"
+              required
+              value={values.currency}
+              options={currencyChoices}
+              onChange={(event) => update("currency", event.target.value)}
+              disabled={busy}
+              error={errors.currency}
+            />
+          </div>
+          <TextField
+            label="Due date and time"
+            required
+            type="datetime-local"
+            value={values.dueAt}
+            onChange={(event) => update("dueAt", event.target.value)}
+            disabled={busy}
+            error={errors.dueAt}
+          />
+          <TextareaField
+            label="Notes"
+            rows={3}
+            maxLength={2000}
+            value={values.notes}
+            onChange={(event) => update("notes", event.target.value)}
+            placeholder="Payment terms or other details"
+            disabled={busy}
+            error={errors.notes}
+          />
         </div>
+      </form>
+    </Dialog>
+  );
+}
 
-        <footer className="payment-milestones-footer">
-          <button
-            type="button"
-            className="payment-milestones-secondary"
-            onClick={onClose}
-            disabled={saving}
-          >
-            Close
-          </button>
-        </footer>
-      </section>
-    </div>,
-    document.body,
+interface RecordPaymentDialogProps {
+  milestone: PaymentMilestone;
+  busy: boolean;
+  serverError: string;
+  onConfirm: (reference: string | null) => void;
+  onClose: () => void;
+}
+
+function RecordPaymentDialog({ milestone, busy, serverError, onConfirm, onClose }: RecordPaymentDialogProps) {
+  const [reference, setReference] = useState("");
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Record payment"
+      eyebrow={milestone.name}
+      closeLabel="Close record payment"
+      size="sm"
+      busy={busy}
+      dirty={reference.trim().length > 0}
+      footer={(close) => (
+        <>
+          <Button variant="secondary" onClick={close} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} disabled={busy} onClick={() => onConfirm(reference.trim() || null)}>
+            Record payment
+          </Button>
+        </>
+      )}
+    >
+      <dl className="df-nested-card-meta">
+        <div>
+          <dt>Amount due</dt>
+          <dd>{formatMoney(milestone.amount, milestone.currency)}</dd>
+        </div>
+        <div>
+          <dt>Due</dt>
+          <dd>{formatDateTime(milestone.due_at)}</dd>
+        </div>
+      </dl>
+      <p className="df-sales-muted">Confirm that the payment has been received before recording it. A paid milestone cannot be edited or cancelled.</p>
+      <TextField
+        label="Payment reference (optional)"
+        maxLength={200}
+        value={reference}
+        onChange={(event) => setReference(event.target.value)}
+        helper="Transaction ID or receipt number."
+        disabled={busy}
+      />
+      {serverError ? (
+        <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+          {serverError}
+        </p>
+      ) : null}
+    </Dialog>
   );
 }

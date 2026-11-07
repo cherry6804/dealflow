@@ -1299,10 +1299,7 @@ async function handleBulkRescheduleFollowUps() {
   return (
     <main className="leads-page leads-workspace">
       <header className="leads-page-header">
-        <div className="leads-heading-copy">
-          <h1>Leads</h1>
-          <p>Manage enquiries, understand intent, and keep every next step visible.</p>
-        </div>
+        <h1 className="df-visually-hidden">Leads</h1>
       </header>
 
       {success && (

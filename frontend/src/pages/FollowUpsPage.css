@@ -52,7 +52,7 @@
 }
 
 .followups-error {
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .followups-state {
@@ -129,7 +129,7 @@
 
 .followups-status-overdue {
   background: #fef3f2;
-  color: #b42318;
+  color: var(--df-tone-danger-text);
 }
 
 .followups-type {
@@ -190,7 +190,7 @@
 .followups-secondary-button {
   border: 1px solid #c9cfd8;
   background: #fff;
-  color: #344054;
+  color: var(--df-tone-ink-5);
 }
 
 .followups-primary-button:disabled,

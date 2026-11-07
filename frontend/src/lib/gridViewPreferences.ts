@@ -1,3 +1,11 @@
+import {
+  parsePersonalPreference,
+  personalPreferenceKey,
+  readRawPreference,
+  removePersonalPreference,
+  writePersonalPreference,
+} from "./personalPreferences";
+
 export interface GridColumnOption {
   key: string;
   label: string;
@@ -25,7 +33,7 @@ export function gridColumnStorageKey(
   userId: string,
   gridId: string,
 ): string {
-  return `dealflow:grid-view:${organizationId}:${userId}:${gridId}`;
+  return personalPreferenceKey("grid-view", { userId, organizationId }, gridId) ?? "";
 }
 
 function isString(value: unknown): value is string {
@@ -146,37 +154,31 @@ export function arrangeGridColumns<T extends { key: string }>(
   return [...arranged, ...fixed];
 }
 
+/**
+ * Column preferences are personal: they are read and written under the signed-in user's key for this grid and
+ * organization. The key is a string from gridColumnStorageKey, which may be empty when no user is signed in; nothing
+ * is read or written in that case.
+ */
 export function loadGridColumnPreferences(
   storageKey: string,
   columnOptions: readonly GridColumnOption[],
 ): GridColumnPreferences {
-  try {
-    const raw = localStorage.getItem(storageKey);
-
-    return normalizeGridColumnPreferences(
-      raw ? JSON.parse(raw) : null,
-      columnOptions,
-    );
-  } catch {
-    return normalizeGridColumnPreferences(null, columnOptions);
-  }
+  return parsePersonalPreference(
+    readRawPreference(storageKey || null),
+    (data) => normalizeGridColumnPreferences(data, columnOptions),
+    normalizeGridColumnPreferences(null, columnOptions),
+    { acceptLegacy: true },
+  );
 }
 
 export function saveGridColumnPreferences(
   storageKey: string,
   preferences: GridColumnPreferences,
 ): void {
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(preferences));
-  } catch {
-    // The grid remains usable when browser storage is unavailable.
-  }
+  // A refused write leaves the grid usable for this session.
+  writePersonalPreference(storageKey || null, preferences);
 }
 
 export function clearGridColumnPreferences(storageKey: string): void {
-  try {
-    localStorage.removeItem(storageKey);
-  } catch {
-    // Resetting local preferences must not break the grid.
-  }
+  removePersonalPreference(storageKey || null);
 }

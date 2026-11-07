@@ -315,7 +315,7 @@ tbody tr:last-child td,
 
 tbody tr:hover td,
 .data-table tbody tr:hover td {
-  background: #f8faff;
+  background: var(--df-tone-tint-2);
 }
 
 tbody tr:focus-within td,

@@ -1,4 +1,11 @@
 import { WORKSPACE_SPACE_IDS } from "./workspaceSpaces";
+import {
+  parsePersonalPreference,
+  personalPreferenceKey,
+  readRawPreference,
+  removePersonalPreference,
+  writePersonalPreference,
+} from "../../lib/personalPreferences";
 
 export type TableDensity = "comfortable" | "compact";
 
@@ -51,8 +58,9 @@ export const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
   tableDensity: "comfortable",
 };
 
-function storageKey(organizationId: string, userId: string): string {
-  return `dealflow:workspace-preferences:${organizationId}:${userId}`;
+/** Workspace preferences are personal: one key per user per organization, in the personal preference store. */
+function storageKey(organizationId: string, userId: string): string | null {
+  return personalPreferenceKey("workspace-preferences", { userId, organizationId });
 }
 
 function uniqueStrings(value: unknown): string[] | null {
@@ -151,23 +159,15 @@ export function loadWorkspacePreferences(
   userId: string,
   availableModules: string[] = DEFAULT_WORKSPACE_PREFERENCES.navigationOrder,
 ): WorkspacePreferences {
-  try {
-    const raw = localStorage.getItem(storageKey(organizationId, userId));
-
-    if (!raw) {
-      return normalizePreferences(
-        DEFAULT_WORKSPACE_PREFERENCES,
-        availableModules,
-      );
-    }
-
-    return normalizePreferences(JSON.parse(raw), availableModules);
-  } catch {
-    return normalizePreferences(
-      DEFAULT_WORKSPACE_PREFERENCES,
-      availableModules,
-    );
-  }
+  const key = storageKey(organizationId, userId);
+  const fallback = normalizePreferences(DEFAULT_WORKSPACE_PREFERENCES, availableModules);
+  // Values saved before the envelope existed are accepted; normalization fills any missing fields.
+  return parsePersonalPreference(
+    readRawPreference(key),
+    (data) => normalizePreferences(data, availableModules),
+    fallback,
+    { acceptLegacy: true },
+  );
 }
 
 export function saveWorkspacePreferences(
@@ -175,15 +175,8 @@ export function saveWorkspacePreferences(
   userId: string,
   preferences: WorkspacePreferences,
 ): void {
-  try {
-    localStorage.setItem(
-      storageKey(organizationId, userId),
-      JSON.stringify(preferences),
-    );
-  } catch {
-    // The workspace remains usable if browser storage is unavailable.
-  }
-
+  // A refused write leaves the workspace usable for this session; the next load shows the last saved state.
+  writePersonalPreference(storageKey(organizationId, userId), preferences);
   window.dispatchEvent(new Event(WORKSPACE_PREFERENCES_CHANGED_EVENT));
 }
 
@@ -191,11 +184,7 @@ export function resetWorkspacePreferences(
   organizationId: string,
   userId: string,
 ): void {
-  try {
-    localStorage.removeItem(storageKey(organizationId, userId));
-  } catch {
-    // Resetting local preferences must not break workspace navigation.
-  }
-
+  // Removes only this user's key in this organization.
+  removePersonalPreference(storageKey(organizationId, userId));
   window.dispatchEvent(new Event(WORKSPACE_PREFERENCES_CHANGED_EVENT));
 }

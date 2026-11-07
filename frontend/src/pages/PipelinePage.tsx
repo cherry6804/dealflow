@@ -334,13 +334,7 @@ export default function PipelinePage() {
   return (
     <section className="pipeline-page">
       <header className="pipeline-header">
-        <div>
-          <h1>Pipeline</h1>
-          <p className="pipeline-subtitle">
-            Track leads through every stage, manage opportunities, and keep the
-            next action visible.
-          </p>
-        </div>
+        <h1 className="df-visually-hidden">Pipeline</h1>
 
       </header>
 
