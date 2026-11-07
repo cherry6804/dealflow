@@ -240,6 +240,7 @@ export default function ShellPreview() {
   const notifications = useMemo(
     () => ({
       load: loadFixtureNotifications,
+      unreadCount: async () => FIXTURE_NOTIFICATIONS.filter((entry) => !entry.read).length,
       markRead: async () => undefined,
       markAllRead: async () => undefined,
     }),
