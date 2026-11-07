@@ -1,0 +1,181 @@
+/*
+ * Import center. Tokens only; light and dark themes apply. Progress and step transitions stop when reduced motion is requested.
+ */
+
+.df-ops-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.df-ops-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--df-text-sm);
+  color: var(--df-muted);
+}
+
+.df-ops-step--active {
+  color: var(--df-ink);
+  font-weight: var(--df-font-weight-semibold);
+}
+
+.df-ops-step--done {
+  color: var(--df-success);
+}
+
+.df-ops-step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: var(--df-radius-full);
+  font-size: var(--df-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.df-ops-step--active .df-ops-step-index {
+  background: var(--df-primary);
+  border-color: var(--df-primary);
+  color: var(--df-on-primary);
+}
+
+.df-ops-type-list {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.df-ops-type-list--compact {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.df-ops-type {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  color: var(--df-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--df-transition-fast), background-color var(--df-transition-fast);
+}
+
+.df-ops-type:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.df-ops-type:not(:disabled):hover {
+  background: var(--df-surface-hover);
+}
+
+.df-ops-type:focus-visible {
+  outline: 2px solid var(--df-focus-ring);
+  outline-offset: 2px;
+}
+
+.df-ops-type--selected {
+  border-color: var(--df-primary);
+  background: var(--df-primary-soft);
+}
+
+.df-ops-type--static {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  cursor: default;
+}
+
+.df-ops-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+}
+
+.df-ops-table {
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  font-size: var(--df-text-sm);
+}
+
+.df-ops-table th,
+.df-ops-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--df-border-soft);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.df-ops-table th {
+  background: var(--df-surface-soft);
+  font-weight: var(--df-font-weight-semibold);
+  color: var(--df-ink-soft);
+}
+
+.df-ops-progress {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--df-radius-full);
+  background: var(--df-neutral-soft);
+}
+
+.df-ops-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--df-primary);
+  animation: df-ops-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes df-ops-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(260%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-ops-progress-bar {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+
+  .df-ops-type {
+    transition: none;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .df-ops-type-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
