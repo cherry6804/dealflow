@@ -320,3 +320,23 @@ Browser check (dev database, 746px pane and 1440px desktop, 360px phone emulatio
 Not done in the browser: recording a payment or agreeing a commission on the dev data. Both change financial status, and a paid or agreed record cannot be reverted through the API. They are covered by the unit tests. The QA milestone and commission remain on the dev deal as Pending and Proposed.
 
 Not yet verified: widths 320, 390–430, 768, 1024, 1920; browser zoom; light theme; keyboard-only pass on each nested step.
+
+## Operations: Documents, Imports, Automation (DFR-UI-OPS-001)
+
+**Audit findings that shaped the work.** The APIs are narrower than the brief's list. Documents: categories are fixed; links are to a lead, property or deal only; there is no metadata-update or delete endpoint; the list returns only available documents. Imports: contacts only; columns match by header name (no mapping choice); no list of past imports; duplicates are failed rows, never created. Automation: one trigger (a deal is created) and one action (create a follow-up), with conditions; no retry operation; creating rules needs a plan entitlement. Workflows and approvals already have their own pages and are linked from the automation sections.
+
+**Documents** (`pages/operations/documents`). Library grid over every document with category chips, search, link and access filters, sorting, uploader names (from the team directory), record links and status. Upload with validation, category-aware type suggestions, and an optional link; a failed link keeps the stored file and says so. Detail dialog: preview for PDF, images and text; download; change or remove the record link (removing a link never deletes the file). Name, category and type are read-only; deletion is not offered.
+
+**Imports** (`pages/operations/imports`). Import center with per-browser history (the API has no list), summary tiles, supported data types (unavailable ones shown as such). Guided wizard: data type, upload, columns, preview, validation, confirmation, processing, report. Validation errors and processing errors are reported separately; duplicates are grouped. Confirmation runs once; a batch already processed opens its saved report instead of running again.
+
+**Automation** (`pages/operations/automation`). Rules workspace: overview counts, what the supported rule does in plain language, planned capabilities listed as not available, rules grid with trigger, action, last run, owner and status; detail dialog with recent runs and activate or disable (confirmed). Rule editor is a shared dialog with the server's limits. Activity: every recorded run with its trigger, record, action outcomes and failure reason; the page states that runs cannot be retried.
+
+**Shared fixes.** The API client shows the backend's error message instead of a bare status code. Dialog footers that have Cancel or Back now go through the unsaved-change guard (`footer` can be a function receiving the guarded close); this was bypassed in 13 dialogs. Automation sections are linked from the rules, activity, workflows and approvals pages.
+
+**Verification.** Typecheck, lint and 433 unit tests pass (new: 6 document-rule, 2 document-dialog, 10 automation-model, 25 import-rule and wizard, 2 footer-guard tests). Browser: all four pages checked for horizontal overflow at 360, 768 and 1440 px (none). Document upload, import upload and rule creation were attempted on the dev server and refused: see blockers.
+
+**Blockers, not worked around.**
+- Document upload: the dev server has no malware scanner configured (ClamAV), so uploads return 503 and nothing is stored. Preview, download, link and unlink are covered by mocked tests only.
+- Import upload: the dev account lacks the import upload permission (403). Wizard steps are covered by mocked tests only.
+- Automation rule creation: the server returns "The required entitlement is not included in this plan." Activation, disable and run history with real runs are not exercised live.
+- Dark theme, browser zoom, keyboard-only passes and widths 320, 390–430, 1024 and 1920 were not run in this pass.
