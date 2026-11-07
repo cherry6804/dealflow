@@ -9,8 +9,17 @@ import { SpaceLayout } from "./SpaceLayout";
  * existing pages keep their own layout until they are migrated. The space is derived from the route, so direct links,
  * reloads and browser back/forward all show the correct space and tab.
  */
-export function SpaceFrame({ children, navigationSuffix }: { children: ReactNode; navigationSuffix: string }) {
-  const { pathname } = useLocation();
+export function SpaceFrame({
+  children,
+  navigationSuffix,
+  basePath = "",
+}: {
+  children: ReactNode;
+  navigationSuffix: string;
+  basePath?: string;
+}) {
+  const { pathname: fullPath } = useLocation();
+  const pathname = basePath && fullPath.startsWith(basePath) ? fullPath.slice(basePath.length) || "/" : fullPath;
   const resolved = resolveSpaceLocation(pathname);
   if (!resolved) return <>{children}</>;
   const { space, tab } = resolved;
@@ -19,7 +28,7 @@ export function SpaceFrame({ children, navigationSuffix }: { children: ReactNode
       space={space}
       activeTab={tab}
       navigationLabel={`${space.label} ${navigationSuffix}`}
-      description={space.description}
+      basePath={basePath}
     >
       {children}
     </SpaceLayout>

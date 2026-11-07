@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { NotificationItem } from "../../services/notificationApi";
 import {
@@ -44,7 +44,13 @@ describe("workspace shell data", () => {
     expect(formatNotificationTime("not a date")).toBe("not a date");
   });
 
-  it("keeps the redesigned shell off unless the build flag is set", () => {
+  it("uses the redesigned shell only when the build flag is exactly 'true'", () => {
+    vi.stubEnv("VITE_DEALSFLO_NEW_SHELL", "false");
     expect(isNewShellEnabled()).toBe(false);
+    vi.stubEnv("VITE_DEALSFLO_NEW_SHELL", "TRUE");
+    expect(isNewShellEnabled()).toBe(false);
+    vi.stubEnv("VITE_DEALSFLO_NEW_SHELL", "true");
+    expect(isNewShellEnabled()).toBe(true);
+    vi.unstubAllEnvs();
   });
 });

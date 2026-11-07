@@ -5,10 +5,12 @@ export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement
   label: string;
   /** Mixed state for a parent whose children are partly selected. */
   indeterminate?: boolean;
+  /** Keeps the label for screen readers and hides it visually, for compact rows. */
+  labelHidden?: boolean;
 }
 
 /** Native checkbox with a visible label. The indeterminate state is set on the DOM node, which React does not expose as a prop. */
-export function Checkbox({ label, indeterminate = false, id, className, ...rest }: CheckboxProps) {
+export function Checkbox({ label, indeterminate = false, labelHidden = false, id, className, ...rest }: CheckboxProps) {
   const generated = useId();
   const inputId = id ?? `df-check-${generated}`;
   const ref = (node: HTMLInputElement | null) => {
@@ -17,7 +19,7 @@ export function Checkbox({ label, indeterminate = false, id, className, ...rest 
   return (
     <label className={`df-choice${className ? ` ${className}` : ""}`} htmlFor={inputId}>
       <input {...rest} ref={ref} id={inputId} type="checkbox" className="df-checkbox" />
-      <span>{label}</span>
+      <span className={labelHidden ? "df-visually-hidden" : undefined}>{label}</span>
     </label>
   );
 }

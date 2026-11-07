@@ -93,6 +93,7 @@ function SortableSpaceRow(props: RowProps) {
         {props.pinned ? "Unpin" : "Pin"}
       </Button>
       <Checkbox
+        labelHidden
         label={`Show ${props.label}`}
         checked={!props.hidden}
         disabled={!props.hideable}

@@ -1,4 +1,5 @@
 import { Menu as MenuIcon, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import "./shell.css";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 

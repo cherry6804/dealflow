@@ -1,10 +1,21 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { SlidersHorizontal } from "lucide-react";
 import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 
-import { buildSidebarSections } from "../../layouts/workspace/sidebarSections";
-import { DEFAULT_WORKSPACE_PREFERENCES, type WorkspacePreferences } from "../../layouts/workspace/workspacePreferences";
-import { GLOBAL_MODULES, WORKSPACE_MODULES, WORKSPACE_MODULE_LABELS } from "../../layouts/workspace/workspaceSpaces";
+import { GLOBAL_MODULES, WORKSPACE_MODULES } from "../../layouts/workspace/workspaceSpaces";
+import { SidebarCustomizer } from "../../layouts/workspace/spaces/SidebarCustomizer";
+import { SettingsMenu } from "../../layouts/workspace/spaces/SettingsMenu";
+import { SpaceFrame } from "../../layouts/workspace/spaces/SpaceFrame";
+import { WorkspaceSidebar } from "../../layouts/workspace/spaces/WorkspaceSidebar";
+import { listSpaceRoutes, UNLISTED_ROUTES } from "../../layouts/workspace/spaces/spaceConfig";
+import { spaceBreadcrumbs } from "../../layouts/workspace/spaces/spaceNavigation";
+import {
+  DEFAULT_SPACE_PREFERENCES,
+  arrangeSpaces,
+  setCollapsed,
+  type SpacePreferences,
+} from "../../layouts/workspace/spaces/spacePreferences";
 import {
   AppShell,
   EmptyState,
@@ -198,14 +209,11 @@ export default function ShellPreview() {
   const route = location.pathname.startsWith(BASE) ? location.pathname.slice(BASE.length) || "/" : "/";
   const [organizationId, setOrganizationId] = useState(FIXTURE_ORGANIZATIONS[0].id);
   const [organizationStatus] = useState<"ready" | "loading" | "error">("ready");
-  const [preferences, setPreferences] = useState<WorkspacePreferences>({
-    ...DEFAULT_WORKSPACE_PREFERENCES,
-    navigationOrder: [...WORKSPACE_MODULE_LABELS],
-  });
+  const [layout, setLayout] = useState<SpacePreferences>(DEFAULT_SPACE_PREFERENCES);
+  const [customizerOpen, setCustomizerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const navigate = useNavigate();
 
-  const sections = useMemo(() => buildSidebarSections(preferences), [preferences]);
   // Workspace and global lists overlap (Overview, Notifications, Billing, Settings). Keep one entry per label.
   const modules = useMemo(() => {
     const byLabel = new Map<string, (typeof GLOBAL_MODULES)[number]>();
@@ -218,23 +226,36 @@ export default function ShellPreview() {
 
   const commands = useMemo<ShellCommand[]>(
     () => [
-      ...modules.map((module) => ({
-        id: `nav-${module.label}`,
-        label: `Open ${module.label}`,
-        group: "Navigate",
-        keywords: module.to,
-        permission: PREVIEW_PERMISSION_BY_MODULE[module.label],
-        run: () => navigate(`${BASE}${module.to === "/" ? "" : module.to}`),
+      ...listSpaceRoutes().map((route) => ({
+        id: `nav-${route.id}`,
+        label: `Open ${route.label}`,
+        group: route.space,
+        keywords: route.to,
+        run: () => navigate(`${BASE}${route.to}`),
+      })),
+      ...UNLISTED_ROUTES.map((route) => ({
+        id: `nav-${route.to}`,
+        label: `Open ${route.label}`,
+        group: route.group,
+        keywords: route.to,
+        run: () => navigate(`${BASE}${route.to}`),
       })),
       {
-        id: "toggle-sidebar",
-        label: preferences.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        id: "customise-sidebar",
+        label: "Customize sidebar",
         group: "Preferences",
-        keywords: "rail navigation",
-        run: () => setPreferences((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed })),
+        keywords: "spaces order pin hide",
+        run: () => setCustomizerOpen(true),
+      },
+      {
+        id: "toggle-sidebar",
+        label: layout.collapsed ? "Expand sidebar" : "Collapse sidebar",
+        group: "Preferences",
+        keywords: "icons rail",
+        run: () => setLayout((current) => setCollapsed(current, !current.collapsed)),
       },
     ],
-    [modules, navigate, preferences.sidebarCollapsed],
+    [navigate, layout.collapsed, setCustomizerOpen, setLayout],
   );
 
   const notifications = useMemo(
@@ -248,12 +269,39 @@ export default function ShellPreview() {
   );
 
   return (
+    <>
     <AppShell
       labels={LABELS}
       pathname={route}
       basePath={BASE}
       modules={modules}
-      sections={sections}
+      renderSidebar={(rail) => (
+        <WorkspaceSidebar
+          spaces={arrangeSpaces(layout)}
+          pathname={route}
+          rail={rail}
+          density={layout.density}
+          label="Workspace spaces"
+          heading="Spaces"
+          basePath={BASE}
+        />
+      )}
+      headerActions={
+        <>
+          <Button
+            variant="tertiary"
+            size="sm"
+            iconOnly
+            aria-label="Customize sidebar"
+            icon={<SlidersHorizontal size={18} strokeWidth={1.8} aria-hidden="true" />}
+            onClick={() => setCustomizerOpen(true)}
+          >
+            Customize
+          </Button>
+          <SettingsMenu />
+        </>
+      }
+      breadcrumbOverride={spaceBreadcrumbs(route, LABELS.homeBreadcrumb, BASE)}
       canAccess={canAccess}
       permissionByModule={PREVIEW_PERMISSION_BY_MODULE}
       commands={commands}
@@ -270,18 +318,24 @@ export default function ShellPreview() {
       onSelectOrganization={setOrganizationId}
       onRetryOrganizations={() => undefined}
       notifications={notifications}
-      sidebarCollapsed={preferences.sidebarCollapsed}
-      onSidebarCollapsedChange={(collapsed) => setPreferences((current) => ({ ...current, sidebarCollapsed: collapsed }))}
-      onToggleSpace={(spaceId) =>
-        setPreferences((current) => {
-          const collapsed = new Set(current.collapsedSpaces);
-          if (collapsed.has(spaceId)) collapsed.delete(spaceId);
-          else collapsed.add(spaceId);
-          return { ...current, collapsedSpaces: [...collapsed] };
-        })
-      }
+      sidebarCollapsed={layout.collapsed}
+      onSidebarCollapsedChange={(collapsed) => setLayout((current) => setCollapsed(current, collapsed))}
+      onToggleSpace={() => undefined}
+      contentHeader={undefined}
     >
-      <PreviewRoutes />
+      <SpaceFrame navigationSuffix="sections" basePath={BASE}>
+        <PreviewRoutes />
+      </SpaceFrame>
     </AppShell>
+    <SidebarCustomizer
+      open={customizerOpen}
+      onClose={() => setCustomizerOpen(false)}
+      preferences={layout}
+      onChange={setLayout}
+      onRestoreDefaults={() => setLayout(DEFAULT_SPACE_PREFERENCES)}
+      tableDensity="comfortable"
+      onTableDensityChange={() => undefined}
+    />
+    </>
   );
 }

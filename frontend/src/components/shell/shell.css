@@ -8,7 +8,10 @@
   display: grid;
   grid-template-columns: var(--df-shell-sidebar-width) minmax(0, 1fr);
   grid-template-rows: var(--df-shell-header-height) minmax(0, 1fr);
-  min-height: 100dvh;
+  /* The shell owns the viewport: the header stays fixed and the sidebar and content scroll inside it. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--df-canvas);
   color: var(--df-ink);
 }
@@ -55,6 +58,15 @@
   background: var(--df-surface);
   position: relative;
   z-index: var(--df-z-header);
+}
+
+/* Header items keep their size on narrow screens; only the search field gives up width. */
+.df-shell-header > * {
+  flex-shrink: 0;
+}
+
+.df-shell-search-trigger {
+  flex-shrink: 1;
 }
 
 .df-shell-brand {
@@ -106,8 +118,9 @@
 }
 
 .df-shell-search-trigger {
-  flex: 1 1 240px;
-  max-width: 420px;
+  flex: 1 1 280px;
+  max-width: 520px;
+  margin: 0 auto;
   justify-content: flex-start;
 }
 
@@ -350,10 +363,11 @@
 /* Sidebar */
 
 .df-shell-sidebar {
-  grid-row: 2 / 4;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
   padding: 12px 8px;
   border-right: 1px solid var(--df-border);
   background: var(--df-surface);
@@ -449,8 +463,9 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   grid-column: 2;
-  grid-row: 2 / 4;
+  grid-row: 2;
 }
 
 @media (max-width: 767.98px) {
@@ -494,6 +509,8 @@
 .df-shell-main {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--df-content-padding-y) var(--df-content-padding-x);
   outline: none;
 }
@@ -639,6 +656,11 @@
   .df-shell-header {
     gap: 4px;
     padding: 0 8px;
+  }
+
+  /* On phones the appearance control lives in the Settings menu, so the header keeps room for its essentials. */
+  .df-shell-header .df-theme-toggle {
+    display: none;
   }
 
   .df-shell-brand {

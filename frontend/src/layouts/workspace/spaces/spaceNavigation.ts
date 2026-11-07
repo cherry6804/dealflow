@@ -19,5 +19,7 @@ export function spaceBreadcrumbs(pathname: string, homeLabel: string, homeTo: st
   if (!resolved) return undefined;
   const { space, tab } = resolved;
   if (pathname === "/") return [{ label: space.label }];
-  return [{ label: homeLabel, to: homeTo }, { label: space.label, to: spaceHref(space) }, { label: tab.label }];
+  const spaceCrumb = { label: space.label, to: spaceHref(space) };
+  const tabCrumb = tab.label === space.label ? [] : [{ label: tab.label }];
+  return [{ label: homeLabel, to: homeTo }, spaceCrumb, ...tabCrumb];
 }

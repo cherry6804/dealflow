@@ -184,7 +184,7 @@
 .df-ws-custom-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   min-height: 48px;
   padding: 4px 8px;
@@ -336,4 +336,22 @@
   .df-space-title {
     font-size: 18px;
   }
+}
+
+/* Tab bar under the breadcrumb: tabs on the left, contextual actions on the right, one hairline below. */
+.df-space-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--df-border);
+}
+
+.df-space-tabbar .df-space-tabs ul {
+  border-bottom: 0;
+}
+
+.df-space-tabbar .df-space-actions {
+  padding-bottom: 4px;
 }
