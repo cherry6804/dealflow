@@ -18,6 +18,7 @@ import {
 } from "../services/automationRuleApi";
 
 import "./AutomationRulesPage.css";
+import { useConfirmation } from "../components/ui/useConfirmation";
 
 const PAGE_SIZE = 10;
 
@@ -296,6 +297,7 @@ export default function AutomationRulesPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirmation();
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(
@@ -534,7 +536,12 @@ export default function AutomationRulesPage() {
   ) {
     const verb = action === "activate" ? "activate" : "disable";
 
-    if (!window.confirm(`Are you sure you want to ${verb} "${rule.name}"?`)) {
+    const confirmed = await confirm(`Are you sure you want to ${verb} "${rule.name}"?`, {
+      title: action === "activate" ? "Activate automation rule?" : "Disable automation rule?",
+      confirmLabel: action === "activate" ? "Activate" : "Disable",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -1178,6 +1185,7 @@ export default function AutomationRulesPage() {
       </section>
 
       {editorModal}
+      {confirmDialog}
     </div>
   );
 }

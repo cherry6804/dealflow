@@ -22,6 +22,7 @@ import PendingInvitations from "../components/PendingInvitations";
 import InviteMemberDialog from "../components/InviteMemberDialog";
 import RemoveMemberDialog from "../components/RemoveMemberDialog";
 import OrganizationRolesPanel from "../components/OrganizationRolesPanel";
+import { useConfirmation } from "../../../components/ui/useConfirmation";
 import "./TeamAccessPage.css";
 import {
   removalErrorMessage,
@@ -99,6 +100,7 @@ export default function TeamAccessPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirmation();
 
   const loadTeam = useCallback(async (quiet = false) => {
     if (quiet) {
@@ -328,11 +330,13 @@ export default function TeamAccessPage() {
   }
 
   async function handleRevoke(invitation: TeamInvitation) {
-    if (
-      !window.confirm(
-        `Revoke the invitation for ${invitation.email}?`,
-      )
-    ) {
+    const confirmed = await confirm(`Revoke the invitation for ${invitation.email}?`, {
+      title: "Revoke invitation?",
+      confirmLabel: "Revoke invitation",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -632,6 +636,7 @@ export default function TeamAccessPage() {
         }}
         onSubmit={handleInvite}
       />
+      {confirmDialog}
     </main>
   );
 }

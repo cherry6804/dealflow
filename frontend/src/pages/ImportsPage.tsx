@@ -8,6 +8,7 @@ import {
   type ImportResult,
 } from "../services/importApi";
 import "./ImportsPage.css";
+import { useConfirmation } from "../components/ui/useConfirmation";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -81,6 +82,7 @@ export default function ImportsPage() {
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirm, confirmDialog] = useConfirmation();
 
   const busy = uploading || validating || processing;
   const activeStep: WorkflowStep = result
@@ -218,8 +220,9 @@ export default function ImportsPage() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Import ${validation.valid_rows} valid row(s) from "${preview.source_filename}"? This will create contacts in the selected organization. This action may not be reversible.`,
+      { title: "Start import?", confirmLabel: "Import rows" },
     );
 
     if (!confirmed) {
@@ -952,6 +955,7 @@ export default function ImportsPage() {
           </div>
         </section>
       )}
+      {confirmDialog}
     </section>
   );
 }

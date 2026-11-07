@@ -35,7 +35,7 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 
 | Route | Implementation | Flag | Grid | Record UI | Status |
 |---|---|---|---|---|---|
-| /deals | `pages/deals/DealsWorkspacePage.tsx` + `DealRecordDialog.tsx`, `DealCreateDialog.tsx` | VITE_DEALSFLO_DEALS | EnterpriseDataGrid | RecordDialog with stage, closing, negotiation sections; PaymentMilestonesPanel and DealCommissionsPanel open as their own overlays | Migrated. Those two panels use `window.confirm` and their own overlay styling |
+| /deals | `pages/deals/DealsWorkspacePage.tsx` + `DealRecordDialog.tsx`, `DealCreateDialog.tsx` | VITE_DEALSFLO_DEALS | EnterpriseDataGrid | RecordDialog with stage, closing, negotiation sections; PaymentMilestonesPanel and DealCommissionsPanel open as their own overlays | Migrated. Those two panels now use ConfirmationDialog (was `window.confirm`); their own overlay styling remains |
 | /commissions | `ModulePlaceholder` in `AppRouter.tsx` (title and description only, no data) | none | — | — | **Placeholder**: shows a description but no records. Commission records exist only inside deals (DealCommissionsPanel) |
 
 ## Partners
@@ -50,9 +50,9 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 |---|---|---|---|---|---|---|---|
 | /spaces/operations/activities | `SpacePlaceholderRoute` | none | — | — | — | — | Placeholder (labelled "Not yet available") |
 | /documents | `pages/DocumentsPage.tsx` (1223 lines) | none | 0 (own table/list) | own | 0 | 0 | **Legacy, highest priority**: not on the grid system; no shared empty or loading states confirmed |
-| /automation-rules | `pages/AutomationRulesPage.tsx` (1183 lines) | none | 0 | own | 1 | 2 | Legacy; native confirm; own overlays |
+| /automation-rules | `pages/AutomationRulesPage.tsx` (1183 lines) | none | 0 | own | 1 | 2 | Legacy; confirm migrated to ConfirmationDialog; own overlays |
 | /automation-history | `pages/AutomationExecutionHistoryPage.tsx` | none | not counted | — | — | — | Legacy; not audited in depth in this pass |
-| /imports | `pages/ImportsPage.tsx` (957 lines) | none | 0 | own | 1 | 0 | Legacy; native confirm |
+| /imports | `pages/ImportsPage.tsx` (957 lines) | none | 0 | own | 1 | 0 | Legacy; confirm migrated to ConfirmationDialog |
 | /agents | `pages/AgentsPage.tsx` (673 lines) | none | 0 | own | 0 | 0 | Legacy |
 | /lead-intake | `pages/LeadIntakePage.tsx` (438 lines) | none | 0 | own | 0 | 0 | Legacy |
 | /workflows | `pages/WorkflowsPage.tsx` (860 lines) | none | 0 | own (canvas) | 0 | 0 | Legacy; canvas editor, not audited in depth |
@@ -62,7 +62,7 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 
 | Route | Implementation | Grid | confirm | portal | Status |
 |---|---|---|---|---|---|
-| /settings | `features/settings/pages/TeamAccessPage.tsx` (637 lines) | 0 | 1 | 0 | Legacy; native confirm |
+| /settings | `features/settings/pages/TeamAccessPage.tsx` (637 lines) | 0 | 1 | 0 | Legacy; confirm migrated to ConfirmationDialog |
 | /settings/governance | `features/governance/pages/GovernancePage.tsx` (99 lines) | 0 | 0 | 0 | Legacy |
 | /settings/ai-providers | `features/ai-providers/AiProvidersPage.tsx` (298 lines) | 0 | 0 | 0 | Legacy |
 | /notification-preferences | `pages/NotificationPreferencesPage.tsx` (354 lines) | 0 | 0 | 0 | Legacy; personal preference, not yet on the personal-preference hook |
@@ -75,7 +75,7 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 
 - **Overlays:** `Dialog` (native, the shared primitive), `RecordDialog` (records), `ConfirmationDialog`, `AppDrawer` (new), `AnchoredPopover` (portal popover), `Menu`/`Popover` (Overlays). About 14 files still build their own portal overlays. Largest: `LeadsPage` (6), `DealsPage` (7), `CustomersPage` (6), `ContactsPage` (5), `SiteVisitsPage` (5).
 - **Grids:** `EnterpriseDataGrid` is the target. Legacy pages still use `DataGrid` directly (Contacts, Customers, Leads, Properties, Requirements, Deals, Referrals, SiteVisits legacy versions). These are fallbacks behind flags.
-- **Confirmations:** `window.confirm` in 8 places: DealCommissionsPanel (3), PaymentMilestonesPanel (1), OrganizationRolesPanel (1), TeamAccessPage (1), AutomationRulesPage (1), ImportsPage (1), legacy ReferralsPage (1), legacy CustomersPage (1). All should move to `ConfirmationDialog`.
+- **Confirmations (done, DFR-UI-CONFIRM-001):** all 8 former `window.confirm` sites now use ConfirmationDialog. Former list: DealCommissionsPanel (3), PaymentMilestonesPanel (1), OrganizationRolesPanel (1), TeamAccessPage (1), AutomationRulesPage (1), ImportsPage (1), legacy ReferralsPage (1), legacy CustomersPage (1). All should move to `ConfirmationDialog`.
 - **Nested sections:** Requirement sections, Deal sections and Lead follow-ups are each implemented inline. The brief's shared components (`RelatedRecordSection`, `ActivityTimeline`, `HistoryTimeline`, `FollowUpSection`, `PaymentMilestoneSection`, `CommissionSection`, `VisitHistorySection`, `DocumentSection`, `NotesSection`, `RelatedItemsTable`, `RecordSummaryPanel`) do not exist yet.
 - **Motion:** no shared motion tokens beyond the page-enter fade and the sidebar/search transitions. Reduced-motion is respected by the fade and the spinner only.
 

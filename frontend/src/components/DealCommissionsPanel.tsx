@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { ApiError } from "../lib/api";
+import { useConfirmation } from "./ui/useConfirmation";
 import {
   dealCommissionsApi,
   type DealCommission,
@@ -141,6 +142,7 @@ export default function DealCommissionsPanel({
   const [paymentReferences, setPaymentReferences] = useState<
     Record<string, string>
   >({});
+  const [confirm, confirmDialog] = useConfirmation();
 
   const loadCommissions = useCallback(async () => {
     setLoading(true);
@@ -165,6 +167,8 @@ export default function DealCommissionsPanel({
     document.body.style.overflow = "hidden";
 
     function handleKeyDown(event: KeyboardEvent) {
+      // A nested confirmation or popover that handled Escape marks the event as default-prevented; leave it alone.
+      if (event.defaultPrevented) return;
       if (event.key === "Escape" && !saving && !isFormOpen) {
         onClose();
       }
@@ -327,8 +331,9 @@ export default function DealCommissionsPanel({
   async function handleAgree(commission: DealCommission) {
     if (saving || commission.status !== "PROPOSED") return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       "Agree to these commission terms? This records the commission as agreed.",
+      { title: "Agree to commission terms?", confirmLabel: "Agree" },
     );
 
     if (!confirmed) return;
@@ -351,8 +356,9 @@ export default function DealCommissionsPanel({
   async function handleMarkPaid(commission: DealCommission) {
     if (saving || commission.status !== "AGREED") return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       "Record this commission as paid? Confirm that payment has actually been received or made.",
+      { title: "Record commission as paid?", confirmLabel: "Mark as paid" },
     );
 
     if (!confirmed) return;
@@ -389,8 +395,9 @@ export default function DealCommissionsPanel({
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       "Cancel this commission? This action cannot be undone from this panel.",
+      { title: "Cancel commission?", confirmLabel: "Cancel commission", tone: "danger" },
     );
 
     if (!confirmed) return;
@@ -411,6 +418,7 @@ export default function DealCommissionsPanel({
   }
 
   return createPortal(
+    <>
     <div
       className="deal-commissions-backdrop"
       role="presentation"
@@ -888,7 +896,9 @@ export default function DealCommissionsPanel({
           </button>
         </footer>
       </section>
-    </div>,
+    </div>
+    {confirmDialog}
+    </>,
     document.body,
   );
 }

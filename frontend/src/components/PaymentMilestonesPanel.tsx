@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { ApiError } from "../lib/api";
+import { useConfirmation } from "./ui/useConfirmation";
 import {
   paymentMilestonesApi,
   type PaymentMilestone,
@@ -137,6 +138,7 @@ export default function PaymentMilestonesPanel({
   const [paymentReferences, setPaymentReferences] = useState<
     Record<string, string>
   >({});
+  const [confirm, confirmDialog] = useConfirmation();
 
   const loadMilestones = useCallback(async () => {
     setLoading(true);
@@ -161,6 +163,8 @@ export default function PaymentMilestonesPanel({
     document.body.style.overflow = "hidden";
 
     function handleKeyDown(event: KeyboardEvent) {
+      // A nested confirmation that handled Escape marks the event as default-prevented; leave it alone.
+      if (event.defaultPrevented) return;
       if (event.key === "Escape" && !saving) {
         onClose();
       }
@@ -336,8 +340,9 @@ export default function PaymentMilestonesPanel({
   async function handleCancel(milestone: PaymentMilestone) {
     if (saving || milestone.status !== "PENDING") return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Cancel the "${milestone.name}" payment milestone?`,
+      { title: "Cancel payment milestone?", confirmLabel: "Cancel milestone", tone: "danger" },
     );
 
     if (!confirmed) return;
@@ -358,6 +363,7 @@ export default function PaymentMilestonesPanel({
   }
 
   return createPortal(
+    <>
     <div
       className="payment-milestones-backdrop"
       role="presentation"
@@ -758,7 +764,9 @@ export default function PaymentMilestonesPanel({
           </button>
         </footer>
       </section>
-    </div>,
+    </div>
+    {confirmDialog}
+    </>,
     document.body,
   );
 }

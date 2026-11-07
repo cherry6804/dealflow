@@ -12,6 +12,8 @@ export { Dialog, Menu, Popover, Tooltip } from "./Overlays";
 export { ConfirmationDialog } from "./ConfirmationDialog";
 export type { ConfirmationDialogProps } from "./ConfirmationDialog";
 export { AppDrawer } from "./AppDrawer";
+export { useConfirmation } from "./useConfirmation";
+export type { ConfirmOptions } from "./useConfirmation";
 export type { AppDrawerProps } from "./AppDrawer";
 export type { DialogProps, MenuItem, MenuProps, PopoverProps, TooltipProps } from "./Overlays";
 export { Tabs } from "./Navigation";

@@ -277,3 +277,11 @@ The route audit matrix is in `route-audit-matrix.md`. It lists every route in th
 
 Phases: 1 audit (done). 2 shared system: nested-section components, the 8 native confirms, motion tokens, settings drawers. 3 business modules: commissions, property and customer related sections, lead history, site-visit feedback. 4 Operations: documents first, then automation, imports, agents, lead intake, workflows, approvals. 5 full QA across routes, widths, zoom, themes and accessibility.
 
+
+## Native confirm replacement (DFR-UI-CONFIRM-001)
+
+All eight native `window.confirm` calls now use `useConfirmation` (components/ui/useConfirmation.tsx), which shows the shared `ConfirmationDialog` and resolves a promise, so each handler keeps its existing flow. Sites: DealCommissionsPanel (agree, mark paid, cancel), PaymentMilestonesPanel (cancel), OrganizationRolesPanel (deactivate role), TeamAccessPage (revoke invitation), AutomationRulesPage (activate or disable rule), ImportsPage (process import), legacy ReferralsPage (deactivate), legacy CustomersPage (deactivate or reactivate). Destructive actions use the danger tone; the import confirmation names the number of rows.
+
+Escape handling in DealCommissionsPanel and PaymentMilestonesPanel now ignores a keydown that a nested confirmation already handled (`defaultPrevented`), so Escape cancels only the confirmation.
+
+Verification: typecheck, lint and the full unit suite (366 tests) pass. Browser checks were not run for these eight sites: the legacy CustomersPage and ReferralsPage only render with their flags off, and the commissions and milestones panels need a deal with records. The Customers workspace (flag on) was checked in an earlier pass.

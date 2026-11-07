@@ -17,6 +17,7 @@ import {
   type PermissionCatalogueItem,
   type TeamRole,
 } from "../../../services/teamApi";
+import { useConfirmation } from "../../../components/ui/useConfirmation";
 import "./OrganizationRolesPanel.css";
 
 interface OrganizationRolesPanelProps {
@@ -76,6 +77,7 @@ export default function OrganizationRolesPanel({
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirmation();
 
   const loadRoles = useCallback(async () => {
     setLoading(true);
@@ -220,8 +222,9 @@ export default function OrganizationRolesPanel({
   async function handleDeactivate(role: TeamRole) {
     if (isProtected(role) || !role.is_active) return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Deactivate "${role.name}"? This cannot proceed while members are assigned to it or invitations are pending. Reassign members and resolve invitations first.`,
+      { title: "Deactivate role?", confirmLabel: "Deactivate", tone: "danger" },
     );
 
     if (!confirmed) return;
@@ -570,6 +573,7 @@ export default function OrganizationRolesPanel({
           </section>
         </div>
       )}
+      {confirmDialog}
     </section>
   );
 }
