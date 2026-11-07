@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { workflowApi, type WorkflowDetail } from "../services/workflowApi";
 import WorkflowsPage from "./WorkflowsPage";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactElement } from "react";
+
+
+/** The pages link between automation sections, so they render inside a router as they do in the app. */
+function renderWithRouter(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 vi.mock("../services/workflowApi", () => ({
   workflowApi: {
@@ -87,7 +95,7 @@ describe("WorkflowsPage", () => {
 
   it("lists workflows with their status and opens a draft", async () => {
     const user = userEvent.setup();
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Lead follow-up/ }));
     expect(await screen.findByRole("heading", { name: "Lead follow-up" })).toBeTruthy();
@@ -102,7 +110,7 @@ describe("WorkflowsPage", () => {
       revision: 3,
       problems: [{ path: "steps[0].action", message: "Must be an approved CRM action." }],
     });
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Lead follow-up/ }));
     await user.click(await screen.findByRole("button", { name: "Validate" }));
@@ -115,7 +123,7 @@ describe("WorkflowsPage", () => {
   it("saves the draft with the revision it was based on and the step configuration", async () => {
     const user = userEvent.setup();
     vi.mocked(workflowApi.saveDraft).mockResolvedValue(detail);
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Lead follow-up/ }));
     await screen.findByRole("heading", { name: "Definition" });
@@ -136,7 +144,7 @@ describe("WorkflowsPage", () => {
 
   it("refuses to save an argument block that is not a JSON object and says why", async () => {
     const user = userEvent.setup();
-    render(<WorkflowsPage />);
+    renderWithRouter(<WorkflowsPage />);
 
     await user.click(await screen.findByRole("button", { name: /Lead follow-up/ }));
     const argumentsBox = await screen.findByLabelText(/Arguments \(JSON of references/);

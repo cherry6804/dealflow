@@ -20,6 +20,7 @@ import type { CanvasNode } from "./workflowCanvasModel";
 import WorkflowRunsPanel from "./WorkflowRunsPanel";
 
 import "./WorkflowsPage.css";
+import { AutomationNav } from "./operations/automation/AutomationNav";
 
 const CRM_ACTIONS = [
   "intake.process",
@@ -443,6 +444,7 @@ export default function WorkflowsPage() {
 
   return (
     <main className="workflows-page">
+      <AutomationNav current="workflows" />
       <header className="workflows-header">
         <button type="button" className="workflows-button workflows-button-secondary" onClick={() => setSelectedId(null)}>
           Back to workflows
