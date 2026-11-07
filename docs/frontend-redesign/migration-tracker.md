@@ -156,3 +156,22 @@ Status: established. Module migration is progressive; see `design-system.md`.
 Status: store and isolation tests in place. Details and limits: `personal-configuration.md`.
 - Workspace preferences, grid columns and theme are personal (per user; organization where relevant).
 - Not built: saved grid views, dashboard layouts, persisted filters, column widths and pinning, shared organization or team defaults. Each needs a product decision or separate backend approval.
+
+
+## DFR-UI-001: redesigned shell and personal navigation
+
+Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architecture: `navigation-architecture.md`.
+
+| Acceptance area | Status |
+|---|---|
+| Common header (brand, organization, search, notifications, Customize, Settings, profile) | Implemented |
+| Six spaces in the sidebar, with correct tabs | Implemented; placeholders for My Day, Trends and Activities |
+| Tabs open existing routes; direct links and back/forward | Implemented, covered by tests |
+| Reorder (drag and move buttons), pin, hide, restore | Implemented, covered by tests |
+| Sidebar mode (expanded or icons only) and row spacing | Implemented |
+| Personal isolation per user and organization | Implemented, covered by tests |
+| Settings: notification settings and appearance | Implemented by reusing existing page and theme control |
+| Light, dark and system themes | Shell components use tokens; browser check pending |
+| Responsive and keyboard | Drawer on narrow screens; focus handling tested; browser check pending |
+| Authenticated browser verification and screenshots | Pending: needs the flag on and a signed-in session |
+| Permission-based visibility | Not implemented: no per-user permission list in the session |
