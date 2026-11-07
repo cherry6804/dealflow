@@ -6,7 +6,7 @@
 
 .df-shell {
   display: grid;
-  grid-template-columns: var(--df-shell-sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--df-shell-sidebar-current, var(--df-shell-sidebar-width)) minmax(0, 1fr);
   grid-template-rows: var(--df-shell-header-height) minmax(0, 1fr);
   /* The shell owns the viewport: the header stays fixed and the sidebar and content scroll inside it. */
   height: 100vh;
@@ -16,9 +16,7 @@
   color: var(--df-ink);
 }
 
-.df-shell--rail {
-  grid-template-columns: var(--df-shell-rail-width) minmax(0, 1fr);
-}
+/* Sidebar width comes from --df-shell-sidebar-current, set inline by AppShell (expanded, rail, hidden or mobile). */
 
 @media (max-width: 767.98px) {
   .df-shell {
@@ -729,4 +727,51 @@
     width: 44px;
     height: 44px;
   }
+}
+
+
+/* Resizable sidebar: the handle sits on the right edge and stays within the sidebar column. */
+.df-shell-sidebar {
+  position: relative;
+}
+
+.df-shell-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.df-shell-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background-color var(--df-motion-duration-fast) var(--df-motion-ease-standard);
+}
+
+.df-shell-resize:hover::after,
+.df-shell-resize:focus-visible::after,
+.df-shell--dragging .df-shell-resize::after {
+  background: var(--df-primary);
+}
+
+.df-shell-resize:focus-visible {
+  outline: none;
+}
+
+.df-shell--dragging .df-shell-sidebar,
+.df-shell--dragging .df-shell {
+  transition: none;
+}
+
+.df-shell--hidden .df-shell-sidebar {
+  display: none;
 }

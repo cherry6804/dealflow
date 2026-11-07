@@ -38,6 +38,7 @@ const labels: AppShellLabels = {
   closeNavigation: "Close navigation",
   collapseSidebar: "Collapse navigation",
   expandSidebar: "Expand navigation",
+  showSidebar: "Show navigation",
   search: "Search",
   searchShortcut: "Ctrl K",
   homeBreadcrumb: "Home",
@@ -322,5 +323,39 @@ describe("outside-click dismissal and permission-gated navigation", () => {
     });
     expect(screen.queryByRole("link", { name: "Deals" })).toBeNull();
     expect(screen.getByRole("link", { name: "Leads" })).toBeTruthy();
+  });
+});
+
+describe("sidebar hidden and resize", () => {
+  it("removes the sidebar when hidden and restores it from the header", () => {
+    const onSidebarHiddenChange = vi.fn();
+    renderShell({ sidebarHidden: true, onSidebarHiddenChange });
+    expect(document.querySelector(".df-shell-sidebar")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show navigation" }));
+    expect(onSidebarHiddenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the header's space content available while the sidebar is hidden", () => {
+    renderShell({ sidebarHidden: true });
+    expect(screen.getByText("Page body")).toBeTruthy();
+  });
+
+  it("resizes with the keyboard in 8px steps and resets with Home", () => {
+    const onSidebarWidthChange = vi.fn();
+    const onSidebarWidthReset = vi.fn();
+    renderShell({ sidebarWidth: 208, onSidebarWidthChange, onSidebarWidthReset });
+    const handle = screen.getByRole("separator", { name: /Resize sidebar/ });
+    expect(handle.getAttribute("aria-valuenow")).toBe("208");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(onSidebarWidthChange).toHaveBeenLastCalledWith(216);
+    fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true });
+    expect(onSidebarWidthChange).toHaveBeenLastCalledWith(176);
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(onSidebarWidthReset).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer a resize handle while the sidebar is collapsed to icons", () => {
+    renderShell({ sidebarCollapsed: true });
+    expect(screen.queryByRole("separator", { name: /Resize sidebar/ })).toBeNull();
   });
 });

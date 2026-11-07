@@ -366,7 +366,8 @@
 .df-ws-sidebar-footer {
   flex: 0 0 auto;
   display: flex;
-  justify-content: flex-start;
+  flex-direction: column;
+  gap: 4px;
   padding-top: 8px;
   margin-top: 8px;
   border-top: 1px solid var(--df-border-soft);
@@ -393,5 +394,52 @@
 @media (max-width: 1023.98px) {
   .df-shell-search-text {
     display: none;
+  }
+}
+
+
+/* Space header: icon, name and space-level actions on one row, then the tab bar. */
+.df-space-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 12px 0 0;
+}
+
+.df-space-header .df-space-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.df-space-header .df-space-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.df-space-header .df-space-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.df-space-tabbar {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.df-space-tabbar .df-space-tabs ul {
+  flex-wrap: nowrap;
+  min-width: max-content;
+}
+
+@media (max-width: 767.98px) {
+  .df-space-header {
+    flex-wrap: wrap;
   }
 }

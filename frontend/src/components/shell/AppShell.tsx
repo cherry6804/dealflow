@@ -1,6 +1,6 @@
 import { Menu as MenuIcon, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import "./shell.css";
-import type { ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { SidebarSections } from "../../layouts/workspace/sidebarSections";
@@ -26,6 +26,7 @@ export interface AppShellLabels {
   searchShortcut: string;
   homeBreadcrumb: string;
   breadcrumbs: string;
+  showSidebar: string;
   pinnedGroup: string;
   globalGroup: string;
   closeLabel: string;
@@ -81,6 +82,13 @@ export interface AppShellProps {
   /** Sidebar preferences. The caller decides where they are stored (device or account). */
   sidebarCollapsed: boolean;
   onSidebarCollapsedChange: (collapsed: boolean) => void;
+  /** Sidebar removed from the screen (distinct from collapsed). Restored from the header. */
+  sidebarHidden?: boolean;
+  onSidebarHiddenChange?: (hidden: boolean) => void;
+  /** Expanded sidebar width in pixels. Resizable by pointer or keyboard on desktop. */
+  sidebarWidth?: number;
+  onSidebarWidthChange?: (width: number) => void;
+  onSidebarWidthReset?: () => void;
   onToggleSpace: (spaceId: string) => void;
   children: ReactNode;
 }
@@ -92,6 +100,75 @@ export interface AppShellProps {
  *
  * Keyboard: Ctrl+K or Cmd+K opens the palette anywhere; "/" opens it when no text field has focus.
  */
+/**
+ * Resize handle on the sidebar's right edge. Pointer drag (mouse, pen, touch and trackpad) previews the width and commits on
+ * release; ArrowLeft and ArrowRight adjust by 8px (Shift for 32px); Home resets to the default width.
+ */
+function SidebarResizeHandle({
+  width,
+  onPreview,
+  onCommit,
+  onReset,
+}: {
+  width: number;
+  onPreview: (width: number) => void;
+  onCommit: (width: number) => void;
+  onReset: () => void;
+}) {
+  const min = 176;
+  const max = 320;
+  const clamp = (value: number) => Math.min(max, Math.max(min, Math.round(value)));
+
+  function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    document.body.style.userSelect = "none";
+    let latest = startWidth;
+    const move = (moveEvent: PointerEvent) => {
+      latest = clamp(startWidth + (moveEvent.clientX - startX));
+      onPreview(latest);
+    };
+    const up = () => {
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+      target.removeEventListener("pointercancel", up);
+      document.body.style.userSelect = "";
+      onCommit(latest);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+    target.addEventListener("pointercancel", up);
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 32 : 8;
+    if (event.key === "ArrowLeft") onCommit(clamp(width - step));
+    else if (event.key === "ArrowRight") onCommit(clamp(width + step));
+    else if (event.key === "Home") onReset();
+    else return;
+    event.preventDefault();
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar. Use arrow keys, or Home to reset."
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={width}
+      tabIndex={0}
+      className="df-shell-resize"
+      onPointerDown={onPointerDown}
+      onDoubleClick={onReset}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
 export function AppShell({
   labels,
   pathname,
@@ -117,6 +194,11 @@ export function AppShell({
   notifications,
   sidebarCollapsed,
   onSidebarCollapsedChange,
+  sidebarHidden = false,
+  onSidebarHiddenChange,
+  sidebarWidth = 208,
+  onSidebarWidthChange,
+  onSidebarWidthReset,
   onToggleSpace,
   children,
 }: AppShellProps) {
@@ -167,6 +249,12 @@ export function AppShell({
   }, []);
 
   const railMode = sidebarCollapsed || viewport === "tablet";
+  const desktopHidden = sidebarHidden && viewport !== "mobile";
+  const resizable = viewport === "desktop" && !sidebarCollapsed && !sidebarHidden;
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const shownWidth = dragWidth ?? sidebarWidth;
+  const sidebarColumn =
+    viewport === "mobile" || desktopHidden ? "0px" : railMode ? "64px" : `${shownWidth}px`;
   const sidebarNav = renderSidebar ? (
     renderSidebar(viewport === "mobile" ? false : railMode)
   ) : visibleSections ? (
@@ -184,14 +272,29 @@ export function AppShell({
   ) : null;
 
   return (
-    <div className={`df-shell${railMode && viewport !== "mobile" ? " df-shell--rail" : ""}`}>
+    <div
+      className={`df-shell${railMode && viewport !== "mobile" && !desktopHidden ? " df-shell--rail" : ""}${
+        desktopHidden ? " df-shell--hidden" : ""
+      }${dragWidth !== null ? " df-shell--dragging" : ""}`}
+      style={{ "--df-shell-sidebar-current": sidebarColumn } as CSSProperties}
+    >
       <a className="df-shell-skip" href="#df-shell-main">
         {labels.skipToContent}
       </a>
 
       <header className="df-shell-header">
         <div className="df-shell-header-start">
-          {viewport === "mobile" ? (
+          {viewport !== "mobile" && desktopHidden ? (
+            <button
+              type="button"
+              className="df-shell-icon-button"
+              aria-label={labels.showSidebar}
+              aria-expanded={false}
+              onClick={() => onSidebarHiddenChange?.(false)}
+            >
+              <PanelLeftOpen size={18} aria-hidden="true" />
+            </button>
+          ) : viewport === "mobile" ? (
             <button
               type="button"
               className="df-shell-icon-button"
@@ -268,9 +371,20 @@ export function AppShell({
         </div>
       </header>
 
-      {viewport !== "mobile" ? (
+      {viewport !== "mobile" && !desktopHidden ? (
         <aside id="df-shell-sidebar" className="df-shell-sidebar" aria-label={labels.navigationTitle}>
           {sidebarNav}
+          {resizable ? (
+            <SidebarResizeHandle
+              width={shownWidth}
+              onPreview={setDragWidth}
+              onCommit={(width) => {
+                setDragWidth(null);
+                onSidebarWidthChange?.(width);
+              }}
+              onReset={() => onSidebarWidthReset?.()}
+            />
+          ) : null}
         </aside>
       ) : null}
 

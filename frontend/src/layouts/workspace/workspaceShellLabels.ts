@@ -13,6 +13,7 @@ export const WORKSPACE_SHELL_LABELS: AppShellLabels = {
   closeNavigation: "Close navigation",
   collapseSidebar: "Collapse sidebar",
   expandSidebar: "Expand sidebar",
+  showSidebar: "Show sidebar",
   search: "Search",
   searchShortcut: "Ctrl K",
   homeBreadcrumb: "Overview",

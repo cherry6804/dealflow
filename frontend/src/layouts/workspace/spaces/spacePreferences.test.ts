@@ -8,6 +8,9 @@ import {
   moveSpace,
   normalizeSpacePreferences,
   reorderSpaces,
+  resetSidebarWidth,
+  setSidebarHidden,
+  setSidebarWidth,
   setCollapsed,
   setDensity,
   toggleHidden,
@@ -87,5 +90,26 @@ describe("space preferences", () => {
   it("every configured space has a unique id", () => {
     const all = SPACE_DEFINITIONS.map((space) => space.id);
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+describe("sidebar width and visibility", () => {
+  it("keeps the width within bounds and defaults invalid values", () => {
+    expect(normalizeSpacePreferences({ sidebarWidth: 10 }).sidebarWidth).toBe(176);
+    expect(normalizeSpacePreferences({ sidebarWidth: 9000 }).sidebarWidth).toBe(320);
+    expect(normalizeSpacePreferences({ sidebarWidth: "wide" }).sidebarWidth).toBe(208);
+    expect(normalizeSpacePreferences({ sidebarWidth: 240.6 }).sidebarWidth).toBe(241);
+  });
+
+  it("hides and restores the sidebar without changing its width or mode", () => {
+    const sized = setSidebarWidth(DEFAULT_SPACE_PREFERENCES, 260);
+    const hidden = setSidebarHidden(sized, true);
+    expect(hidden.sidebarHidden).toBe(true);
+    expect(hidden.sidebarWidth).toBe(260);
+    expect(setSidebarHidden(hidden, false).sidebarHidden).toBe(false);
+  });
+
+  it("resets the width to its default", () => {
+    expect(resetSidebarWidth(setSidebarWidth(DEFAULT_SPACE_PREFERENCES, 300)).sidebarWidth).toBe(208);
   });
 });

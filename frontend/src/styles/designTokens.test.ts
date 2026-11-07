@@ -47,7 +47,9 @@ describe("design token contract", () => {
         referenced.add(match[1]);
       }
     }
-    const missing = [...referenced].filter((name) => !light.has(name));
+    // Set at runtime by AppShell (the sidebar column width), so it is not a static token.
+    const runtimeOnly = new Set(["--df-shell-sidebar-current"]);
+    const missing = [...referenced].filter((name) => !light.has(name) && !runtimeOnly.has(name));
     expect(missing).toEqual([]);
   });
 

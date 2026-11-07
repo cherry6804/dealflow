@@ -12,12 +12,25 @@ import { DEFAULT_SPACE_ORDER, SPACE_DEFINITIONS, getSpaceById, type SpaceDefinit
  */
 export type SidebarDensity = "comfortable" | "compact";
 
+/** Sidebar width bounds in pixels. The default matches the shell's 208px sidebar. */
+export const SIDEBAR_WIDTH = { default: 208, min: 176, max: 320 } as const;
+
 export interface SpacePreferences {
   readonly order: readonly string[];
   readonly pinned: readonly string[];
   readonly hidden: readonly string[];
+  /** Icons-only sidebar. Distinct from `sidebarHidden`, which removes the sidebar entirely. */
   readonly collapsed: boolean;
+  /** Sidebar removed from the screen; the content uses the full width and a header control restores it. */
+  readonly sidebarHidden: boolean;
+  /** Expanded sidebar width in pixels, kept within SIDEBAR_WIDTH bounds. */
+  readonly sidebarWidth: number;
   readonly density: SidebarDensity;
+}
+
+export function clampSidebarWidth(value: number): number {
+  if (!Number.isFinite(value)) return SIDEBAR_WIDTH.default;
+  return Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, Math.round(value)));
 }
 
 export const DEFAULT_SPACE_PREFERENCES: SpacePreferences = {
@@ -25,6 +38,8 @@ export const DEFAULT_SPACE_PREFERENCES: SpacePreferences = {
   pinned: [],
   hidden: [],
   collapsed: false,
+  sidebarHidden: false,
+  sidebarWidth: SIDEBAR_WIDTH.default,
   density: "comfortable",
 };
 
@@ -59,6 +74,8 @@ export function normalizeSpacePreferences(value: unknown): SpacePreferences {
     pinned,
     hidden,
     collapsed: saved.collapsed === true,
+    sidebarHidden: saved.sidebarHidden === true,
+    sidebarWidth: typeof saved.sidebarWidth === "number" ? clampSidebarWidth(saved.sidebarWidth) : SIDEBAR_WIDTH.default,
     density: DENSITIES.includes(saved.density as SidebarDensity) ? (saved.density as SidebarDensity) : "comfortable",
   };
 }
@@ -149,4 +166,16 @@ export function setCollapsed(preferences: SpacePreferences, collapsed: boolean):
 
 export function setDensity(preferences: SpacePreferences, density: SidebarDensity): SpacePreferences {
   return { ...preferences, density };
+}
+
+export function setSidebarWidth(preferences: SpacePreferences, width: number): SpacePreferences {
+  return { ...preferences, sidebarWidth: clampSidebarWidth(width) };
+}
+
+export function resetSidebarWidth(preferences: SpacePreferences): SpacePreferences {
+  return { ...preferences, sidebarWidth: SIDEBAR_WIDTH.default };
+}
+
+export function setSidebarHidden(preferences: SpacePreferences, hidden: boolean): SpacePreferences {
+  return { ...preferences, sidebarHidden: hidden };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { PanelLeftClose, SlidersHorizontal } from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { AppShell } from "../../components/shell/AppShell";
@@ -15,7 +15,7 @@ import { SpaceFrame } from "./spaces/SpaceFrame";
 import { WorkspaceSidebar } from "./spaces/WorkspaceSidebar";
 import { UNLISTED_ROUTES, listSpaceRoutes } from "./spaces/spaceConfig";
 import { spaceBreadcrumbs } from "./spaces/spaceNavigation";
-import { arrangeSpaces } from "./spaces/spacePreferences";
+import { arrangeSpaces, resetSidebarWidth, setSidebarWidth } from "./spaces/spacePreferences";
 import { useSpacePreferences } from "./spaces/useSpacePreferences";
 import {
   DEFAULT_WORKSPACE_PREFERENCES,
@@ -174,6 +174,16 @@ export default function WorkspaceShellBridge() {
               >
                 Customize sidebar
               </Button>
+              <Button
+                variant="tertiary"
+                size="sm"
+                iconOnly={rail}
+                aria-label="Hide sidebar"
+                icon={<PanelLeftClose size={16} strokeWidth={1.8} aria-hidden="true" />}
+                onClick={() => spaces.update({ ...layout, sidebarHidden: true })}
+              >
+                Hide sidebar
+              </Button>
             </div>
           </>
         )}
@@ -198,6 +208,11 @@ export default function WorkspaceShellBridge() {
         onRetryOrganizations={() => void refreshOrganizations()}
         notifications={notifications}
         sidebarCollapsed={layout.collapsed}
+        sidebarHidden={layout.sidebarHidden}
+        onSidebarHiddenChange={(hidden) => spaces.update({ ...layout, sidebarHidden: hidden })}
+        sidebarWidth={layout.sidebarWidth}
+        onSidebarWidthChange={(width) => spaces.update(setSidebarWidth(layout, width))}
+        onSidebarWidthReset={() => spaces.update(resetSidebarWidth(layout))}
         onSidebarCollapsedChange={(collapsed) => spaces.update({ ...layout, collapsed })}
         onToggleSpace={() => undefined}
       >
