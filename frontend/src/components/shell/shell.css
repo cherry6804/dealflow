@@ -686,9 +686,7 @@
     display: none;
   }
 
-  .df-shell-main {
-    padding: 16px 12px;
-  }
+  /* Page padding comes from the shared --df-content-padding tokens, so the space header can align with it exactly. */
 
   .df-shell-page-bar {
     padding: 0 12px;

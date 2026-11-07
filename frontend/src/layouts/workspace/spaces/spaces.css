@@ -168,7 +168,7 @@
 
 .df-space-content {
   min-width: 0;
-  padding-top: 16px;
+  padding-top: 20px;
 }
 
 /* Customizer */
@@ -401,23 +401,32 @@
 
 /* Jira-style space navigation: the title and tabs sit directly on the page, with no card, rounded corner or outer border.
  * One subtle divider sits under the tabs. White in the light theme; the surface token follows the dark theme. */
+/* The space chrome is the top of the workspace. It cancels the page padding of the shell's main area, so it runs flush under the
+ * global header, edge to edge, with no card, border, radius or shadow. Its inner padding matches the page content, so the title,
+ * tabs and page content share one left edge. It stays at the top of the scrolling area while the page scrolls. */
 .df-space-chrome {
   position: sticky;
-  top: 0;
+  /* Sticky offsets are measured from the scroller's content edge, so cancel the page padding to pin at the very top. */
+  top: calc(var(--df-content-padding-y) * -1);
   z-index: 3;
   display: flex;
   flex-direction: column;
-  padding: 0;
+  margin: calc(var(--df-content-padding-y) * -1) calc(var(--df-content-padding-x) * -1) 0;
+  padding: 0 var(--df-content-padding-x);
   border: 0;
   border-radius: 0;
+  box-shadow: none;
   background: var(--df-surface);
 }
 
 .df-space-chrome .df-space-header {
-  padding: 16px 0 10px;
+  padding: 16px 0 8px;
 }
 
+/* One divider, full width, beneath the tabs. */
 .df-space-chrome .df-space-tabbar {
+  margin: 0 calc(var(--df-content-padding-x) * -1);
+  padding: 0 var(--df-content-padding-x);
   border-bottom: 1px solid var(--df-border-soft);
   background: var(--df-surface);
 }

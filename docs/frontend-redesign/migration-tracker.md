@@ -228,3 +228,7 @@ Limitations:
 - Sticky Sales header was added (`position: sticky`) but not checked with a scrolling page; the current pages are short.
 - Busy-state blocking and the double-submit guard are covered by unit tests only.
 - Other business modules listed in the brief still use their own dialogs.
+
+## Space header integration (DFR-UI-SHELL-FIX-001)
+
+The space chrome (title row and tab bar) is part of the shell content. It cancels the shell's page padding, so it sits directly under the global header, runs edge to edge, and has no card, border, radius or shadow. One divider runs full width beneath the tabs. Page content starts 20px below the divider. The chrome is sticky at the top of the scrolling main area, with its threshold set to the page padding so it does not drift below the global header. The shell's mobile override of the page padding was removed, so the shell and the space header use the same tokens. Checked in the running app for Sales (all five tabs), Properties, Deals, Partners and Operations, in light and dark themes at desktop, tablet and phone widths. Tabs scroll horizontally on phones and fit on tablets; no page overflow was seen.
