@@ -73,7 +73,7 @@
 .df-space {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
 .df-space-bar {
@@ -168,6 +168,7 @@
 
 .df-space-content {
   min-width: 0;
+  padding-top: 16px;
 }
 
 /* Customizer */
@@ -398,17 +399,23 @@
 }
 
 
-/* The space header and tab bar form one white surface in the light theme, with a single bottom border under the tabs. */
+/* Jira-style space navigation: the title and tabs sit directly on the page, with no card, rounded corner or outer border.
+ * One subtle divider sits under the tabs. White in the light theme; the surface token follows the dark theme. */
 .df-space-chrome {
-  padding: 0 16px;
-  border: 1px solid var(--df-border);
-  border-bottom: 0;
-  border-radius: var(--df-radius-lg) var(--df-radius-lg) 0 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--df-surface);
 }
 
+.df-space-chrome .df-space-header {
+  padding: 16px 0 10px;
+}
+
 .df-space-chrome .df-space-tabbar {
-  border-bottom: 1px solid var(--df-border);
+  border-bottom: 1px solid var(--df-border-soft);
   background: var(--df-surface);
 }
 

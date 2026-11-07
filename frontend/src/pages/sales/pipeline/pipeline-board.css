@@ -1,0 +1,199 @@
+/*
+ * Pipeline Kanban board. Stage columns scroll horizontally inside the board, never the page. Cards and columns use tokens, so
+ * light and dark themes both apply.
+ */
+
+.df-pipeline {
+  min-width: 0;
+}
+
+.df-pipeline-toolbar {
+  flex-wrap: wrap;
+}
+
+.df-pipeline-board-frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.df-pipeline-board {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.df-pipeline-column {
+  display: flex;
+  flex: 0 0 272px;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 200px;
+  max-height: 70vh;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--df-border);
+  border-radius: var(--df-radius-lg);
+  background: var(--df-surface-soft);
+}
+
+.df-pipeline-column--drop {
+  outline: 2px dashed var(--df-primary);
+  outline-offset: -4px;
+}
+
+.df-pipeline-column-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+
+.df-pipeline-column-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.df-pipeline-column-title h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.df-pipeline-column-header p {
+  margin: 0;
+}
+
+.df-pipeline-cards {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.df-pipeline-empty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px dashed var(--df-border);
+  border-radius: var(--df-radius-md);
+  font-size: 13px;
+  color: var(--df-muted);
+  text-align: center;
+}
+
+.df-pipeline-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+  box-shadow: var(--df-shadow-sm, none);
+  cursor: grab;
+}
+
+.df-pipeline-card--inactive {
+  opacity: 0.72;
+}
+
+.df-pipeline-card--dragging {
+  opacity: 0.5;
+}
+
+.df-pipeline-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-pipeline-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.df-pipeline-card-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--df-ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.df-pipeline-card-open:hover {
+  text-decoration: underline;
+}
+
+.df-pipeline-card-open:focus-visible {
+  outline: 2px solid var(--df-primary);
+  outline-offset: 2px;
+  border-radius: var(--df-radius-sm);
+}
+
+.df-pipeline-card-line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--df-muted);
+  overflow-wrap: anywhere;
+}
+
+.df-pipeline-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.df-pipeline-card-facts > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.df-pipeline-card-facts dt {
+  color: var(--df-subtle);
+}
+
+.df-pipeline-card-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.df-pipeline-card-stage select {
+  width: 100%;
+}
+
+.df-pipeline-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-pipeline-card {
+    transition: none;
+  }
+}

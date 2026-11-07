@@ -172,3 +172,10 @@
     transition: none;
   }
 }
+
+.df-grid-nomatch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

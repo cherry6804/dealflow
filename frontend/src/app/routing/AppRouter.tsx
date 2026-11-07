@@ -60,6 +60,7 @@ const ContactsWorkspacePage = lazy(() => import("../../pages/sales/ContactsWorks
 const CustomersWorkspacePage = lazy(() => import("../../pages/sales/CustomersWorkspacePage"));
 const LeadsWorkspacePage = lazy(() => import("../../pages/sales/LeadsWorkspacePage"));
 const PipelineWorkspacePage = lazy(() => import("../../pages/sales/PipelineWorkspacePage"));
+const SiteVisitsWorkspacePage = lazy(() => import("../../pages/sales/SiteVisitsWorkspacePage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
   () => import("../../pages/RequirementsPage"),
@@ -247,7 +248,9 @@ export default function AppRouter() {
             <Route path="/referrals" element={<ReferralsPage />} />
             <Route
               path="/site-visits"
-              element={<SiteVisitsPage />}
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_SITE_VISITS === "true" ? <SiteVisitsWorkspacePage /> : <SiteVisitsPage />
+              }
             />
 
             {/* Operations */}

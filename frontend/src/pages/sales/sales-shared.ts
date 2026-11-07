@@ -1,4 +1,5 @@
 import { ApiError } from "../../lib/api";
+import type { Contact } from "../../services/contactApi";
 
 export const SALES_PAGE_SIZE = 100;
 
@@ -34,4 +35,9 @@ export function formatDateTime(value: string | null | undefined): string {
 
 export function personName(person: { first_name: string; last_name: string | null }): string {
   return [person.first_name, person.last_name].filter(Boolean).join(" ").trim();
+}
+
+/** Display name for a contact, or a fixed label when the contact is not loaded. */
+export function contactDisplayName(contact: Contact | undefined): string {
+  return contact ? personName(contact) || "Unnamed contact" : "Contact unavailable";
 }

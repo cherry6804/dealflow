@@ -176,26 +176,26 @@ Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architect
 | Authenticated browser verification and screenshots | Pending: needs the flag on and a signed-in session |
 | Permission-based visibility | Not implemented: no per-user permission list in the session |
 
-## Sales workspace (DFR-UI-SALES-001)
+## Sales workspace (DFR-UI-SALES-001, corrected in DFR-UI-SALES-003)
 
-Status: Contacts is the reference. Customers, Leads and Pipeline now run on the shared EnterpriseDataGrid behind their own flags. Each flag is set in `.env.local` (git-ignored) and read at dev-server start, so restart the frontend after changing it. The legacy page stays the default when a flag is off. Browser verification used the development database. Mutating flows (create, stage change, follow-up changes) were not run against live data; they are covered by unit tests only.
+Status: Contacts, Customers, Leads and Site Visits run on the shared EnterpriseDataGrid behind their own flags. Pipeline is a Kanban board only, behind its flag. Each flag is set in `.env.local` (git-ignored) and read at dev-server start, so restart the frontend after changing it. Legacy pages stay the default when a flag is off. Browser verification used the development database. Live create and update writes were not run against it; unit tests cover those flows.
 
 | Page | Route | State | Feature flag | Notes |
 |---|---|---|---|---|
-| Shared grid | components/grid | Built, tested, browser-verified | none | Toolbar holds search, optional page filters, and the Columns button. The table holds business columns only. Columns popover is portal-anchored, with search, show/hide, pin, move, density, reset and done; Escape and outside click close it. Columns stretch to fit, with a 120px minimum; the table scrolls sideways inside the grid. The primary column starts pinned. Header and footer use the soft surface; the body uses the main surface. Layout is saved per user, organization and grid id. |
-| Contacts | /contacts | Built, tested, browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Contacts API. Detail dialog with editable fields and status toggle. |
-| Customers | /customers | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_CUSTOMERS | Customer profiles plus contact details. Columns: customer, email, phone, status, notes, registered, last updated. Detail dialog edits notes and activates or deactivates; visit history opens from the detail. Register dialog uses active contacts that are not yet registered. Customer type and owner are not in the customer-profile contract, so they are not shown. |
-| Leads | /leads | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_LEADS | Columns: lead, email, phone, stage, interest, next follow-up, owner, created, last updated. Stage moves use the existing allowed transitions and the next-action prompt for key stages. Interest, next action, activation, timeline and follow-ups (create, complete, reschedule, bulk complete and reschedule) keep the existing endpoints. Source is not in the lead contract, so it is not shown. Owner names come from the team list; if that list is unavailable to the user, owners show as unnamed. |
-| Pipeline | /pipeline | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_PIPELINE | List view on the grid, backed by the same lead data. Visibility and stage filters. Detail dialog changes the stage with the board rules, and opens follow-ups and the timeline. A Board toggle shows the existing board with drag-and-drop. Expected value and expected closing date are not in the lead contract, so they are not shown. |
-| Site Visits | /site-visits | Not started | — | Legacy page. |
-| Space header | layouts/workspace/spaces | Built | none | Header and tab bar sit on one white surface in the light theme, with a single bottom border. Active tab uses the same blue underline on every page. |
+| Shared grid | components/grid | Built, tested, browser-verified | none | Toolbar: search, optional Filter, Columns. Filter builder is an anchored popover with add and remove, operators per field type, Apply and Clear. Active filters show as removable chips and a count on the Filter button. Filter conditions and column layout are saved per user, organization and grid. Table holds business columns only. Header and footer use the soft surface; body uses the main surface. |
+| Contacts | /contacts | Built, tested, browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Filters: name, email, phone, status, created. |
+| Customers | /customers | Built, tested, browser-verified | VITE_DEALSFLO_SALES_CUSTOMERS | Lists all customer profiles; status is a filter, not a default. Filters: customer, email, phone, status, notes, registered. Customer type and owner are not in the customer-profile contract, so not shown. |
+| Leads | /leads | Built, tested, browser-verified | VITE_DEALSFLO_SALES_LEADS | Record dialog is shared with Pipeline (LeadDetailDialog). Stage rules, next-action prompt, interest, activation, timeline and follow-up actions keep their endpoints. Filters: lead, email, phone, stage, interest, owner (when the team list resolves names), next follow-up, created. Source is not in the lead contract. |
+| Pipeline | /pipeline | Built, tested, browser-verified | VITE_DEALSFLO_SALES_PIPELINE | Kanban only; no list or board toggle. One column per stage (`pipeline/pipeline-stages.ts`), cards open the lead record. Stage select on each card and drag-and-drop both use the existing transition table; a move that needs a next action opens the record at that step. Filters: lead, email, phone, interest, owner, next follow-up, created, lead activity. Expected value and closing date are not in the lead contract. Board scrolls horizontally on narrow screens. |
+| Site Visits | /site-visits | Built, tested, browser-verified | VITE_DEALSFLO_SALES_SITE_VISITS | Columns: visit date and time, property, lead or customer, assigned agent, status, outcome, follow-up, notes, last updated. Schedule, attendance (status, outcome, feedback), follow-up from a visit, and history use the existing endpoints. The visit contract has no reference number and no reschedule endpoint, so neither is shown or offered. |
+| Space header | layouts/workspace/spaces | Built, browser-verified | none | Jira-style continuous header: icon and title, tabs below, white, no card or border, one divider under the tabs. Active tab uses the blue underline. |
 
 Gaps:
 - Selection and bulk actions in the grid are not built. Bulk follow-up actions live in the follow-up dialog.
-- Hover column menus, row context menus and drag-and-drop column reordering are not built; the popover uses Up and Down buttons.
-- Paging: all records are loaded and filtered in the browser, the same as Contacts. Server paging is not used.
-- Dialogs for Leads and Customers follow the shared dialog style; the Leads follow-up and timeline dialogs are the existing components.
-- The Pipeline Board view is the legacy component, so it keeps its own styling until it is moved onto the grid architecture.
-- Zoom (80 to 200 percent) and the dark theme were checked by token-level inspection for Pipeline only. Desktop widths were checked by layout measurements, since the browser pane is narrower than desktop.
-- Column widths, pinning and order are personal and stored in browser localStorage, which is per device and is not synced across devices.
-- Contact records do not expose comments or activity history through the contact API, so none are shown.
+- Column reordering uses Up and Down buttons, not drag-and-drop. Hover column menus are not built.
+- Paging: all records load and are filtered in the browser. Server paging is not used.
+- Visit rescheduling is not available: no reschedule endpoint exists. Changing a visit's time needs a backend change.
+- Filter preferences are saved in browser localStorage (per device); they are not synced.
+- Dark theme was checked by applying the dark token set on the page for Pipeline; Light and dark were not checked on every page.
+- Zoom (80 to 200 percent) was not checked.
+- Pipeline's legacy board stays behind the flag-off path until the flag is enabled everywhere.

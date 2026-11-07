@@ -1,67 +1,43 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 
-import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
-import type { GridColumnDef } from "../../components/grid/gridLayout";
-import LeadTimeline from "../../components/LeadTimeline";
-import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
-import { Badge, Button, SelectField, TextField } from "../../components/ui";
+import { GridFilterButton, GridFilterChips } from "../../components/grid/GridFilterControls";
+import { useGridFilters } from "../../components/grid/useGridFilters";
+import { applyGridFilters, type GridFilterField, type GridFilterOption } from "../../components/grid/gridFilters";
+import { Badge, Button } from "../../components/ui";
+import { ErrorState, LoadingState } from "../../components/shell/RouteStates";
 import { contactsApi, type Contact } from "../../services/contactApi";
 import { leadsApi, type Lead, type LeadStatus } from "../../services/leadApi";
 import { teamApi, type TeamMember } from "../../services/teamApi";
-import PipelinePage from "../PipelinePage";
-import LeadFollowUpsDialog from "./leads/LeadFollowUpsDialog";
-import { ALLOWED_STATUS_TRANSITIONS, LEAD_STATUSES, formatStageLabel, outcomeForStatusChange, stageTone } from "./leads/lead-workflow";
-import { fetchAllPages, formatDateTime, formatShortDate, messageFrom, personName, SALES_PAGE_SIZE } from "./sales-shared";
+import LeadDetailDialog from "./leads/LeadDetailDialog";
+import { buildLeadFilterFields, leadFilterValue } from "./leads/lead-filters";
+import { ALLOWED_STATUS_TRANSITIONS, formatStageLabel, needsNextActionPrompt, outcomeForStatusChange } from "./leads/lead-workflow";
+import { PIPELINE_STAGES } from "./pipeline/pipeline-stages";
+import { contactDisplayName, fetchAllPages, formatDateTime, messageFrom, SALES_PAGE_SIZE } from "./sales-shared";
 import "./sales.css";
+import "./pipeline/pipeline-board.css";
 
-type Visibility = "active" | "inactive" | "all";
-type View = "list" | "board";
-
-const COLUMNS: GridColumnDef[] = [
-  { key: "lead", label: "Lead", defaultWidth: 240, primary: true },
-  { key: "status", label: "Stage", defaultWidth: 150 },
-  { key: "email", label: "Email address", defaultWidth: 230 },
-  { key: "phone", label: "Phone", defaultWidth: 160 },
-  { key: "interest", label: "Interest", defaultWidth: 120 },
-  { key: "next", label: "Next action", defaultWidth: 240 },
-  { key: "due", label: "Follow-up due", defaultWidth: 170 },
-  { key: "owner", label: "Owner", defaultWidth: 170 },
-  { key: "updated", label: "Last updated", defaultWidth: 140, defaultVisible: false },
-];
-
-function contactLabel(contact: Contact | undefined): string {
-  return contact ? personName(contact) || "Unnamed contact" : "Contact unavailable";
-}
-
-function isOverdue(lead: Lead, now: number): boolean {
-  if (!lead.is_active || !lead.next_action_at || lead.status === "WON" || lead.status === "LOST") return false;
-  const due = new Date(lead.next_action_at).getTime();
-  return Number.isFinite(due) && due < now;
-}
+const PIPELINE_FILTER_KEY = "pipeline";
 
 /**
- * The sales pipeline on the shared EnterpriseDataGrid. Rows are the existing leads, grouped by stage in the stage column.
- * Stage moves follow the same allowed transitions as the board. The board view stays available for drag-and-drop stage moves.
- * Expected value and closing date are not part of the lead contract, so they are not shown.
+ * Pipeline as a Kanban board only. Each stage is a column and each lead is a card in its stage. Cards open the lead record.
+ * Stage moves use the existing transition table; a move that needs a next action opens the record at that step. Drag and drop
+ * only offers moves the transition table allows, and the stage select on each card gives the same choice without a pointer.
  */
 export default function PipelineWorkspacePage() {
-  const [view, setView] = useState<View>("list");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [search, setSearch] = useState("");
-  const [visibility, setVisibility] = useState<Visibility>("active");
-  const [stageFilter, setStageFilter] = useState<"" | LeadStatus>("");
   const [notice, setNotice] = useState("");
+  const [moveError, setMoveError] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingStage, setPendingStage] = useState<LeadStatus | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<LeadStatus | null>(null);
   const [now] = useState(() => Date.now());
-
-  const [selected, setSelected] = useState<Lead | null>(null);
-  const [stageSaving, setStageSaving] = useState(false);
-  const [stageMessage, setStageMessage] = useState("");
-  const [followUpsOpen, setFollowUpsOpen] = useState(false);
-  const [timelineOpen, setTimelineOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [allLeads, allContacts] = await Promise.all([
@@ -108,256 +84,283 @@ export default function PipelineWorkspacePage() {
 
   const contactById = useMemo(() => new Map(contacts.map((contact) => [contact.id, contact])), [contacts]);
   const ownerName = useMemo(() => new Map(members.map((member) => [member.user_id, member.display_name])), [members]);
+  const ownerOptions = useMemo<GridFilterOption[]>(
+    () => members.map((member) => ({ value: member.user_id, label: member.display_name })),
+    [members],
+  );
 
-  const rows = useMemo(() => {
+  // Stage is the column itself, so the board's filters cover everything except stage, plus lead activity.
+  const filterFields = useMemo<GridFilterField[]>(() => {
+    const base = buildLeadFilterFields(ownerOptions).filter((field) => field.key !== "stage");
+    return [
+      ...base,
+      {
+        key: "active",
+        label: "Lead activity",
+        type: "select",
+        options: [
+          { value: "active", label: "Active" },
+          { value: "inactive", label: "Inactive" },
+        ],
+      },
+    ];
+  }, [ownerOptions]);
+
+  const readFilterValue = useCallback(
+    (lead: Lead, key: string) => (key === "active" ? (lead.is_active ? "active" : "inactive") : leadFilterValue(lead, key, (id) => contactById.get(id))),
+    [contactById],
+  );
+
+  const { conditions, apply: applyFilters } = useGridFilters(PIPELINE_FILTER_KEY, filterFields);
+
+  const visibleLeads = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return leads.filter((lead) => {
-      if (visibility === "active" && !lead.is_active) return false;
-      if (visibility === "inactive" && lead.is_active) return false;
-      if (stageFilter && lead.status !== stageFilter) return false;
-      if (!needle) return true;
-      const contact = contactById.get(lead.contact_id);
-      return [contactLabel(contact), contact?.email ?? "", contact?.phone ?? "", lead.next_action ?? ""].some((value) =>
-        value.toLowerCase().includes(needle),
-      );
-    });
-  }, [leads, search, visibility, stageFilter, contactById]);
-
-  const sortValue = useCallback(
-    (lead: Lead, key: string): string | number | null => {
-      const contact = contactById.get(lead.contact_id);
-      switch (key) {
-        case "status":
-          return LEAD_STATUSES.indexOf(lead.status);
-        case "email":
-          return contact?.email ?? null;
-        case "phone":
-          return contact?.phone ?? null;
-        case "interest":
-          return lead.interest ?? null;
-        case "next":
-          return lead.next_action?.trim() || null;
-        case "due":
-          return lead.next_action_at ? new Date(lead.next_action_at).getTime() : null;
-        case "owner":
-          return lead.owner_user_id ? (ownerName.get(lead.owner_user_id) ?? null) : null;
-        case "updated":
-          return new Date(lead.updated_at).getTime();
-        default:
-          return contact ? personName(contact) : null;
-      }
-    },
-    [contactById, ownerName],
-  );
-
-  const renderCell = useCallback(
-    (lead: Lead, key: string) => {
-      const contact = contactById.get(lead.contact_id);
-      switch (key) {
-        case "status":
-          return <Badge tone={stageTone(lead.status)}>{formatStageLabel(lead.status)}</Badge>;
-        case "email":
-          return contact?.email ?? "—";
-        case "phone":
-          return contact?.phone ?? "—";
-        case "interest":
-          return lead.interest ? formatStageLabel(lead.interest) : "Not set";
-        case "next":
-          return lead.next_action?.trim() ? lead.next_action : <span className="df-sales-muted">No action planned</span>;
-        case "due":
-          return lead.next_action_at ? (
-            <span className={isOverdue(lead, now) ? "df-sales-overdue" : undefined}>{formatDateTime(lead.next_action_at)}</span>
-          ) : (
-            <span className="df-sales-muted">Not scheduled</span>
+    const searched = needle
+      ? leads.filter((lead) => {
+          const contact = contactById.get(lead.contact_id);
+          return [contactDisplayName(contact), contact?.email ?? "", contact?.phone ?? "", lead.next_action ?? ""].some((value) =>
+            value.toLowerCase().includes(needle),
           );
-        case "owner":
-          return lead.owner_user_id ? (ownerName.get(lead.owner_user_id) ?? "—") : "Unassigned";
-        case "updated":
-          return formatShortDate(lead.updated_at);
-        default:
-          return <strong className="df-sales-primary">{contactLabel(contact)}</strong>;
-      }
-    },
-    [contactById, ownerName, now],
-  );
+        })
+      : leads;
+    return applyGridFilters(searched, conditions, filterFields, readFilterValue);
+  }, [leads, search, contactById, conditions, filterFields, readFilterValue]);
 
-  async function changeStage(lead: Lead, next: LeadStatus) {
-    if (next === lead.status || !ALLOWED_STATUS_TRANSITIONS[lead.status].includes(next)) return;
-    setStageSaving(true);
-    setStageMessage("");
+  const byStage = useMemo(() => {
+    const grouped = new Map<LeadStatus, Lead[]>(PIPELINE_STAGES.map((stage) => [stage.status, []]));
+    for (const lead of visibleLeads) grouped.get(lead.status)?.push(lead);
+    return grouped;
+  }, [visibleLeads]);
+
+  function openRecord(lead: Lead, stage?: LeadStatus) {
+    setSelectedId(lead.id);
+    setPendingStage(stage ?? null);
+  }
+
+  /** Moves a lead to a stage. Disallowed moves are refused; moves that need a next action open the record at that step. */
+  async function moveLead(lead: Lead, next: LeadStatus) {
+    if (next === lead.status) return;
+    if (!ALLOWED_STATUS_TRANSITIONS[lead.status].includes(next)) {
+      setMoveError(`A lead cannot move directly from ${formatStageLabel(lead.status)} to ${formatStageLabel(next)}. Choose one of its allowed next stages.`);
+      return;
+    }
+    if (needsNextActionPrompt(lead, next)) {
+      openRecord(lead, next);
+      return;
+    }
+    setMovingId(lead.id);
+    setMoveError("");
+    setNotice("");
     try {
       const outcome = outcomeForStatusChange(lead.status, next);
       const updated = await leadsApi.update(lead.id, outcome === undefined ? { status: next } : { status: next, outcome });
       setLeads((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setSelected(updated);
-      setNotice(`Lead moved to ${formatStageLabel(next)}.`);
+      setNotice(`${contactDisplayName(contactById.get(lead.contact_id))} moved to ${formatStageLabel(next)}.`);
     } catch (error) {
-      setStageMessage(messageFrom(error, "The stage could not be changed. Try again."));
+      setMoveError(messageFrom(error, "The lead could not be moved. Try again."));
     } finally {
-      setStageSaving(false);
+      setMovingId(null);
     }
   }
 
-  const selectedContact = selected ? contactById.get(selected.contact_id) : undefined;
-  const selectedName = contactLabel(selectedContact);
-
-  const viewToggle = (
-    <div className="df-sales-view-toggle" role="group" aria-label="Pipeline view">
-      <Button variant={view === "list" ? "primary" : "secondary"} size="sm" aria-pressed={view === "list"} onClick={() => setView("list")}>
-        List
-      </Button>
-      <Button variant={view === "board" ? "primary" : "secondary"} size="sm" aria-pressed={view === "board"} onClick={() => setView("board")}>
-        Board
-      </Button>
-    </div>
-  );
-
-  if (view === "board") {
-    return (
-      <div className="df-sales-page">
-        <h1 className="df-visually-hidden">Pipeline</h1>
-        <div className="df-sales-view-bar">{viewToggle}</div>
-        <PipelinePage />
-      </div>
-    );
+  function onDrop(event: DragEvent<HTMLElement>, target: LeadStatus) {
+    event.preventDefault();
+    setDropTarget(null);
+    const id = event.dataTransfer.getData("text/plain") || draggingId;
+    setDraggingId(null);
+    const lead = id ? leads.find((item) => item.id === id) : undefined;
+    if (lead) void moveLead(lead, target);
   }
 
+  function canDropOn(stage: LeadStatus): boolean {
+    const lead = draggingId ? leads.find((item) => item.id === draggingId) : undefined;
+    return Boolean(lead && (lead.status === stage || ALLOWED_STATUS_TRANSITIONS[lead.status].includes(stage)));
+  }
+
+  const selected = selectedId ? (leads.find((lead) => lead.id === selectedId) ?? null) : null;
+  const totalShown = visibleLeads.length;
+
   return (
-    <div className="df-sales-page">
+    <div className="df-sales-page df-pipeline">
       <h1 className="df-visually-hidden">Pipeline</h1>
+
+      <div className="df-grid-toolbar df-pipeline-toolbar">
+        <label className="df-grid-search">
+          <span className="df-visually-hidden">Search pipeline</span>
+          <input
+            type="search"
+            className="df-input"
+            value={search}
+            placeholder="Search name, email, phone or next action"
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+        <div className="df-grid-toolbar-actions">
+          <GridFilterButton fields={filterFields} conditions={conditions} onApply={applyFilters} />
+        </div>
+      </div>
+
+      <GridFilterChips fields={filterFields} conditions={conditions} onApply={applyFilters} />
 
       {notice ? (
         <p className="df-sales-notice" role="status">
           {notice}
         </p>
       ) : null}
-
-      <EnterpriseDataGrid<Lead>
-        gridId="pipeline"
-        ariaLabel="Pipeline"
-        columns={COLUMNS}
-        rows={rows}
-        rowKey={(lead) => lead.id}
-        sortValue={sortValue}
-        renderCell={renderCell}
-        status={status}
-        errorMessage={loadError}
-        onRetry={() => void reload()}
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchLabel="Search pipeline"
-        searchPlaceholder="Search name, email, phone or next action"
-        emptyTitle="No leads in the pipeline"
-        emptyMessage="Leads appear here as they are created. Create a lead from the Leads page."
-        noMatchTitle="No leads match this search or filter"
-        noMatchMessage="Try another search, or change the visibility and stage filters."
-        onOpenRow={(lead) => {
-          setSelected(lead);
-          setStageMessage("");
-          setTimelineOpen(false);
-          setFollowUpsOpen(false);
-        }}
-        totalCount={leads.length}
-        rangeLabel={search || stageFilter || visibility !== "active" ? "Filtered" : "Active leads shown"}
-        toolbarFilters={
-          <>
-            {viewToggle}
-            <select
-              className="df-input df-sales-status-select"
-              aria-label="Lead visibility"
-              value={visibility}
-              onChange={(event) => setVisibility(event.target.value as Visibility)}
-            >
-              <option value="active">Active leads</option>
-              <option value="inactive">Inactive leads</option>
-              <option value="all">All leads</option>
-            </select>
-            <select
-              className="df-input df-sales-status-select"
-              aria-label="Filter by stage"
-              value={stageFilter}
-              onChange={(event) => setStageFilter(event.target.value as "" | LeadStatus)}
-            >
-              <option value="">All stages</option>
-              {LEAD_STATUSES.map((stage) => (
-                <option key={stage} value={stage}>
-                  {formatStageLabel(stage)}
-                </option>
-              ))}
-            </select>
-          </>
-        }
-      />
-
-      <RecordDetailDialog
-        open={selected !== null}
-        onClose={() => setSelected(null)}
-        eyebrow="Pipeline"
-        title={selectedName}
-        closeLabel="Close pipeline lead"
-        main={
-          selected ? (
-            <div className="df-sales-form">
-              <div className="df-sales-form-grid">
-                <TextField label="Email address" value={selectedContact?.email ?? ""} readOnly />
-                <TextField label="Phone" value={selectedContact?.phone ?? ""} readOnly />
-                <TextField label="Next action" value={selected.next_action ?? ""} readOnly helper="Edit next actions on the Leads page." />
-                <TextField label="Follow-up due" value={formatDateTime(selected.next_action_at)} readOnly />
-                <SelectField
-                  label="Stage"
-                  value={selected.status}
-                  disabled={stageSaving || ALLOWED_STATUS_TRANSITIONS[selected.status].length === 0}
-                  options={[selected.status, ...ALLOWED_STATUS_TRANSITIONS[selected.status]].map((stage) => ({
-                    value: stage,
-                    label: formatStageLabel(stage),
-                  }))}
-                  onChange={(event) => void changeStage(selected, event.target.value as LeadStatus)}
-                />
-              </div>
-              {stageMessage ? (
-                <p className="df-sales-form-message df-sales-form-message--error" role="alert">
-                  {stageMessage}
-                </p>
-              ) : null}
-            </div>
-          ) : null
-        }
-        aside={
-          selected ? (
-            <>
-              <dl className="df-sales-properties">
-                <RecordProperty label="Stage">
-                  <Badge tone={stageTone(selected.status)}>{formatStageLabel(selected.status)}</Badge>
-                </RecordProperty>
-                <RecordProperty label="Active">{selected.is_active ? "Yes" : "No"}</RecordProperty>
-                <RecordProperty label="Owner">{selected.owner_user_id ? (ownerName.get(selected.owner_user_id) ?? "Unnamed owner") : "Unassigned"}</RecordProperty>
-                <RecordProperty label="Last updated">{formatShortDate(selected.updated_at)}</RecordProperty>
-              </dl>
-              <div className="df-sales-aside-actions">
-                <Button variant="secondary" size="sm" onClick={() => setFollowUpsOpen(true)} disabled={!selected.is_active}>
-                  Manage follow-ups
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => setTimelineOpen(true)}>
-                  View timeline
-                </Button>
-              </div>
-            </>
-          ) : null
-        }
-      />
-
-      {selected && followUpsOpen ? (
-        <LeadFollowUpsDialog
-          open={followUpsOpen}
-          leadId={selected.id}
-          leadName={selectedName}
-          onClose={() => setFollowUpsOpen(false)}
-          onChanged={() => void reload()}
-        />
+      {moveError ? (
+        <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+          {moveError}
+        </p>
       ) : null}
 
-      {selected && timelineOpen ? (
-        <LeadTimeline leadId={selected.id} contactName={selectedName} onClose={() => setTimelineOpen(false)} />
+      {status === "loading" ? <LoadingState title="Loading pipeline" message="Fetching the latest leads." /> : null}
+      {status === "error" ? (
+        <ErrorState title="The pipeline could not be loaded" message={loadError} retryLabel="Try again" onRetry={() => void reload()} />
+      ) : null}
+
+      {status === "ready" ? (
+        <section className="df-pipeline-board-frame" aria-label="Pipeline stages">
+          <div className="df-pipeline-board" role="list">
+            {PIPELINE_STAGES.map((stage) => {
+              const stageLeads = byStage.get(stage.status) ?? [];
+              const droppable = draggingId !== null && canDropOn(stage.status);
+              return (
+                <section
+                  key={stage.status}
+                  role="listitem"
+                  className={`df-pipeline-column${dropTarget === stage.status && droppable ? " df-pipeline-column--drop" : ""}`}
+                  aria-label={`${stage.label}: ${stageLeads.length} ${stageLeads.length === 1 ? "lead" : "leads"}`}
+                  onDragOver={(event) => {
+                    if (!droppable) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    setDropTarget(stage.status);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null);
+                  }}
+                  onDrop={(event) => onDrop(event, stage.status)}
+                >
+                  <header className="df-pipeline-column-header">
+                    <div className="df-pipeline-column-title">
+                      <h2>{stage.label}</h2>
+                      <Badge tone="neutral">{stageLeads.length}</Badge>
+                    </div>
+                    <p className="df-sales-muted">{stage.description}</p>
+                  </header>
+
+                  <div className="df-pipeline-cards">
+                    {stageLeads.length === 0 ? (
+                      <div className="df-pipeline-empty">
+                        {draggingId && droppable ? `Drop here to move to ${stage.label}` : "No leads in this stage"}
+                      </div>
+                    ) : (
+                      stageLeads.map((lead) => {
+                        const contact = contactById.get(lead.contact_id);
+                        const name = contactDisplayName(contact);
+                        const overdue =
+                          lead.is_active && lead.next_action_at && lead.status !== "WON" && lead.status !== "LOST" && new Date(lead.next_action_at).getTime() < now;
+                        const allowed = [lead.status, ...ALLOWED_STATUS_TRANSITIONS[lead.status]];
+                        const busy = movingId === lead.id;
+                        return (
+                          <article
+                            key={lead.id}
+                            className={[
+                              "df-pipeline-card",
+                              lead.is_active ? "" : "df-pipeline-card--inactive",
+                              draggingId === lead.id ? "df-pipeline-card--dragging" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            draggable={!busy && ALLOWED_STATUS_TRANSITIONS[lead.status].length > 0}
+                            onDragStart={(event) => {
+                              setDraggingId(lead.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", lead.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingId(null);
+                              setDropTarget(null);
+                            }}
+                          >
+                            <div className="df-pipeline-card-top">
+                              <Badge tone={lead.is_active ? "active" : "neutral"}>{lead.is_active ? (lead.interest ? formatStageLabel(lead.interest) : "Interest not set") : "Inactive"}</Badge>
+                            </div>
+                            <h3 className="df-pipeline-card-title">
+                              <button type="button" className="df-pipeline-card-open" onClick={() => openRecord(lead)}>
+                                {name}
+                                <span className="df-visually-hidden"> — open lead record</span>
+                              </button>
+                            </h3>
+                            {contact?.email ? <p className="df-pipeline-card-line">{contact.email}</p> : null}
+                            {contact?.phone ? <p className="df-pipeline-card-line">{contact.phone}</p> : null}
+                            <dl className="df-pipeline-card-facts">
+                              <div>
+                                <dt>Next action</dt>
+                                <dd>{lead.next_action?.trim() || "No action planned"}</dd>
+                              </div>
+                              <div>
+                                <dt>Follow-up</dt>
+                                <dd className={overdue ? "df-sales-overdue" : undefined}>
+                                  {lead.next_action_at ? formatDateTime(lead.next_action_at) : "Not scheduled"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Owner</dt>
+                                <dd>{lead.owner_user_id ? (ownerName.get(lead.owner_user_id) ?? "Assigned") : "Unassigned"}</dd>
+                              </div>
+                            </dl>
+                            <label className="df-pipeline-card-stage">
+                              <span className="df-visually-hidden">Move {name} to stage</span>
+                              <select
+                                className="df-input"
+                                value={lead.status}
+                                disabled={busy || allowed.length <= 1}
+                                onChange={(event) => void moveLead(lead, event.target.value as LeadStatus)}
+                              >
+                                {allowed.map((option) => (
+                                  <option key={option} value={option}>
+                                    {formatStageLabel(option)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+          <footer className="df-pipeline-footer">
+            <span>
+              <strong>{totalShown}</strong> {totalShown === 1 ? "lead" : "leads"} across {PIPELINE_STAGES.length} stages
+              {conditions.length > 0 || search.trim() ? ` · filtered from ${leads.length}` : ""}
+            </span>
+            <Button variant="tertiary" size="sm" onClick={() => void reload()}>
+              Refresh
+            </Button>
+          </footer>
+        </section>
+      ) : null}
+
+      {selected ? (
+        <LeadDetailDialog
+          key={`${selected.id}-${pendingStage ?? ""}`}
+          lead={selected}
+          contact={contactById.get(selected.contact_id)}
+          ownerName={selected.owner_user_id ? (ownerName.get(selected.owner_user_id) ?? null) : null}
+          initialStage={pendingStage ?? undefined}
+          onClose={() => {
+            setSelectedId(null);
+            setPendingStage(null);
+          }}
+          onLeadChanged={(updated) => setLeads((current) => current.map((item) => (item.id === updated.id ? updated : item)))}
+          onNotice={setNotice}
+          onFollowUpsChanged={() => void reload()}
+        />
       ) : null}
     </div>
   );

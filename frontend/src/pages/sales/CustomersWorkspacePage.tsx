@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 
 import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
 import type { GridColumnDef } from "../../components/grid/gridLayout";
+import type { GridFilterField } from "../../components/grid/gridFilters";
 import SiteVisitHistory from "../../components/SiteVisitHistory";
 import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
 import { Badge, Button, Dialog, SelectField, TextField, TextareaField } from "../../components/ui";
@@ -13,7 +14,41 @@ import "./sales.css";
 const PAGE_SIZE = 100;
 const NOTES_MAX = 5000;
 
-type StatusFilter = "active" | "inactive";
+const FILTER_FIELDS: readonly GridFilterField[] = [
+  { key: "name", label: "Customer", type: "text" },
+  { key: "email", label: "Email address", type: "text" },
+  { key: "phone", label: "Phone", type: "text" },
+  {
+    key: "status",
+    label: "Status",
+    type: "select",
+    options: [
+      { value: "active", label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+  },
+  { key: "notes", label: "Notes", type: "text" },
+  { key: "registered", label: "Registered", type: "date" },
+];
+
+function customerFilterValue(profile: CustomerProfile, key: string): string | null {
+  switch (key) {
+    case "name":
+      return displayName(profile.contact) || null;
+    case "email":
+      return profile.contact.email;
+    case "phone":
+      return profile.contact.phone;
+    case "status":
+      return profile.is_active ? "active" : "inactive";
+    case "notes":
+      return profile.customer_notes?.trim() || null;
+    case "registered":
+      return profile.created_at;
+    default:
+      return null;
+  }
+}
 
 const COLUMNS: GridColumnDef[] = [
   { key: "customer", label: "Customer", defaultWidth: 260, primary: true },
@@ -77,7 +112,6 @@ export default function CustomersWorkspacePage() {
   const [loadError, setLoadError] = useState("");
   const [profiles, setProfiles] = useState<CustomerProfile[]>([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [notice, setNotice] = useState("");
 
   const [selected, setSelected] = useState<CustomerProfile | null>(null);
@@ -125,20 +159,15 @@ export default function CustomersWorkspacePage() {
     };
   }, []);
 
-  const statusProfiles = useMemo(
-    () => profiles.filter((profile) => profile.is_active === (statusFilter === "active")),
-    [profiles, statusFilter],
-  );
-
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return statusProfiles;
-    return statusProfiles.filter((profile) =>
+    if (!needle) return profiles;
+    return profiles.filter((profile) =>
       [displayName(profile.contact), profile.contact.email ?? "", profile.contact.phone ?? "", profile.customer_notes ?? ""].some((value) =>
         value.toLowerCase().includes(needle),
       ),
     );
-  }, [statusProfiles, search]);
+  }, [profiles, search]);
 
   const sortValue = useCallback((profile: CustomerProfile, key: string): string | number | null => {
     switch (key) {
@@ -220,7 +249,6 @@ export default function CustomersWorkspacePage() {
         customer_notes: registerNotes.trim() || null,
       });
       setRegisterOpen(false);
-      setStatusFilter("active");
       setNotice("Customer registered successfully.");
       await loadProfiles();
     } catch (error) {
@@ -299,30 +327,17 @@ export default function CustomersWorkspacePage() {
         onSearchChange={setSearch}
         searchLabel="Search customers"
         searchPlaceholder="Search name, email, phone or notes"
-        emptyTitle={statusFilter === "active" ? "No active customers yet" : "No inactive customers"}
-        emptyMessage={
-          statusFilter === "active"
-            ? "Register an existing Contact to create a customer profile."
-            : "Deactivated customer profiles appear here."
-        }
+        emptyTitle="No customers yet"
+        emptyMessage="Register an existing Contact to create a customer profile."
         noMatchTitle="No customers match this search"
         noMatchMessage="Try another name, email, phone number or note."
         createLabel="Register customer"
         onCreate={() => void openRegister()}
         onOpenRow={openDetail}
-        totalCount={statusProfiles.length}
-        rangeLabel={search ? "Filtered" : statusFilter === "active" ? "Active customers" : "Inactive customers"}
-        toolbarFilters={
-          <select
-            className="df-input df-sales-status-select"
-            aria-label="Customer status"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-          >
-            <option value="active">Active customers</option>
-            <option value="inactive">Inactive customers</option>
-          </select>
-        }
+        totalCount={profiles.length}
+        rangeLabel={search ? "Filtered" : "All customers shown"}
+        filterFields={FILTER_FIELDS}
+        filterValue={customerFilterValue}
       />
 
       <RecordDetailDialog

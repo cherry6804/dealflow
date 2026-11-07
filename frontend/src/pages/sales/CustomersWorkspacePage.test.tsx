@@ -64,13 +64,39 @@ describe("CustomersWorkspacePage", () => {
     vi.mocked(contactsApi.list).mockResolvedValue({ items: [], page: 1, page_size: 100, total: 0, total_pages: 1 });
   });
 
-  it("shows active customers by default and switches to inactive ones", async () => {
+  it("lists all customers by default, with no filter applied", async () => {
     renderPage();
     expect(await screen.findByText("Asha Rao")).toBeTruthy();
-    expect(screen.queryByText("Ben Ortiz")).toBeNull();
-    fireEvent.change(screen.getByRole("combobox", { name: "Customer status" }), { target: { value: "inactive" } });
-    expect(await screen.findByText("Ben Ortiz")).toBeTruthy();
+    expect(screen.getByText("Ben Ortiz")).toBeTruthy();
+    expect(screen.queryByText(/active/i, { selector: ".df-grid-filter-chip *" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Filter" })).toBeTruthy();
+  });
+
+  it("filters by status through the optional Filter builder and removes the filter from its chip", async () => {
+    renderPage();
+    await screen.findByText("Asha Rao");
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const builder = screen.getByRole("dialog", { name: "Filter records" });
+    fireEvent.click(within(builder).getByRole("button", { name: "Add filter" }));
+    fireEvent.change(within(builder).getByLabelText("Field for filter 1"), { target: { value: "status" } });
+    fireEvent.change(within(builder).getByLabelText("Value for filter 1"), { target: { value: "inactive" } });
+    fireEvent.click(within(builder).getByRole("button", { name: "Apply" }));
     expect(screen.queryByText("Asha Rao")).toBeNull();
+    expect(screen.getByText("Ben Ortiz")).toBeTruthy();
+    const chips = screen.getByLabelText("Active filters");
+    expect(within(chips).getByText("Status is Inactive")).toBeTruthy();
+    fireEvent.click(within(chips).getByRole("button", { name: "Remove filter Status is Inactive" }));
+    expect(screen.getByText("Asha Rao")).toBeTruthy();
+  });
+
+  it("shows the Apply error when a filter has no value, and does not apply it", async () => {
+    renderPage();
+    await screen.findByText("Asha Rao");
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const builder = screen.getByRole("dialog", { name: "Filter records" });
+    fireEvent.click(within(builder).getByRole("button", { name: "Add filter" }));
+    fireEvent.click(within(builder).getByRole("button", { name: "Apply" }));
+    expect(within(builder).getByRole("alert").textContent).toContain("Choose a value for every filter");
   });
 
   it("opens the customer detail and saves the customer notes", async () => {

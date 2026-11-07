@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 
 import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
 import type { GridColumnDef } from "../../components/grid/gridLayout";
+import type { GridFilterField } from "../../components/grid/gridFilters";
 import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
 import { Badge, Button, Dialog, TextField } from "../../components/ui";
 import { ApiError } from "../../lib/api";
@@ -18,6 +19,39 @@ const COLUMNS: GridColumnDef[] = [
   { key: "created", label: "Created", defaultWidth: 130 },
   { key: "updated", label: "Last updated", defaultWidth: 140, defaultVisible: false },
 ];
+
+const FILTER_FIELDS: readonly GridFilterField[] = [
+  { key: "name", label: "Name", type: "text" },
+  { key: "email", label: "Email address", type: "text" },
+  { key: "phone", label: "Phone", type: "text" },
+  {
+    key: "status",
+    label: "Status",
+    type: "select",
+    options: [
+      { value: "active", label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+  },
+  { key: "created", label: "Created", type: "date" },
+];
+
+function contactFilterValue(contact: Contact, key: string): string | null {
+  switch (key) {
+    case "name":
+      return contactName(contact) || null;
+    case "email":
+      return contact.email;
+    case "phone":
+      return contact.phone;
+    case "status":
+      return contact.is_active ? "active" : "inactive";
+    case "created":
+      return contact.created_at;
+    default:
+      return null;
+  }
+}
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -288,6 +322,8 @@ export default function ContactsWorkspacePage() {
         onOpenRow={openDetail}
         totalCount={contacts.length}
         rangeLabel={search ? "Filtered" : "All contacts shown"}
+        filterFields={FILTER_FIELDS}
+        filterValue={contactFilterValue}
       />
 
       <RecordDetailDialog

@@ -22,11 +22,17 @@ import {
   type GridLayout,
 } from "./gridLayout";
 import { useGridLayout } from "./useGridLayout";
+import { useGridFilters } from "./useGridFilters";
+import { GridFilterButton, GridFilterChips } from "./GridFilterControls";
+import { applyGridFilters, type GridFilterField } from "./gridFilters";
 import { useMeasuredWidth } from "./useMeasuredWidth";
 import "./grid.css";
 import "./grid-layout.css";
 
 export type GridStatus = "loading" | "ready" | "error";
+
+const NO_FILTER_FIELDS: readonly GridFilterField[] = [];
+const NO_FILTER_VALUE = (): null => null;
 
 export interface EnterpriseDataGridProps<T> {
   /** Stable id for personal layout storage. One id per grid. */
@@ -60,8 +66,10 @@ export interface EnterpriseDataGridProps<T> {
   totalCount: number;
   /** Describes the records shown, for example "All records" or "Filtered". */
   rangeLabel: string;
-  /** Optional page-specific filter, shown in the toolbar beside search. */
-  toolbarFilters?: ReactNode;
+  /** Fields this grid can filter on. Omit for no Filter control. Each field lists only the operators its data supports. */
+  filterFields?: readonly GridFilterField[];
+  /** Raw value of a row for a filter field: text or option value, or an ISO timestamp for date fields. */
+  filterValue?: (row: T, fieldKey: string) => string | null;
 }
 
 /**
@@ -96,7 +104,8 @@ export function EnterpriseDataGrid<T>({
   onRefresh,
   totalCount,
   rangeLabel,
-  toolbarFilters,
+  filterFields,
+  filterValue,
 }: EnterpriseDataGridProps<T>) {
   const { layout, update, resetLayout, available } = useGridLayout(gridId, columns);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
@@ -105,7 +114,15 @@ export function EnterpriseDataGrid<T>({
   const [measureRef, measuredWidth] = useMeasuredWidth(1200);
 
   const visibleColumns = useMemo(() => arrangeGridColumns(columns, layout), [columns, layout]);
-  const sortedRows = useMemo(() => sortGridRows(rows, sortColumns, sortValue), [rows, sortColumns, sortValue]);
+  const fieldList = filterFields ?? NO_FILTER_FIELDS;
+  const readFilterValue = filterValue ?? NO_FILTER_VALUE;
+  const { conditions, apply: applyFilters } = useGridFilters(gridId, fieldList);
+  // Rows arrive already searched; the saved filter conditions narrow them further, then the sort applies.
+  const displayRows = useMemo(
+    () => applyGridFilters(rows, conditions, fieldList, readFilterValue),
+    [rows, conditions, fieldList, readFilterValue],
+  );
+  const sortedRows = useMemo(() => sortGridRows(displayRows, sortColumns, sortValue), [displayRows, sortColumns, sortValue]);
   const hiddenCount = columns.filter((column) => !column.fixed && layout.hidden.includes(column.key)).length;
 
   // Columns use their saved or default widths, stretched to fill the container when there is room. When they need more room
@@ -130,8 +147,10 @@ export function EnterpriseDataGrid<T>({
   const rowHeight = GRID_ROW_HEIGHT[layout.density];
   const hasSearch = searchValue.trim().length > 0;
   // Rows arrive already filtered by the search, so an empty list with a search means "no match".
-  const isEmpty = status === "ready" && rows.length === 0 && !hasSearch;
-  const isNoMatch = status === "ready" && rows.length === 0 && hasSearch;
+  const hasFilters = conditions.length > 0;
+  const isEmpty = status === "ready" && rows.length === 0 && !hasSearch && !hasFilters;
+  // A no-match state keeps the footer, so Create stays available while a search or filter hides every row.
+  const isNoMatch = status === "ready" && displayRows.length === 0 && !isEmpty;
 
   function onColumnResize(column: { key: string }, width: number) {
     update(setColumnWidth(layout, column.key, width));
@@ -165,8 +184,8 @@ export function EnterpriseDataGrid<T>({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
-        {toolbarFilters ? <div className="df-grid-toolbar-filters">{toolbarFilters}</div> : null}
         <div ref={columnsAnchorRef} className="df-grid-toolbar-actions">
+          <GridFilterButton fields={fieldList} conditions={conditions} onApply={applyFilters} />
           <Button
             variant="secondary"
             size="sm"
@@ -195,6 +214,8 @@ export function EnterpriseDataGrid<T>({
         />
       </AnchoredPopover>
 
+      <GridFilterChips fields={fieldList} conditions={conditions} onApply={applyFilters} />
+
       {status === "loading" ? <LoadingState title="Loading records" message="Fetching the latest records." /> : null}
 
       {status === "error" ? (
@@ -220,24 +241,32 @@ export function EnterpriseDataGrid<T>({
         />
       ) : null}
 
-      {isNoMatch ? (
-        <EmptyState
-          title={noMatchTitle}
-          message={noMatchMessage}
-          action={
-            <Button variant="secondary" onClick={() => onSearchChange("")}>
-              Clear search
-            </Button>
-          }
-        />
-      ) : null}
-
-      {status === "ready" && rows.length > 0 ? (
+      {status === "ready" && !isEmpty ? (
         <div
           ref={measureRef}
           className="df-grid-frame"
           style={{ "--df-grid-header-height": `${rowHeight}px` } as CSSProperties}
         >
+          {isNoMatch ? (
+            <EmptyState
+              title={noMatchTitle}
+              message={noMatchMessage}
+              action={
+                <div className="df-grid-nomatch-actions">
+                  {hasSearch ? (
+                    <Button variant="secondary" onClick={() => onSearchChange("")}>
+                      Clear search
+                    </Button>
+                  ) : null}
+                  {hasFilters ? (
+                    <Button variant="secondary" onClick={() => applyFilters([])}>
+                      Clear filters
+                    </Button>
+                  ) : null}
+                </div>
+              }
+            />
+          ) : (
           <div className="df-grid-body">
             <DataGrid
               aria-label={ariaLabel}
@@ -257,9 +286,10 @@ export function EnterpriseDataGrid<T>({
                 onOpenRow(args.row);
               }}
               defaultColumnOptions={{ resizable: true, sortable: true }}
-              style={{ height: Math.min(rows.length * rowHeight + rowHeight, 640) }}
+              style={{ height: Math.min(sortedRows.length * rowHeight + rowHeight, 640) }}
             />
           </div>
+          )}
 
           <footer className="df-grid-footer">
             <div className="df-grid-footer-start">
@@ -272,7 +302,7 @@ export function EnterpriseDataGrid<T>({
             <div className="df-grid-footer-end">
               <p className="df-grid-footer-count" aria-live="polite">
                 <strong>{totalCount}</strong> total
-                {hasSearch ? <span> · {rows.length} match</span> : null}
+                {hasSearch || hasFilters ? <span> · {displayRows.length} match</span> : null}
                 <span> · {rangeLabel}</span>
                 {available ? null : <span className="df-grid-footer-note"> · Layout not saved</span>}
               </p>

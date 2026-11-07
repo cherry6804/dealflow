@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppContext, type AppContextValue } from "../../contexts/appContextDefinition";
@@ -77,27 +77,32 @@ describe("PipelineWorkspacePage", () => {
     vi.mocked(teamApi.listMembers).mockRejectedValue(new Error("forbidden"));
   });
 
-  it("shows active leads by default, with the stage and next action", async () => {
+  it("opens as a Kanban board with one column per stage and the lead as a card", async () => {
     renderPage();
-    expect(await screen.findByText("Asha Rao")).toBeTruthy();
-    expect(screen.getAllByText("Qualified").length).toBeGreaterThan(0);
-    expect(screen.getByText("Send brochure")).toBeTruthy();
-    expect(screen.getAllByText("Asha Rao")).toHaveLength(1);
+    expect((await screen.findAllByRole("button", { name: /Asha Rao/ })).length).toBe(2);
+    expect(screen.getByRole("listitem", { name: /Qualified: 1 lead/ })).toBeTruthy();
+    expect(screen.getByRole("listitem", { name: /New: 1 lead/ })).toBeTruthy();
+    expect(screen.getByRole("listitem", { name: /Won: 0 leads/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "List" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Board" })).toBeNull();
   });
 
-  it("includes inactive leads when the visibility filter is set to all", async () => {
+  it("shows empty-stage states for stages without leads", async () => {
     renderPage();
-    await screen.findByText("Asha Rao");
-    fireEvent.change(screen.getByRole("combobox", { name: "Lead visibility" }), { target: { value: "all" } });
-    expect(await screen.findAllByText("Asha Rao")).toHaveLength(2);
+    await screen.findAllByRole("button", { name: /Asha Rao/ });
+    const won = screen.getByRole("listitem", { name: /Won: 0 leads/ });
+    expect(within(won).getByText("No leads in this stage")).toBeTruthy();
   });
 
-  it("switches to the board view and back to the list", async () => {
+  it("filters cards by lead activity through the optional Filter builder", async () => {
     renderPage();
-    await screen.findByText("Asha Rao");
-    fireEvent.click(screen.getByRole("button", { name: "Board" }));
-    expect(screen.getByRole("button", { name: "Board" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(await screen.findByText("Asha Rao")).toBeTruthy();
+    expect(await screen.findAllByRole("button", { name: /Asha Rao/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const builder = screen.getByRole("dialog", { name: "Filter records" });
+    fireEvent.click(within(builder).getByRole("button", { name: "Add filter" }));
+    fireEvent.change(within(builder).getByLabelText("Field for filter 1"), { target: { value: "active" } });
+    fireEvent.change(within(builder).getByLabelText("Value for filter 1"), { target: { value: "inactive" } });
+    fireEvent.click(within(builder).getByRole("button", { name: "Apply" }));
+    expect(screen.getAllByRole("button", { name: /Asha Rao/ })).toHaveLength(1);
   });
 });
