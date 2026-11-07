@@ -65,6 +65,7 @@ const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
   () => import("../../pages/RequirementsPage"),
 );
+const RequirementsWorkspacePage = lazy(() => import("../../pages/requirements/RequirementsWorkspacePage"));
 const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
 const DealsPage = lazy(() => import("../../pages/DealsPage"));
 const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
@@ -234,7 +235,9 @@ export default function AppRouter() {
             />
             <Route
               path="/requirements"
-              element={<RequirementsPage />}
+              element={
+                import.meta.env.VITE_DEALSFLO_REQUIREMENTS === "true" ? <RequirementsWorkspacePage /> : <RequirementsPage />
+              }
             />
             <Route
               path="/pipeline"

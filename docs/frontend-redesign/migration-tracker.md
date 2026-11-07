@@ -239,7 +239,7 @@ The space chrome (title row and tab bar) is part of the shell content. It cancel
 |---|---|---|---|---|
 | Properties | /properties | Built, tested, grid browser-verified | VITE_DEALSFLO_PROPERTIES | Columns: property (title and address), transaction, type (hidden by default), location, price or rent, availability badge, listed, last updated (hidden). Filters: transaction, availability, type, city, locality, listed. Record dialog: details, availability change, visit history. Add property uses the existing create sequence and its partial-failure message; the form validates before any request. Owner is not in the property record, so no owner column. |
 | Referrals | /referrals | Built, tested, grid browser-verified (created one QA record and edited its phone) | VITE_DEALSFLO_REFERRALS | Columns: referral (name and contact), referrer, customer, related deal stage, status badge, referral date, last updated (hidden). Filters: status, referral, referrer, customer, referral date. One record dialog creates and edits the same fields; deactivation stays behind a confirmation. Commission and referral value are not in the referral record, so no value column. |
-| Requirements | /requirements | Not started | — | Legacy page (2174 lines). |
+| Requirements | /requirements | Built, tested, grid browser-verified (created one QA requirement: budget, customer assignment, preferred location) | VITE_DEALSFLO_REQUIREMENTS | Grid: customer requirement (customer name and contact), transaction, budget range, status badge, created, last updated (hidden). Filters: status, transaction, customer, email, created. Record dialog: budget, lead or customer assignment, preferred locations, property preferences, possession and parking, shortlist, and the shared matching panel. Each section saves on its own, as before. Locations, preferences and matches are sub-records and appear in the record, not the grid. |
 | Deals | /deals | Not started | — | Legacy page (2211 lines). |
 
 Gaps and limits:
@@ -247,3 +247,7 @@ Gaps and limits:
 - Owner (properties) and commission or referral value (referrals) are not in the API records, so they are not shown.
 - Browser zoom (80–200%) was not tested for these pages.
 - Column layout and filters are personal per user and organization, as on the other grids.
+
+## Requirements grid (DFR-UI-GRID-REQUIREMENTS-001)
+
+Requirements now uses the shared grid and a single record dialog. The dialog's sections keep the legacy page's separate saves and validation rules (budget range, BHK, parking spaces). Matching uses the existing RequirementMatchPanel. Not yet checked: light theme, zoom levels, and the possession/parking and property-preference sections in the browser (the QA check covered budget, customer assignment and preferred location). Requirement reference numbers are not in the API, so the grid shows the customer name instead.
