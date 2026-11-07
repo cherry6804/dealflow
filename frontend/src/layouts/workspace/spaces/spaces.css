@@ -402,6 +402,9 @@
 /* Jira-style space navigation: the title and tabs sit directly on the page, with no card, rounded corner or outer border.
  * One subtle divider sits under the tabs. White in the light theme; the surface token follows the dark theme. */
 .df-space-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   padding: 0;

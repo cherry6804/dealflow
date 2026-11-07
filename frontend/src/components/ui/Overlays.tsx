@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { KeyboardEvent, ReactElement, ReactNode } from "react";
 
+import { Button } from "./Button";
 import { useDismissOnOutside } from "./useDismissOnOutside";
 
 /* ---------- Dialog and drawer ---------- */
@@ -21,23 +22,57 @@ export interface DialogProps {
   closeLabel: string;
   description?: string;
   children: ReactNode;
+  /** Fixed footer below the scrolling content. Put the primary action here so it stays reachable. */
   footer?: ReactNode;
   /** Drawers slide in from the right and use the full height. */
   placement?: "center" | "end";
   /** Large dialogs hold two-column record layouts. */
   size?: "md" | "lg";
+  /** Small label above the title, for example the record type. */
+  eyebrow?: ReactNode;
+  /** Status indicator shown beside the title. */
+  status?: ReactNode;
+  /** Contextual actions in the header, shown before the close control. */
+  headerActions?: ReactNode;
+  /** True while a request runs. Backdrop, Escape and close are ignored until it settles, so an operation is never dropped silently. */
+  busy?: boolean;
+  /** True when the form has unsaved changes. Any dismissal then asks for confirmation first. */
+  dirty?: boolean;
 }
 
 /**
- * Modal dialog on the native <dialog> element. showModal traps focus and makes the rest of the page inert.
- * Where showModal is missing (older engines, jsdom), the open attribute is used instead and focus is moved manually.
- * On close, focus returns to the element that opened the dialog.
+ * The shared dialog for every module. It uses the native <dialog> element: showModal traps focus and makes the page inert, and
+ * focus returns to the opener on close. The header and footer stay fixed while the body scrolls.
+ *
+ * Dismissal: the close control, Escape, and a click on the backdrop all go through one path. That path is blocked while `busy`,
+ * asks for confirmation while `dirty`, and otherwise calls onClose. A backdrop click counts only when the press also started on
+ * the backdrop, so text selection that ends outside the dialog never closes it. Clicks inside the dialog, and inside portals
+ * opened from it (menus, popovers, date pickers), never reach that path.
  */
-export function Dialog({ open, onClose, title, closeLabel, description, children, footer, placement = "center", size = "md" }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  title,
+  closeLabel,
+  description,
+  children,
+  footer,
+  placement = "center",
+  size = "md",
+  eyebrow,
+  status,
+  headerActions,
+  busy = false,
+  dirty = false,
+}: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
+  const confirmRef = useRef<HTMLDialogElement | null>(null);
   const opener = useRef<Element | null>(null);
+  const pressStartedOnBackdrop = useRef(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const titleId = useId();
   const descriptionId = useId();
+  const confirmTitleId = useId();
 
   useEffect(() => {
     const dialog = ref.current;
@@ -52,9 +87,37 @@ export function Dialog({ open, onClose, title, closeLabel, description, children
     } else if (!open && dialog.open) {
       if (typeof dialog.close === "function") dialog.close();
       else dialog.removeAttribute("open");
+      setConfirmOpen(false);
       if (opener.current instanceof HTMLElement) opener.current.focus();
     }
   }, [open]);
+
+  // The discard confirmation is mounted only while it is needed, so closed dialogs never add hidden buttons to the page.
+  useEffect(() => {
+    const confirm = confirmRef.current;
+    if (!confirmOpen || !confirm || confirm.open) return;
+    if (typeof confirm.showModal === "function") confirm.showModal();
+    else {
+      confirm.setAttribute("open", "");
+      confirm.querySelector<HTMLElement>("button")?.focus();
+    }
+  }, [confirmOpen]);
+
+  // Closes the confirmation natively first, so it never unmounts while still open in the top layer.
+  function closeConfirm() {
+    const confirm = confirmRef.current;
+    if (confirm?.open && typeof confirm.close === "function") confirm.close();
+    setConfirmOpen(false);
+  }
+
+  function requestClose() {
+    if (busy) return;
+    if (dirty) {
+      setConfirmOpen(true);
+      return;
+    }
+    onClose();
+  }
 
   return (
     <dialog
@@ -62,18 +125,48 @@ export function Dialog({ open, onClose, title, closeLabel, description, children
       className={`df-dialog df-dialog--${placement}${size === "lg" ? " df-dialog--lg" : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
+      aria-busy={busy || undefined}
+      onKeyDown={(event) => {
+        // Escape is handled here, on keydown. Browsers only send Escape to the cancel handler while the page has user activation,
+        // so relying on cancel alone can let the dialog close without the unsaved-change check. A nested popover or the discard
+        // prompt that already handled the key marks it as default-prevented, and this handler then does nothing.
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        requestClose();
+      }}
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        requestClose();
+      }}
+      onPointerDown={(event) => {
+        pressStartedOnBackdrop.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget && pressStartedOnBackdrop.current) requestClose();
       }}
     >
       <header className="df-dialog-header">
-        <h2 id={titleId} className="df-dialog-title">
-          {title}
-        </h2>
-        <button type="button" className="df-btn df-btn--tertiary df-btn--sm df-btn--icon-only" aria-label={closeLabel} onClick={onClose}>
-          <span aria-hidden="true">×</span>
-        </button>
+        <div className="df-dialog-heading">
+          {eyebrow ? <p className="df-dialog-eyebrow">{eyebrow}</p> : null}
+          <div className="df-dialog-titlerow">
+            <h2 id={titleId} className="df-dialog-title">
+              {title}
+            </h2>
+            {status ? <div className="df-dialog-status">{status}</div> : null}
+          </div>
+        </div>
+        <div className="df-dialog-header-actions">
+          {headerActions}
+          <button
+            type="button"
+            className="df-btn df-btn--tertiary df-btn--sm df-btn--icon-only"
+            aria-label={closeLabel}
+            disabled={busy}
+            onClick={requestClose}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
       </header>
       {description ? (
         <p id={descriptionId} className="df-dialog-description">
@@ -82,6 +175,51 @@ export function Dialog({ open, onClose, title, closeLabel, description, children
       ) : null}
       <div className="df-dialog-body">{children}</div>
       {footer ? <footer className="df-dialog-footer">{footer}</footer> : null}
+
+      {confirmOpen ? (
+        <dialog
+          ref={confirmRef}
+          className="df-dialog df-dialog--confirm"
+          aria-labelledby={confirmTitleId}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            closeConfirm();
+          }}
+          onCancel={(event) => {
+            event.preventDefault();
+            closeConfirm();
+          }}
+          onClose={() => setConfirmOpen(false)}
+        >
+          <header className="df-dialog-header">
+            <div className="df-dialog-heading">
+              <div className="df-dialog-titlerow">
+                <h3 id={confirmTitleId} className="df-dialog-title">
+                  Discard unsaved changes?
+                </h3>
+              </div>
+            </div>
+          </header>
+          <div className="df-dialog-body">
+            <p className="df-dialog-description-plain">Your changes have not been saved. If you close now, they are lost.</p>
+          </div>
+          <footer className="df-dialog-footer">
+            <Button variant="secondary" onClick={closeConfirm}>
+              Keep editing
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                closeConfirm();
+                onClose();
+              }}
+            >
+              Discard changes
+            </Button>
+          </footer>
+        </dialog>
+      ) : null}
     </dialog>
   );
 }

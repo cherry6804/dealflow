@@ -96,12 +96,12 @@ describe("ContactsWorkspacePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New contact" }));
     const form = screen.getByRole("dialog", { name: "New contact" });
-    fireEvent.click(within(form).getByRole("button", { name: "Save contact" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Create contact" }));
     expect(within(form).getByText("First name is required.")).toBeTruthy();
     expect(contactsApi.create).not.toHaveBeenCalled();
 
     fireEvent.change(within(form).getByLabelText(/First name/), { target: { value: "Chen" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Save contact" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Create contact" }));
     await waitFor(() => expect(contactsApi.create).toHaveBeenCalledWith({ first_name: "Chen", last_name: null, email: null, phone: null }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New contact" })).toBeNull());
   });
@@ -113,7 +113,7 @@ describe("ContactsWorkspacePage", () => {
     const form = screen.getByRole("dialog", { name: "New contact" });
     fireEvent.change(within(form).getByLabelText(/First name/), { target: { value: "Dee" } });
     fireEvent.change(within(form).getByLabelText("Email address"), { target: { value: "dee@" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Save contact" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Create contact" }));
     expect(within(form).getByText(/Enter a complete email/)).toBeTruthy();
     expect(contactsApi.create).not.toHaveBeenCalled();
   });

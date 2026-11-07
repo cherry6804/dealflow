@@ -4,7 +4,7 @@ import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
 import type { GridColumnDef } from "../../components/grid/gridLayout";
 import type { GridFilterField } from "../../components/grid/gridFilters";
 import SiteVisitHistory from "../../components/SiteVisitHistory";
-import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
+import { RecordDialog, RecordProperty } from "../../components/record/RecordDialog";
 import { Badge, Button, Dialog, SelectField, TextField, TextareaField } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import { contactsApi, type Contact } from "../../services/contactApi";
@@ -340,15 +340,29 @@ export default function CustomersWorkspacePage() {
         filterValue={customerFilterValue}
       />
 
-      <RecordDetailDialog
+      <RecordDialog
         open={selected !== null}
         onClose={() => setSelected(null)}
         eyebrow="Customer"
         title={selectedName}
         closeLabel="Close customer"
+        busy={detailSaving}
+        dirty={notesDirty}
+        footer={
+          selected ? (
+            <>
+              <Button variant="secondary" onClick={() => setSelected(null)} disabled={detailSaving}>
+                Close
+              </Button>
+              <Button type="submit" form="customer-notes-form" variant="primary" disabled={!notesDirty} loading={detailSaving}>
+                Save notes
+              </Button>
+            </>
+          ) : null
+        }
         main={
           selected ? (
-            <form className="df-sales-form" onSubmit={saveNotes} noValidate>
+            <form id="customer-notes-form" className="df-sales-form" onSubmit={saveNotes} noValidate>
               <div className="df-sales-form-grid">
                 <TextField label="Name" value={selectedName} readOnly helper="Edit the name on the contact record." />
                 <TextField label="Email address" type="email" value={selected.contact.email ?? ""} readOnly />
@@ -362,16 +376,11 @@ export default function CustomersWorkspacePage() {
                   onChange={(event) => setNotesDraft(event.target.value)}
                 />
               </div>
-              <div className="df-sales-form-actions">
-                {detailMessage ? (
-                  <p className="df-sales-form-message" role="status">
-                    {detailMessage}
-                  </p>
-                ) : null}
-                <Button type="submit" variant="primary" disabled={!notesDirty} loading={detailSaving}>
-                  Save notes
-                </Button>
-              </div>
+              {detailMessage ? (
+                <p className="df-sales-form-message" role="status">
+                  {detailMessage}
+                </p>
+              ) : null}
             </form>
           ) : null
         }
@@ -420,8 +429,26 @@ export default function CustomersWorkspacePage() {
         title="Register a customer"
         closeLabel="Close register customer"
         description="Select an existing Contact to create a customer profile. Only active Contacts that are not already registered can be selected."
+        busy={registerSaving}
+        dirty={registerContactId !== "" || registerNotes.trim() !== ""}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRegisterOpen(false)} disabled={registerSaving}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="customer-register-form"
+              variant="primary"
+              loading={registerSaving}
+              disabled={registerLoading || !registerContactId || registrableContacts.length === 0}
+            >
+              Register customer
+            </Button>
+          </>
+        }
       >
-        <form className="df-sales-form" onSubmit={submitRegister} noValidate>
+        <form id="customer-register-form" className="df-sales-form" onSubmit={submitRegister} noValidate>
           {registerLoading ? (
             <p className="df-sales-form-message" role="status">
               Loading available Contacts…
@@ -459,24 +486,11 @@ export default function CustomersWorkspacePage() {
               />
             </div>
           )}
-          <div className="df-sales-form-actions">
-            {registerError && registerContactId ? (
-              <p className="df-sales-form-message df-sales-form-message--error" role="alert">
-                {registerError}
-              </p>
-            ) : null}
-            <Button variant="secondary" onClick={() => setRegisterOpen(false)} disabled={registerSaving}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={registerSaving}
-              disabled={registerLoading || !registerContactId || registrableContacts.length === 0}
-            >
-              Register customer
-            </Button>
-          </div>
+          {registerError && registerContactId ? (
+            <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+              {registerError}
+            </p>
+          ) : null}
         </form>
       </Dialog>
     </div>

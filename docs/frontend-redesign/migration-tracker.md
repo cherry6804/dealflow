@@ -199,3 +199,32 @@ Gaps:
 - Dark theme was checked by applying the dark token set on the page for Pipeline; Light and dark were not checked on every page.
 - Zoom (80 to 200 percent) was not checked.
 - Pipeline's legacy board stays behind the flag-off path until the flag is enabled everywhere.
+
+## Shared record dialog (DFR-UI-DIALOG-001)
+
+Status: one dialog primitive (`components/ui/Overlays.tsx`, `Dialog`) and one record layout (`components/record/RecordDialog.tsx`, `RecordDialog`, which replaced `RecordDetailDialog`). Used by Contacts, Customers, Leads (and Pipeline cards, through the lead record), and Site Visits. Create dialogs for Contacts, Customers, Site Visits (schedule, attendance, follow-up) use the same primitive. Properties, Requirements, Deals, Commissions, Referrals and Follow-ups still use their own pages and dialogs; they are not migrated.
+
+Behaviour in `Dialog`:
+- Header (type, title, status, actions, close) and footer stay fixed; only the body scrolls.
+- Backdrop click closes only when the press also started on the backdrop. Clicks inside the dialog or in its nested popovers never close it.
+- Escape is handled on keydown. Browsers only send Escape to the cancel handler while the page has user activation, so relying on cancel alone let the dialog close without the unsaved-change check. Found and fixed in the live check.
+- Unsaved changes: any dismissal asks "Discard unsaved changes?" with Keep editing and Discard changes. The prompt closes natively before it unmounts.
+- Busy: close, Escape and backdrop are ignored while a request runs; the close control is disabled.
+- Focus returns to the element that opened the dialog.
+- Phones (< 768px): full-screen, with safe-area padding and 44px footer buttons.
+- Save and create actions sit in the footer and submit their form by id; read-only records have no Save.
+
+Verification (2026-11-07, dev database):
+- Contact detail: backdrop closes (no edit), Escape with an edit asks first, Keep editing keeps the record and the edit, Discard closes, nothing saved, focus returns to the row.
+- Lead detail: Manage follow-ups opens a nested dialog; its backdrop closes only the nested one.
+- Widths measured with no page overflow at 360, 390, 430, 768, 1024, 1280, 1366, 1440, 1920.
+- Light and dark themes checked on the lead dialog (desktop).
+- Screenshots: desktop lead and contact dialogs, phone contact and site-visit dialogs.
+
+Accidental data change during this check (undone): a stray click set the dev lead for Charan Appala to inactive. It was reactivated the same session; the grid shows it active again.
+
+Limitations:
+- Browser zoom (80%, 100%, 125%, 150%, 200%) was not tested. The browser tool cannot change zoom; viewport widths were tested instead.
+- Sticky Sales header was added (`position: sticky`) but not checked with a scrolling page; the current pages are short.
+- Busy-state blocking and the double-submit guard are covered by unit tests only.
+- Other business modules listed in the brief still use their own dialogs.

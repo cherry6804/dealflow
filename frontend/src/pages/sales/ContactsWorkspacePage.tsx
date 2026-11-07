@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
 import type { GridColumnDef } from "../../components/grid/gridLayout";
 import type { GridFilterField } from "../../components/grid/gridFilters";
-import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
+import { RecordDialog, RecordProperty } from "../../components/record/RecordDialog";
 import { Badge, Button, Dialog, TextField } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import { contactsApi, type Contact, type ContactCreateInput, type ContactUpdateInput } from "../../services/contactApi";
@@ -326,15 +326,29 @@ export default function ContactsWorkspacePage() {
         filterValue={contactFilterValue}
       />
 
-      <RecordDetailDialog
+      <RecordDialog
         open={selected !== null}
         onClose={() => setSelected(null)}
         eyebrow="Contact"
         title={selected ? contactName(selected) : ""}
         closeLabel="Close contact"
+        busy={detailSaving}
+        dirty={detailDirty}
+        footer={
+          selected ? (
+            <>
+              <Button variant="secondary" onClick={() => setSelected(null)} disabled={detailSaving}>
+                Close
+              </Button>
+              <Button type="submit" form="contact-detail-form" variant="primary" disabled={!detailDirty} loading={detailSaving}>
+                Save changes
+              </Button>
+            </>
+          ) : null
+        }
         main={
           selected ? (
-            <form className="df-sales-form" onSubmit={saveDetail} noValidate>
+            <form id="contact-detail-form" className="df-sales-form" onSubmit={saveDetail} noValidate>
               <div className="df-sales-form-grid">
                 <TextField
                   label="First name"
@@ -362,16 +376,11 @@ export default function ContactsWorkspacePage() {
                   onChange={(event) => setDetailForm({ ...detailForm, phone: event.target.value })}
                 />
               </div>
-              <div className="df-sales-form-actions">
-                {detailMessage ? (
-                  <p className="df-sales-form-message" role="status">
-                    {detailMessage}
-                  </p>
-                ) : null}
-                <Button type="submit" variant="primary" disabled={!detailDirty} loading={detailSaving}>
-                  Save changes
-                </Button>
-              </div>
+              {detailMessage ? (
+                <p className="df-sales-form-message" role="status">
+                  {detailMessage}
+                </p>
+              ) : null}
             </form>
           ) : null
         }
@@ -393,8 +402,26 @@ export default function ContactsWorkspacePage() {
         }
       />
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="New contact" closeLabel="Close new contact">
-        <form className="df-sales-form" onSubmit={saveCreate} noValidate>
+      <Dialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New contact"
+        closeLabel="Close new contact"
+        description="Add a contact. First name is required."
+        busy={createSaving}
+        dirty={JSON.stringify(createForm) !== JSON.stringify(EMPTY_FORM)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={createSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" form="contact-create-form" variant="primary" loading={createSaving}>
+              Create contact
+            </Button>
+          </>
+        }
+      >
+        <form id="contact-create-form" className="df-sales-form" onSubmit={saveCreate} noValidate>
           <div className="df-sales-form-grid">
             <TextField
               label="First name"
@@ -422,19 +449,11 @@ export default function ContactsWorkspacePage() {
               onChange={(event) => setCreateForm({ ...createForm, phone: event.target.value })}
             />
           </div>
-          <div className="df-sales-form-actions">
-            {createMessage ? (
-              <p className="df-sales-form-message df-sales-form-message--error" role="alert">
-                {createMessage}
-              </p>
-            ) : null}
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" loading={createSaving}>
-              Save contact
-            </Button>
-          </div>
+          {createMessage ? (
+            <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+              {createMessage}
+            </p>
+          ) : null}
         </form>
       </Dialog>
     </div>

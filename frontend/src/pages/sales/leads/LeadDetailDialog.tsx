@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import LeadTimeline from "../../../components/LeadTimeline";
-import { RecordDetailDialog, RecordProperty } from "../../../components/record/RecordDetailDialog";
+import { RecordDialog, RecordProperty } from "../../../components/record/RecordDialog";
 import { Badge, Button, SelectField, TextField } from "../../../components/ui";
 import { toIsoDateTime, toLocalDateTimeInput } from "../../../lib/dateTimeInput";
 import type { Contact } from "../../../services/contactApi";
@@ -150,12 +150,30 @@ export default function LeadDetailDialog({
 
   return (
     <>
-      <RecordDetailDialog
+      <RecordDialog
         open
         onClose={onClose}
         eyebrow="Lead"
         title={name}
         closeLabel="Close lead"
+        busy={saving}
+        dirty={nextActionDirty}
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>
+              Close
+            </Button>
+            <Button
+              type="submit"
+              form="lead-next-action-form"
+              variant="primary"
+              disabled={!lead.is_active || !nextActionDirty}
+              loading={saving}
+            >
+              Save next action
+            </Button>
+          </>
+        }
         main={
           <div className="df-sales-form">
             <div className="df-sales-form-grid">
@@ -201,7 +219,7 @@ export default function LeadDetailDialog({
               </form>
             ) : null}
 
-            <form className="df-sales-section" onSubmit={saveNextAction} noValidate>
+            <form id="lead-next-action-form" className="df-sales-section" onSubmit={saveNextAction} noValidate>
               <h3 className="df-sales-section-title">Next follow-up</h3>
               <div className="df-sales-form-grid">
                 <TextField
@@ -219,16 +237,11 @@ export default function LeadDetailDialog({
                   onChange={(event) => setNextActionDate(event.target.value)}
                 />
               </div>
-              <div className="df-sales-form-actions">
-                {message ? (
-                  <p className="df-sales-form-message df-sales-form-message--error" role="alert">
-                    {message}
-                  </p>
-                ) : null}
-                <Button type="submit" variant="primary" disabled={!lead.is_active || !nextActionDirty} loading={saving}>
-                  Save next action
-                </Button>
-              </div>
+              {message ? (
+                <p className="df-sales-form-message df-sales-form-message--error" role="alert">
+                  {message}
+                </p>
+              ) : null}
             </form>
           </div>
         }

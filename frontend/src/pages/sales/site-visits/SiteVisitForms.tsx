@@ -80,8 +80,26 @@ export function ScheduleVisitDialog({ properties, leads, customers, leadLabel, o
   }
 
   return (
-    <Dialog open onClose={onClose} title="Schedule a site visit" closeLabel="Close schedule visit" description="Choose the property, the person visiting, and the time.">
-      <form className="df-sales-form" onSubmit={submit} noValidate>
+    <Dialog
+      open
+      onClose={onClose}
+      title="Schedule a site visit"
+      closeLabel="Close schedule visit"
+      description="Choose the property, the person visiting, and the time."
+      busy={saving}
+      dirty={Boolean(propertyId || leadId || customerId || notes.trim())}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" form="schedule-visit-form" variant="primary" loading={saving}>
+            Schedule visit
+          </Button>
+        </>
+      }
+    >
+      <form id="schedule-visit-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">
           <SelectField
             label="Property"
@@ -134,19 +152,11 @@ export function ScheduleVisitDialog({ properties, leads, customers, leadLabel, o
           <TextField label="Ends (optional)" type="datetime-local" value={endsAt} disabled={saving} onChange={(event) => setEndsAt(event.target.value)} />
           <TextareaField label="Notes" rows={3} value={notes} disabled={saving} onChange={(event) => setNotes(event.target.value)} />
         </div>
-        <div className="df-sales-form-actions">
           {error ? (
             <p className="df-sales-form-message df-sales-form-message--error" role="alert">
               {error}
             </p>
           ) : null}
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={saving}>
-            Schedule visit
-          </Button>
-        </div>
       </form>
     </Dialog>
   );
@@ -186,8 +196,26 @@ export function AttendanceDialog({ visit, onClose, onSaved }: AttendanceProps) {
   }
 
   return (
-    <Dialog open onClose={onClose} title="Record attendance" closeLabel="Close attendance" description={visitDescription(visit)}>
-      <form className="df-sales-form" onSubmit={submit} noValidate>
+    <Dialog
+      open
+      onClose={onClose}
+      title="Record attendance"
+      closeLabel="Close attendance"
+      description={visitDescription(visit)}
+      busy={saving}
+      dirty={outcome !== (visit.outcome ?? "") || feedback !== (visit.feedback ?? "")}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" form="attendance-form" variant="primary" loading={saving}>
+            Save attendance
+          </Button>
+        </>
+      }
+    >
+      <form id="attendance-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">
           <SelectField
             label="Attendance"
@@ -210,19 +238,11 @@ export function AttendanceDialog({ visit, onClose, onSaved }: AttendanceProps) {
           />
           <TextareaField label="Feedback" rows={4} value={feedback} disabled={saving} onChange={(event) => setFeedback(event.target.value)} />
         </div>
-        <div className="df-sales-form-actions">
           {error ? (
             <p className="df-sales-form-message df-sales-form-message--error" role="alert">
               {error}
             </p>
           ) : null}
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={saving}>
-            Save attendance
-          </Button>
-        </div>
       </form>
     </Dialog>
   );
@@ -273,27 +293,37 @@ export function VisitFollowUpDialog({ visit, onClose, onSaved }: FollowUpProps) 
   }
 
   return (
-    <Dialog open onClose={onClose} title="Create a follow-up" closeLabel="Close follow-up" description={visitDescription(visit)}>
-      <form className="df-sales-form" onSubmit={submit} noValidate>
+    <Dialog
+      open
+      onClose={onClose}
+      title="Create a follow-up"
+      closeLabel="Close follow-up"
+      description={visitDescription(visit)}
+      busy={saving}
+      dirty={description.trim() !== "" || title !== "Follow up after site visit"}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" form="follow-up-form" variant="primary" loading={saving} disabled={!visit.lead_id}>
+            Create follow-up
+          </Button>
+        </>
+      }
+    >
+      <form id="follow-up-form" className="df-sales-form" onSubmit={submit} noValidate>
         <div className="df-sales-form-grid">
           <SelectField label="Type" value={type} disabled={saving} options={FOLLOW_UP_TYPES.map((item) => ({ value: item.value, label: item.label }))} onChange={(event) => setType(event.target.value as FollowUpType)} />
           <TextField label="Title" required value={title} disabled={saving} onChange={(event) => setTitle(event.target.value)} />
           <TextField label="Due" type="datetime-local" required value={dueAt} disabled={saving} onChange={(event) => setDueAt(event.target.value)} />
           <TextareaField label="Notes" rows={3} value={description} disabled={saving} onChange={(event) => setDescription(event.target.value)} />
         </div>
-        <div className="df-sales-form-actions">
           {error ? (
             <p className="df-sales-form-message df-sales-form-message--error" role="alert">
               {error}
             </p>
           ) : null}
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={saving} disabled={!visit.lead_id}>
-            Create follow-up
-          </Button>
-        </div>
       </form>
     </Dialog>
   );

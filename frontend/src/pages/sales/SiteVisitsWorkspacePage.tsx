@@ -4,7 +4,7 @@ import { EnterpriseDataGrid } from "../../components/grid/EnterpriseDataGrid";
 import type { GridColumnDef } from "../../components/grid/gridLayout";
 import type { GridFilterField, GridFilterOption } from "../../components/grid/gridFilters";
 import SiteVisitHistory from "../../components/SiteVisitHistory";
-import { RecordDetailDialog, RecordProperty } from "../../components/record/RecordDetailDialog";
+import { RecordDialog, RecordProperty } from "../../components/record/RecordDialog";
 import { Badge, Button, Dialog } from "../../components/ui";
 import { contactsApi, type Contact } from "../../services/contactApi";
 import { customerProfilesApi, type CustomerProfile } from "../../services/customerProfileApi";
@@ -321,7 +321,7 @@ export default function SiteVisitsWorkspacePage() {
       />
 
       {selected ? (
-        <RecordDetailDialog
+        <RecordDialog
           open
           onClose={() => setSelectedId(null)}
           eyebrow="Site visit"
