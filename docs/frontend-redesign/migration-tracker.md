@@ -178,7 +178,7 @@ Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architect
 
 ## Sales workspace (DFR-UI-SALES-001, corrected in DFR-UI-SALES-003)
 
-Status: Contacts, Customers, Leads and Site Visits run on the shared EnterpriseDataGrid behind their own flags. Pipeline is a Kanban board only, behind its flag. Each flag is set in `.env.local` (git-ignored) and read at dev-server start, so restart the frontend after changing it. Legacy pages stay the default when a flag is off. Browser verification used the development database. Live create and update writes were not run against it; unit tests cover those flows.
+Status: Contacts, Customers, Leads and Site Visits run on the shared EnterpriseDataGrid behind their own flags. Pipeline is a Kanban board only, behind its flag. Each flag is set in `.env.local` (git-ignored) and read at dev-server start, so restart the frontend after changing it. Legacy pages stay the default when a flag is off. Browser verification used the development database. Live write checks ran on the dev database on 2026-11-07 with QA records named "QA LiveCheck": contact created; customer registered and notes saved; lead created, stage changed to Contacted, interest set to High; board move to Qualified (persisted after reload); site visit scheduled and attendance recorded as Completed. One attendance was recorded by mistake on a pre-existing visit (Cherry Appala, 2026-11-08 10:00): status is now Completed with outcome Interested and feedback text; the API cannot return it to Scheduled. Feedback and outcome on that visit still need clearing if approved.
 
 | Page | Route | State | Feature flag | Notes |
 |---|---|---|---|---|
