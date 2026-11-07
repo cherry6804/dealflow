@@ -30,6 +30,13 @@
   width: 100%;
 }
 
+.df-grid-toolbar-filters {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+
 .df-grid-toolbar-actions {
   display: flex;
   flex: 0 0 auto;
@@ -46,6 +53,35 @@
 @media (max-width: 575.98px) {
   .df-grid-hidden-count {
     display: none;
+  }
+}
+
+/* Narrow screens: search takes a full row; filters and the Columns button share the row below and never squeeze out of view. */
+@media (max-width: 767.98px) {
+  .df-grid-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .df-grid-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .df-grid-toolbar-filters {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .df-grid-toolbar-filters .df-input {
+    flex: 1 1 140px;
+    min-width: 0;
+    width: auto;
+  }
+
+  .df-grid-toolbar-actions {
+    margin-left: auto;
   }
 }
 

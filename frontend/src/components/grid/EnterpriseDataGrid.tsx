@@ -60,6 +60,8 @@ export interface EnterpriseDataGridProps<T> {
   totalCount: number;
   /** Describes the records shown, for example "All records" or "Filtered". */
   rangeLabel: string;
+  /** Optional page-specific filter, shown in the toolbar beside search. */
+  toolbarFilters?: ReactNode;
 }
 
 /**
@@ -94,6 +96,7 @@ export function EnterpriseDataGrid<T>({
   onRefresh,
   totalCount,
   rangeLabel,
+  toolbarFilters,
 }: EnterpriseDataGridProps<T>) {
   const { layout, update, resetLayout, available } = useGridLayout(gridId, columns);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
@@ -162,6 +165,7 @@ export function EnterpriseDataGrid<T>({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
+        {toolbarFilters ? <div className="df-grid-toolbar-filters">{toolbarFilters}</div> : null}
         <div ref={columnsAnchorRef} className="df-grid-toolbar-actions">
           <Button
             variant="secondary"

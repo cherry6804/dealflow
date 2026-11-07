@@ -26,6 +26,7 @@ export function SpaceLayout({ space, activeTab, navigationLabel, actions, basePa
   const Icon = space.icon;
   return (
     <section className="df-space" aria-label={space.label}>
+      <div className="df-space-chrome">
       <header className="df-space-header">
         <div className="df-space-identity">
           <span className="df-space-icon" aria-hidden="true">
@@ -56,6 +57,7 @@ export function SpaceLayout({ space, activeTab, navigationLabel, actions, basePa
             })}
           </ul>
         </nav>
+      </div>
       </div>
 
       <div className="df-space-content">{children}</div>

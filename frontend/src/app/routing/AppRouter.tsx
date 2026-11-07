@@ -57,6 +57,9 @@ const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
 const FollowUpsPage = lazy(() => import("../../pages/FollowUpsPage"));
 const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
 const ContactsWorkspacePage = lazy(() => import("../../pages/sales/ContactsWorkspacePage"));
+const CustomersWorkspacePage = lazy(() => import("../../pages/sales/CustomersWorkspacePage"));
+const LeadsWorkspacePage = lazy(() => import("../../pages/sales/LeadsWorkspacePage"));
+const PipelineWorkspacePage = lazy(() => import("../../pages/sales/PipelineWorkspacePage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
   () => import("../../pages/RequirementsPage"),
@@ -200,7 +203,12 @@ export default function AppRouter() {
             />
 
             {/* CRM */}
-            <Route path="/leads" element={<LeadsPage />} />
+            <Route
+              path="/leads"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_LEADS === "true" ? <LeadsWorkspacePage /> : <LeadsPage />
+              }
+            />
             <Route
               path="/contacts"
               element={
@@ -211,12 +219,26 @@ export default function AppRouter() {
                 )
               }
             />
-            <Route path="/customers" element={<CustomersPage />} />
+            <Route
+              path="/customers"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_CUSTOMERS === "true" ? (
+                  <CustomersWorkspacePage />
+                ) : (
+                  <CustomersPage />
+                )
+              }
+            />
             <Route
               path="/requirements"
               element={<RequirementsPage />}
             />
-            <Route path="/pipeline" element={<PipelinePage />} />
+            <Route
+              path="/pipeline"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_PIPELINE === "true" ? <PipelineWorkspacePage /> : <PipelinePage />
+              }
+            />
             <Route path="/deals" element={<DealsPage />} />
             <Route
               path="/properties"

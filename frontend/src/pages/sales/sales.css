@@ -93,3 +93,99 @@
     font-size: 20px;
   }
 }
+
+.df-sales-status-select {
+  width: auto;
+  min-width: 180px;
+}
+
+.df-sales-aside-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.df-sales-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.df-sales-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.df-sales-muted {
+  font-size: 13px;
+  color: var(--df-muted);
+}
+
+.df-sales-followup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-sales-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--df-border-soft);
+  border-radius: var(--df-radius-md);
+  background: var(--df-surface);
+}
+
+.df-sales-followup-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.df-sales-followup-main > div {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.df-sales-followup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.df-sales-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--df-border);
+  border-radius: var(--df-radius-md);
+}
+
+.df-sales-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-sales-view-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.df-sales-overdue {
+  font-weight: 600;
+  color: var(--df-danger);
+}

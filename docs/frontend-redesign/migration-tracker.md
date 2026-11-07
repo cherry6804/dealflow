@@ -178,22 +178,24 @@ Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architect
 
 ## Sales workspace (DFR-UI-SALES-001)
 
-Status: shared grid and the Contacts pilot are built, tested and checked in the running app at tablet and mobile widths (desktop checked in the 1280 px layout metrics; the pane is narrower than desktop, so full desktop screenshots are not captured). Contacts runs behind `VITE_DEALSFLO_SALES_CONTACTS`. The legacy pages remain the default.
+Status: Contacts is the reference. Customers, Leads and Pipeline now run on the shared EnterpriseDataGrid behind their own flags. Each flag is set in `.env.local` (git-ignored) and read at dev-server start, so restart the frontend after changing it. The legacy page stays the default when a flag is off. Browser verification used the development database. Mutating flows (create, stage change, follow-up changes) were not run against live data; they are covered by unit tests only.
 
 | Page | Route | State | Feature flag | Notes |
 |---|---|---|---|---|
-| Shared grid | components/grid | Built, tested, browser-verified (Contacts) | none | EnterpriseDataGrid on react-data-grid. Toolbar holds search and a Columns button; the table holds business columns only (no configuration column). Columns popover is portal-anchored, with search, show/hide, pin, move, density, reset and done; Escape and outside click close it. Columns stretch to fit, keep a 120px minimum, and scroll sideways inside the grid. The primary column is pinned by default. Header and footer use the soft surface; the body uses the main surface. Layout is saved per user and organization. |
-| Contacts | /contacts | Pilot built, tested; not yet browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Uses contactsApi list, create and update. Detail dialog with editable fields and status toggle. Owner and linked records are not in the contact contract, so they are not shown. |
-| Leads | /leads | Not started | — | Legacy page. |
-| Customers | /customers | Not started | — | Legacy page. |
+| Shared grid | components/grid | Built, tested, browser-verified | none | Toolbar holds search, optional page filters, and the Columns button. The table holds business columns only. Columns popover is portal-anchored, with search, show/hide, pin, move, density, reset and done; Escape and outside click close it. Columns stretch to fit, with a 120px minimum; the table scrolls sideways inside the grid. The primary column starts pinned. Header and footer use the soft surface; the body uses the main surface. Layout is saved per user, organization and grid id. |
+| Contacts | /contacts | Built, tested, browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Contacts API. Detail dialog with editable fields and status toggle. |
+| Customers | /customers | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_CUSTOMERS | Customer profiles plus contact details. Columns: customer, email, phone, status, notes, registered, last updated. Detail dialog edits notes and activates or deactivates; visit history opens from the detail. Register dialog uses active contacts that are not yet registered. Customer type and owner are not in the customer-profile contract, so they are not shown. |
+| Leads | /leads | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_LEADS | Columns: lead, email, phone, stage, interest, next follow-up, owner, created, last updated. Stage moves use the existing allowed transitions and the next-action prompt for key stages. Interest, next action, activation, timeline and follow-ups (create, complete, reschedule, bulk complete and reschedule) keep the existing endpoints. Source is not in the lead contract, so it is not shown. Owner names come from the team list; if that list is unavailable to the user, owners show as unnamed. |
+| Pipeline | /pipeline | Built, tested, grid browser-verified | VITE_DEALSFLO_SALES_PIPELINE | List view on the grid, backed by the same lead data. Visibility and stage filters. Detail dialog changes the stage with the board rules, and opens follow-ups and the timeline. A Board toggle shows the existing board with drag-and-drop. Expected value and expected closing date are not in the lead contract, so they are not shown. |
 | Site Visits | /site-visits | Not started | — | Legacy page. |
-| Pipeline | /pipeline | Not started | — | Legacy page. Uses existing lead data per the approved plan. |
+| Space header | layouts/workspace/spaces | Built | none | Header and tab bar sit on one white surface in the light theme, with a single bottom border. Active tab uses the same blue underline on every page. |
 
 Gaps:
-- Selection and bulk actions are not in the grid yet.
-- Client-side paging: all contacts are loaded, as the legacy page does. Server-side paging is not used.
-- Hover column menus, row selection, bulk actions and row context menus are not built.
-- Column reordering in the popover uses Up and Down buttons; drag-and-drop is not built.
-- Zoom levels (80 to 200 percent) have not been checked.
-- Column widths are personal; pinning and reordering are personal too. Browser localStorage is device-specific and is not cross-device sync.
-- The contact record detail has no comments or activity history; the contact API does not expose them.
+- Selection and bulk actions in the grid are not built. Bulk follow-up actions live in the follow-up dialog.
+- Hover column menus, row context menus and drag-and-drop column reordering are not built; the popover uses Up and Down buttons.
+- Paging: all records are loaded and filtered in the browser, the same as Contacts. Server paging is not used.
+- Dialogs for Leads and Customers follow the shared dialog style; the Leads follow-up and timeline dialogs are the existing components.
+- The Pipeline Board view is the legacy component, so it keeps its own styling until it is moved onto the grid architecture.
+- Zoom (80 to 200 percent) and the dark theme were checked by token-level inspection for Pipeline only. Desktop widths were checked by layout measurements, since the browser pane is narrower than desktop.
+- Column widths, pinning and order are personal and stored in browser localStorage, which is per device and is not synced across devices.
+- Contact records do not expose comments or activity history through the contact API, so none are shown.
