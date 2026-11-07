@@ -68,6 +68,7 @@ const RequirementsPage = lazy(
 const RequirementsWorkspacePage = lazy(() => import("../../pages/requirements/RequirementsWorkspacePage"));
 const PipelinePage = lazy(() => import("../../pages/PipelinePage"));
 const DealsPage = lazy(() => import("../../pages/DealsPage"));
+const DealsWorkspacePage = lazy(() => import("../../pages/deals/DealsWorkspacePage"));
 const ReferralsPage = lazy(() => import("../../pages/ReferralsPage"));
 const ReferralsWorkspacePage = lazy(() => import("../../pages/referrals/ReferralsWorkspacePage"));
 const PropertiesPage = lazy(() => import("../../pages/PropertiesPage"));
@@ -245,7 +246,12 @@ export default function AppRouter() {
                 import.meta.env.VITE_DEALSFLO_SALES_PIPELINE === "true" ? <PipelineWorkspacePage /> : <PipelinePage />
               }
             />
-            <Route path="/deals" element={<DealsPage />} />
+            <Route
+              path="/deals"
+              element={
+                import.meta.env.VITE_DEALSFLO_DEALS === "true" ? <DealsWorkspacePage /> : <DealsPage />
+              }
+            />
             <Route
               path="/properties"
               element={
