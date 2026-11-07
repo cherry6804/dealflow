@@ -16,6 +16,7 @@ const COLUMNS: GridColumnDef[] = [
   { key: "phone", label: "Phone", defaultWidth: 170 },
   { key: "status", label: "Status", defaultWidth: 120 },
   { key: "created", label: "Created", defaultWidth: 130 },
+  { key: "updated", label: "Last updated", defaultWidth: 140, defaultVisible: false },
 ];
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -156,6 +157,8 @@ export default function ContactsWorkspacePage() {
         return contact.is_active ? "Active" : "Inactive";
       case "created":
         return new Date(contact.created_at).getTime();
+      case "updated":
+        return new Date(contact.updated_at).getTime();
       default:
         return contactName(contact);
     }
@@ -171,6 +174,8 @@ export default function ContactsWorkspacePage() {
         return <Badge tone={contact.is_active ? "success" : "neutral"}>{contact.is_active ? "Active" : "Inactive"}</Badge>;
       case "created":
         return formatDate(contact.created_at);
+      case "updated":
+        return formatDate(contact.updated_at);
       default:
         return <strong className="df-sales-primary">{contactName(contact)}</strong>;
     }

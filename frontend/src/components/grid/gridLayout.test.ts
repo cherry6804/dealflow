@@ -4,6 +4,7 @@ import {
   arrangeGridColumns,
   clampGridWidth,
   createDefaultGridLayout,
+  fitColumnWidths,
   moveColumn,
   normalizeGridLayout,
   setColumnWidth,
@@ -78,5 +79,20 @@ describe("grid sorting", () => {
   it("keeps empty values last in both directions", () => {
     expect(sortGridRows(rows, [{ columnKey: "score", direction: "ASC" }], value).at(-1)?.id).toBe("2");
     expect(sortGridRows(rows, [{ columnKey: "score", direction: "DESC" }], value).at(-1)?.id).toBe("2");
+  });
+});
+
+describe("fitting columns to the container", () => {
+  it("stretches narrow columns to fill the available width, keeping proportions", () => {
+    expect(fitColumnWidths([200, 100], 600)).toEqual([400, 200]);
+  });
+
+  it("keeps widths when they already exceed the container, so the grid scrolls", () => {
+    expect(fitColumnWidths([300, 300], 400)).toEqual([300, 300]);
+  });
+
+  it("matches the container width exactly after rounding", () => {
+    const fitted = fitColumnWidths([100, 100, 100], 1000);
+    expect(fitted.reduce((sum, width) => sum + width, 0)).toBe(1000);
   });
 });

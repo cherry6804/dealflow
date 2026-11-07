@@ -125,6 +125,18 @@ describe("EnterpriseDataGrid", () => {
     expect((screen.getByRole("checkbox", { name: "Show Email" }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it("filters the column list by name in the picker and keeps the search field focused", () => {
+    renderGrid(gridProps());
+    fireEvent.click(screen.getByRole("button", { name: "Configure columns" }));
+    const panel = screen.getByRole("dialog", { name: "Configure columns" });
+    const search = within(panel).getByRole("searchbox", { name: "Search columns" });
+    search.focus();
+    fireEvent.change(search, { target: { value: "email" } });
+    expect(within(panel).getByText("Email", { selector: "span.df-grid-config-name" })).toBeTruthy();
+    expect(within(panel).queryByText("Contact", { selector: "span.df-grid-config-name" })).toBeNull();
+    expect(document.activeElement).toBe(search);
+  });
+
   it("opens a row on click and offers the create action at the bottom", () => {
     const onOpenRow = vi.fn();
     renderGrid(gridProps({ onOpenRow }));

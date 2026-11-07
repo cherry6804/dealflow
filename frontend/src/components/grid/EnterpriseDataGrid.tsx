@@ -1,14 +1,15 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DataGrid, type Column, type SortColumn } from "react-data-grid";
 import "react-data-grid/lib/styles.css";
-import { ChevronDown, ChevronUp, Pin, PinOff, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, Pin, PinOff, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
 
+import { AnchoredPopover } from "../ui/AnchoredPopover";
 import { Button, Checkbox, RadioGroup } from "../ui";
-import { useDismissOnOutside } from "../ui/useDismissOnOutside";
 import { ErrorState, LoadingState, EmptyState } from "../shell/RouteStates";
 import {
   GRID_ROW_HEIGHT,
   arrangeGridColumns,
+  fitColumnWidths,
   moveColumn,
   setColumnWidth,
   setGridDensity,
@@ -20,13 +21,14 @@ import {
   type GridLayout,
 } from "./gridLayout";
 import { useGridLayout } from "./useGridLayout";
+import { useMeasuredWidth } from "./useMeasuredWidth";
 import "./grid.css";
+import "./grid-layout.css";
 
 export type GridStatus = "loading" | "ready" | "error";
 
-/** Key of the trailing header column that holds the column configuration control. Not a data column. */
-const CONFIG_KEY = "__config";
-const CONFIG_WIDTH = 56;
+/** Width of the utility gutter at the far right of the header, holding the column configuration control. */
+const UTILITY_WIDTH = 40;
 
 export interface EnterpriseDataGridProps<T> {
   /** Stable id for personal layout storage. One id per grid. */
@@ -58,14 +60,16 @@ export interface EnterpriseDataGridProps<T> {
   onRefresh?: () => void;
   /** Total records available for this view. */
   totalCount: number;
-  /** Describes the records shown, for example "1–25 of 120 records" or "All records". */
+  /** Describes the records shown, for example "All records" or "Filtered". */
   rangeLabel: string;
 }
 
 /**
- * The shared Dealsflo data grid, as one integrated component: a toolbar with the single search field, then one bordered
- * container holding the header (with the column configuration at its far-right end), the scrollable body and the footer
- * (create action at the left; counts and refresh at the right). Column layout is personal, per user and organization.
+ * The shared Dealsflo data grid. One bordered container holds three sections that share the same column layout: the header
+ * (sortable labels; the column configuration control sits at its far-right end in a narrow utility gutter, not as a data
+ * column), the scrollable body, and the footer (Create at the left; counts and refresh at the right). Columns stretch to the
+ * available width, and horizontal scrolling stays inside the grid. The column picker is an anchored popover rendered in a
+ * portal, so the grid's overflow never clips it. Layout is personal, per user and organization.
  */
 export function EnterpriseDataGrid<T>({
   gridId,
@@ -96,50 +100,29 @@ export function EnterpriseDataGrid<T>({
   const { layout, update, resetLayout, available } = useGridLayout(gridId, columns);
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
   const [configOpen, setConfigOpen] = useState(false);
-  const frameRef = useRef<HTMLDivElement | null>(null);
   const configButtonRef = useRef<HTMLButtonElement | null>(null);
-  useDismissOnOutside(frameRef, configOpen, () => setConfigOpen(false));
+  const [measureRef, measuredWidth] = useMeasuredWidth(1200);
 
   const visibleColumns = useMemo(() => arrangeGridColumns(columns, layout), [columns, layout]);
   const sortedRows = useMemo(() => sortGridRows(rows, sortColumns, sortValue), [rows, sortColumns, sortValue]);
 
+  // Columns stretch to the available width (the utility gutter is excluded), so the grid uses the space it has.
   const gridColumns = useMemo<Column<T>[]>(() => {
-    const dataColumns: Column<T>[] = visibleColumns.map((column) => ({
+    const widths = fitColumnWidths(
+      visibleColumns.map((column) => layout.widths[column.key] ?? column.defaultWidth),
+      Math.max(0, measuredWidth - UTILITY_WIDTH),
+    );
+    return visibleColumns.map((column, index) => ({
       key: column.key,
       name: column.label,
-      width: layout.widths[column.key] ?? column.defaultWidth,
+      width: widths[index],
       minWidth: 96,
       resizable: true,
       sortable: true,
       frozen: layout.pinned.includes(column.key),
       renderCell: ({ row }) => renderCell(row, column.key),
     }));
-    const configColumn: Column<T> = {
-      key: CONFIG_KEY,
-      name: "",
-      width: CONFIG_WIDTH,
-      minWidth: CONFIG_WIDTH,
-      maxWidth: CONFIG_WIDTH,
-      resizable: false,
-      sortable: false,
-      renderHeaderCell: () => (
-        <button
-          ref={configButtonRef}
-          type="button"
-          className="df-grid-config-trigger"
-          aria-label="Configure columns"
-          title="Configure columns"
-          aria-haspopup="dialog"
-          aria-expanded={configOpen}
-          onClick={() => setConfigOpen((value) => !value)}
-        >
-          <SlidersHorizontal size={16} aria-hidden="true" />
-        </button>
-      ),
-      renderCell: () => null,
-    };
-    return [...dataColumns, configColumn];
-  }, [visibleColumns, layout.widths, layout.pinned, renderCell, configOpen]);
+  }, [visibleColumns, layout.widths, layout.pinned, renderCell, measuredWidth]);
 
   const rowHeight = GRID_ROW_HEIGHT[layout.density];
   const hasSearch = searchValue.trim().length > 0;
@@ -148,12 +131,10 @@ export function EnterpriseDataGrid<T>({
   const isNoMatch = status === "ready" && rows.length === 0 && hasSearch;
 
   function onColumnResize(column: { key: string }, width: number) {
-    if (column.key === CONFIG_KEY) return;
     update(setColumnWidth(layout, column.key, width));
   }
 
   function onColumnsReorder(sourceKey: string, targetKey: string) {
-    if (sourceKey === CONFIG_KEY || targetKey === CONFIG_KEY) return;
     const from = layout.order.indexOf(sourceKey);
     const to = layout.order.indexOf(targetKey);
     if (from < 0 || to < 0 || from === to) return;
@@ -161,6 +142,11 @@ export function EnterpriseDataGrid<T>({
     const [moved] = order.splice(from, 1);
     order.splice(to, 0, moved);
     update({ ...layout, order });
+  }
+
+  function closeConfig() {
+    setConfigOpen(false);
+    configButtonRef.current?.focus();
   }
 
   return (
@@ -216,42 +202,59 @@ export function EnterpriseDataGrid<T>({
       ) : null}
 
       {status === "ready" && rows.length > 0 ? (
-        <div ref={frameRef} className="df-grid-frame">
-          <div className="df-grid-body">
-            <DataGrid
-              aria-label={ariaLabel}
-              className="df-grid-table"
-              columns={gridColumns}
-              rows={sortedRows}
-              rowKeyGetter={rowKey}
-              rowHeight={rowHeight}
-              headerRowHeight={rowHeight}
-              sortColumns={sortColumns}
-              onSortColumnsChange={setSortColumns}
-              onColumnResize={onColumnResize}
-              onColumnsReorder={onColumnsReorder}
-              onCellClick={(args, event) => {
-                if (!onOpenRow || args.column.key === CONFIG_KEY) return;
-                event.preventDefault();
-                onOpenRow(args.row);
-              }}
-              defaultColumnOptions={{ resizable: true, sortable: true }}
-              style={{ height: Math.min(rows.length * rowHeight + rowHeight, 640) }}
-            />
+        <div
+          ref={measureRef}
+          className="df-grid-frame"
+          style={{ "--df-grid-header-height": `${rowHeight}px` } as CSSProperties}
+        >
+          <div className="df-grid-main">
+            <div className="df-grid-body">
+              <DataGrid
+                aria-label={ariaLabel}
+                className="df-grid-table"
+                columns={gridColumns}
+                rows={sortedRows}
+                rowKeyGetter={rowKey}
+                rowHeight={rowHeight}
+                headerRowHeight={rowHeight}
+                sortColumns={sortColumns}
+                onSortColumnsChange={setSortColumns}
+                onColumnResize={onColumnResize}
+                onColumnsReorder={onColumnsReorder}
+                onCellClick={(args, event) => {
+                  if (!onOpenRow) return;
+                  event.preventDefault();
+                  onOpenRow(args.row);
+                }}
+                defaultColumnOptions={{ resizable: true, sortable: true }}
+                style={{ height: Math.min(rows.length * rowHeight + rowHeight, 640) }}
+              />
+            </div>
+            <div className="df-grid-utility">
+              <button
+                ref={configButtonRef}
+                type="button"
+                className="df-grid-config-trigger"
+                aria-label="Configure columns"
+                title="Configure columns"
+                aria-haspopup="dialog"
+                aria-expanded={configOpen}
+                onClick={() => setConfigOpen((value) => !value)}
+              >
+                <SlidersHorizontal size={16} aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
-          {configOpen ? (
+          <AnchoredPopover open={configOpen} anchorRef={configButtonRef} label="Configure columns" width={360} onClose={closeConfig}>
             <ColumnConfigPanel
               columns={columns}
               layout={layout}
-              onClose={() => {
-                setConfigOpen(false);
-                configButtonRef.current?.focus();
-              }}
+              onClose={closeConfig}
               onChange={update}
               onRestore={() => resetLayout()}
             />
-          ) : null}
+          </AnchoredPopover>
 
           <footer className="df-grid-footer">
             <div className="df-grid-footer-start">
@@ -295,9 +298,9 @@ const DENSITY_OPTIONS = [
 ];
 
 /**
- * Column configuration dropdown, anchored to the header's far-right cell. It has a search field for column names, one row
- * per configurable column (checked means visible), move and pin controls for keyboard and touch users, row density and
- * restore. Escape or an outside press closes it and returns focus to the header control.
+ * Column configuration picker, shown in an AnchoredPopover. It has a title, a close control, a search field for column names,
+ * one row per configurable column (checked means visible), move and pin controls for keyboard and touch users, row density,
+ * and reset and done actions. Changes apply to the grid immediately.
  */
 function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: ColumnConfigPanelProps) {
   const [query, setQuery] = useState("");
@@ -309,17 +312,17 @@ function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: Co
   const visibleCount = configurable.filter((column) => !layout.hidden.includes(column.key)).length;
 
   return (
-    <div
-      role="dialog"
-      aria-label="Configure columns"
-      className="df-grid-config-panel"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onClose();
-        }
-      }}
-    >
+    <div className="df-grid-picker">
+      <header className="df-grid-picker-header">
+        <div>
+          <h2 className="df-grid-picker-title">Configure columns</h2>
+          <p className="df-grid-picker-description">Show, hide and reorder columns. Saved to your account on this browser.</p>
+        </div>
+        <Button variant="tertiary" size="sm" iconOnly aria-label="Close column settings" icon={<X size={16} aria-hidden="true" />} onClick={onClose}>
+          Close
+        </Button>
+      </header>
+
       <div className="df-grid-config-search">
         <Search size={14} aria-hidden="true" />
         <input
@@ -333,11 +336,11 @@ function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: Co
       </div>
 
       <p className="df-grid-config-heading">
-        Columns <span className="df-grid-config-count">{visibleCount} of {configurable.length} visible</span>
+        {visibleCount} of {configurable.length} columns visible
       </p>
 
       <ul className="df-grid-config-list" aria-label="Available columns">
-        {matchingKeys.length === 0 ? <li className="df-grid-config-empty">No column matches “{query}”.</li> : null}
+        {matchingKeys.length === 0 ? <li className="df-grid-config-empty">No column matches the search.</li> : null}
         {matchingKeys.map((key) => {
           const column = byKey.get(key);
           if (!column) return null;
@@ -403,11 +406,14 @@ function ColumnConfigPanel({ columns, layout, onClose, onChange, onRestore }: Co
         />
       </div>
 
-      <div className="df-grid-config-footer">
+      <footer className="df-grid-config-footer">
         <Button variant="secondary" size="sm" onClick={onRestore}>
-          Restore default columns
+          Reset to defaults
         </Button>
-      </div>
+        <Button variant="primary" size="sm" onClick={onClose}>
+          Done
+        </Button>
+      </footer>
     </div>
   );
 }

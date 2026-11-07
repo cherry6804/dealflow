@@ -164,3 +164,19 @@ export function sortGridRows<T>(
     return String(left).localeCompare(String(right), undefined, { sensitivity: "base", numeric: true }) * direction;
   });
 }
+
+/**
+ * Stretches column widths to fill the available width when the columns are narrower than the container, so the grid uses
+ * the space it has. Extra space is shared in proportion to each column's width. When the columns are wider than the
+ * container, widths are kept and the grid scrolls horizontally inside its own body.
+ */
+export function fitColumnWidths(widths: readonly number[], available: number): number[] {
+  const total = widths.reduce((sum, width) => sum + width, 0);
+  if (widths.length === 0 || !Number.isFinite(available) || available <= total) return [...widths];
+  const extra = available - total;
+  const fitted = widths.map((width) => width + Math.floor((extra * width) / total));
+  // Give any rounding remainder to the last column so the total matches the container exactly.
+  const remainder = available - fitted.reduce((sum, width) => sum + width, 0);
+  fitted[fitted.length - 1] += remainder;
+  return fitted;
+}
