@@ -64,6 +64,7 @@ export interface AppShellProps {
   onRetryOrganizations: () => void;
   notifications: {
     load: () => Promise<NotificationEntry[]>;
+    unreadCount: () => Promise<number>;
     markRead: (id: string) => Promise<void>;
     markAllRead: () => Promise<void>;
     onOpenItem?: (entry: NotificationEntry) => void;
@@ -215,6 +216,7 @@ export function AppShell({
           <NotificationsMenu
             labels={labels.notifications}
             load={notifications.load}
+            unreadCount={notifications.unreadCount}
             markRead={notifications.markRead}
             markAllRead={notifications.markAllRead}
             onOpenItem={notifications.onOpenItem}

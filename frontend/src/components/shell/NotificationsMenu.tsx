@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 
 import { Button } from "../ui";
@@ -11,6 +11,8 @@ export interface NotificationEntry {
   message: string;
   createdAt: string;
   read: boolean;
+  /** Resource the notification refers to, used to route on open. */
+  resourceType?: string | null;
 }
 
 export interface NotificationsMenuLabels {
@@ -33,6 +35,8 @@ export interface NotificationsMenuProps {
   labels: NotificationsMenuLabels;
   /** Loads the first page each time the panel opens. Pass a stable callback (useCallback) so it is not reloaded on every render. */
   load: () => Promise<NotificationEntry[]>;
+  /** Unread count for the trigger badge. Loaded on mount, so the badge shows before the panel is opened. */
+  unreadCount: () => Promise<number>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
   onOpenItem?: (entry: NotificationEntry) => void;
@@ -48,10 +52,11 @@ type LoadState =
  * Notification panel. Loads when opened, shows loading, empty and error states, and lets the user mark one or all as read.
  * Escape closes and returns focus to the trigger. Unread items carry a text label, not only a colour dot.
  */
-export function NotificationsMenu({ labels, load, markRead, markAllRead, onOpenItem }: NotificationsMenuProps) {
+export function NotificationsMenu({ labels, load, unreadCount, markRead, markAllRead, onOpenItem }: NotificationsMenuProps) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<LoadState>({ status: "idle" });
   const requestId = useRef(0);
+  const [badge, setBadge] = useState<number | null>(null);
   const [actionError, setActionError] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -61,7 +66,20 @@ export function NotificationsMenu({ labels, load, markRead, markAllRead, onOpenI
     setOpen(false);
   });
 
-  const unread = state.status === "ready" ? state.entries.filter((entry) => !entry.read).length : 0;
+  const loadedUnread = state.status === "ready" ? state.entries.filter((entry) => !entry.read).length : 0;
+  const unread = badge ?? loadedUnread;
+
+  useEffect(() => {
+    let cancelled = false;
+    unreadCount()
+      .then((count) => {
+        if (!cancelled) setBadge(count);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [unreadCount]);
 
   function startLoad() {
     const request = ++requestId.current;
@@ -95,6 +113,8 @@ export function NotificationsMenu({ labels, load, markRead, markAllRead, onOpenI
     setActionError(false);
     try {
       await markRead(id);
+      const wasUnread = state.status === "ready" && state.entries.some((entry) => entry.id === id && !entry.read);
+      if (wasUnread) setBadge((count) => (count === null ? null : Math.max(0, count - 1)));
       setState((current) =>
         current.status === "ready"
           ? { status: "ready", entries: current.entries.map((entry) => (entry.id === id ? { ...entry, read: true } : entry)) }
@@ -109,6 +129,7 @@ export function NotificationsMenu({ labels, load, markRead, markAllRead, onOpenI
     setActionError(false);
     try {
       await markAllRead();
+      setBadge(0);
       setState((current) =>
         current.status === "ready"
           ? { status: "ready", entries: current.entries.map((entry) => ({ ...entry, read: true })) }

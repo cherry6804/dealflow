@@ -11,6 +11,7 @@ import {
   notificationApi,
   type NotificationItem,
 } from "../services/notificationApi";
+import { getNotificationResourceRoute as getResourceRoute } from "./notificationRoutes";
 import "./NotificationBell.css";
 
 const PAGE_SIZE = 10;
@@ -18,41 +19,6 @@ const PANEL_WIDTH = 400;
 const VIEWPORT_GAP = 12;
 const PANEL_GAP = 10;
 
-const RESOURCE_ROUTES: Record<string, string> = {
-  contact: "/contacts",
-  contacts: "/contacts",
-  customer: "/customers",
-  customers: "/customers",
-  lead: "/leads",
-  leads: "/leads",
-  deal: "/deals",
-  deals: "/deals",
-  referral: "/referrals",
-  referrals: "/referrals",
-  property: "/properties",
-  properties: "/properties",
-  site_visit: "/site-visits",
-  site_visits: "/site-visits",
-  requirement: "/requirements",
-  requirements: "/requirements",
-  import: "/imports",
-  imports: "/imports",
-  document: "/documents",
-  documents: "/documents",
-  follow_up: "/",
-  followup: "/",
-  automation_rule: "/automation-rules",
-};
-
-function getResourceRoute(
-  resourceType: string | null,
-): string | null {
-  if (!resourceType) {
-    return null;
-  }
-
-  return RESOURCE_ROUTES[resourceType.toLowerCase()] ?? null;
-}
 
 function formatRelativeTime(value: string): string {
   const timestamp = new Date(value).getTime();

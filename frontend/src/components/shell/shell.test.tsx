@@ -99,6 +99,7 @@ function shellProps(overrides: Partial<Parameters<typeof AppShell>[0]> = {}) {
     onRetryOrganizations: vi.fn(),
     notifications: {
       load: vi.fn(async () => []),
+      unreadCount: vi.fn(async () => 0),
       markRead: vi.fn(async () => undefined),
       markAllRead: vi.fn(async () => undefined),
     },
@@ -237,7 +238,7 @@ describe("NotificationsMenu", () => {
   it("loads when opened, shows the unread count and marks one item read", async () => {
     const markRead = vi.fn(async () => undefined);
     render(
-      <NotificationsMenu labels={notificationLabels} load={async () => entries} markRead={markRead} markAllRead={async () => undefined} />,
+      <NotificationsMenu labels={notificationLabels} load={async () => entries} markRead={markRead} unreadCount={async () => 1} markAllRead={async () => undefined} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
     expect(await screen.findByText("Deal won")).toBeTruthy();
@@ -249,7 +250,7 @@ describe("NotificationsMenu", () => {
 
   it("shows an error with a retry that reloads the list", async () => {
     const load = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(entries);
-    render(<NotificationsMenu labels={notificationLabels} load={load} markRead={async () => undefined} markAllRead={async () => undefined} />);
+    render(<NotificationsMenu labels={notificationLabels} load={load} markRead={async () => undefined} unreadCount={async () => 0} markAllRead={async () => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -258,7 +259,7 @@ describe("NotificationsMenu", () => {
   });
 
   it("shows the empty state when there are no notifications", async () => {
-    render(<NotificationsMenu labels={notificationLabels} load={async () => []} markRead={async () => undefined} markAllRead={async () => undefined} />);
+    render(<NotificationsMenu labels={notificationLabels} load={async () => []} markRead={async () => undefined} unreadCount={async () => 0} markAllRead={async () => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
     expect(await screen.findByText("You are all caught up")).toBeTruthy();
   });
@@ -305,7 +306,7 @@ describe("outside-click dismissal and permission-gated navigation", () => {
         labels={labels.notifications}
         load={async () => []}
         markRead={async () => undefined}
-        markAllRead={async () => undefined}
+        unreadCount={async () => 0} markAllRead={async () => undefined}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));

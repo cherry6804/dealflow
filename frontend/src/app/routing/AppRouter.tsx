@@ -5,7 +5,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import RequireAuth from "../guards/RequireAuth";
 
 import PublicLayout from "../../layouts/PublicLayout";
-import WorkspaceLayout from "../../layouts/WorkspaceLayout";
+import WorkspaceEntry from "../../layouts/workspace/WorkspaceEntry";
 
 // Authentication pages
 const BillingAccessPage = lazy(
@@ -187,7 +187,7 @@ export default function AppRouter() {
 
         {/* Authenticated workspace */}
         <Route element={<RequireAuth />}>
-          <Route element={<WorkspaceLayout />}>
+          <Route element={<WorkspaceEntry />}>
             <Route index element={<TodayPage />} />
 
             {/* Getting started */}
