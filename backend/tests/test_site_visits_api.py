@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -1247,3 +1247,367 @@ def test_schedule_site_visit_respects_disabled_notifications() -> None:
         )
 
         assert notification is None
+
+
+
+OVERLAP_START = (datetime.now(UTC) + timedelta(days=5)).replace(
+    hour=10, minute=0, second=0, microsecond=0
+)
+
+
+def _at(hours: float) -> datetime:
+    return OVERLAP_START + timedelta(hours=hours)
+
+
+def _overlap_payload(
+    *,
+    property_id: UUID,
+    lead_id: UUID,
+    start: datetime,
+    end: datetime | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "property_id": str(property_id),
+        "lead_id": str(lead_id),
+        "scheduled_at": start.isoformat(),
+        "notes": "Overlap rule test.",
+    }
+    if end is not None:
+        payload["ends_at"] = end.isoformat()
+    return payload
+
+
+def _existing_visit(
+    db: Session,
+    *,
+    owner_user_id: UUID,
+    organization: Organization,
+    start: datetime,
+    end: datetime | None,
+    status: str = SiteVisit.STATUS_SCHEDULED,
+) -> SiteVisit:
+    property_record = create_property(db, organization=organization)
+    lead = create_lead(db, organization=organization)
+    site_visit = SiteVisit(
+        organization_id=organization.id,
+        property_id=property_record.id,
+        lead_id=lead.id,
+        owner_user_id=owner_user_id,
+        scheduled_at=start,
+        ends_at=end,
+        status=status,
+        outcome=None,
+        notes="Existing visit.",
+    )
+    db.add(site_visit)
+    db.commit()
+    db.refresh(site_visit)
+    return site_visit
+
+
+def _schedule(
+    client: TestClient,
+    organization: Organization,
+    payload: dict[str, object],
+):
+    add_tenant_header(client, organization)
+    return client.post("/api/v1/site-visits", json=payload)
+
+
+def _new_targets(db: Session, organization: Organization) -> tuple[Property, Lead]:
+    return (
+        create_property(db, organization=organization),
+        create_lead(db, organization=organization),
+    )
+
+
+def test_schedule_refuses_overlapping_visit_for_same_owner() -> None:
+    """The owner cannot be booked for two visits that overlap in time."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0),
+            end=_at(1),
+        )
+        property_record, lead = _new_targets(db, organization)
+        before = len(
+            db.scalars(
+                select(SiteVisit).where(SiteVisit.organization_id == organization.id)
+            ).all()
+        )
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0.5),
+                    end=_at(1.5),
+                ),
+            )
+
+        assert response.status_code == 409, response.text
+        assert "already has a site visit" in response.json()["detail"]
+        after = len(
+            db.scalars(
+                select(SiteVisit).where(SiteVisit.organization_id == organization.id)
+            ).all()
+        )
+        assert after == before
+
+
+def test_schedule_allows_back_to_back_visit_for_same_owner() -> None:
+    """A visit that starts exactly when another ends does not overlap it."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0),
+            end=_at(1),
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(1),
+                    end=_at(2),
+                ),
+            )
+
+        assert response.status_code == 201, response.text
+
+
+def test_schedule_refuses_visit_that_contains_an_existing_visit() -> None:
+    """A longer visit that covers an existing visit is refused."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0.5),
+            end=_at(1),
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0),
+                    end=_at(2),
+                ),
+            )
+
+        assert response.status_code == 409, response.text
+
+
+def test_schedule_allows_overlap_with_a_different_owner() -> None:
+    """Overlap is checked per owner, not per organisation."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        other_user = create_user(db)
+        create_membership(db, user=other_user, organization=organization)
+        db.commit()
+        _existing_visit(
+            db,
+            owner_user_id=other_user.id,
+            organization=organization,
+            start=_at(0),
+            end=_at(1),
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0.5),
+                    end=_at(1.5),
+                ),
+            )
+
+        assert response.status_code == 201, response.text
+
+
+def test_schedule_ignores_cancelled_visit_when_checking_overlap() -> None:
+    """A cancelled visit no longer occupies the owner's time."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0),
+            end=_at(1),
+            status=SiteVisit.STATUS_CANCELLED,
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0.5),
+                    end=_at(1.5),
+                ),
+            )
+
+        assert response.status_code == 201, response.text
+
+
+def test_schedule_uses_default_duration_when_existing_visit_has_no_end() -> None:
+    """An existing visit without ends_at occupies the default duration."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0),
+            end=None,
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            inside_default = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0.5),
+                    end=None,
+                ),
+            )
+            after_default = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(1),
+                    end=None,
+                ),
+            )
+
+        assert inside_default.status_code == 409, inside_default.text
+        assert after_default.status_code == 201, after_default.text
+
+
+def test_overlap_conflict_does_not_disclose_the_other_visit() -> None:
+    """The conflict message names no property, lead or visit of the other booking."""
+    with TestingSessionLocal() as db:
+        user, organization = create_authorized_user(db)
+        existing = _existing_visit(
+            db,
+            owner_user_id=user.id,
+            organization=organization,
+            start=_at(0),
+            end=_at(1),
+        )
+        property_record, lead = _new_targets(db, organization)
+
+        with make_test_client(user=user) as client:
+            response = _schedule(
+                client,
+                organization,
+                _overlap_payload(
+                    property_id=property_record.id,
+                    lead_id=lead.id,
+                    start=_at(0.5),
+                    end=_at(1.5),
+                ),
+            )
+
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert str(existing.property_id) not in detail
+        assert str(existing.lead_id) not in detail
+        assert str(existing.id) not in detail
+
+
+def test_owner_lock_serialises_concurrent_schedules_for_the_same_owner() -> None:
+    """A second schedule for the same owner waits for the first, then sees its visit."""
+    import threading
+    import time
+
+    from app.site_visits.schemas import SiteVisitCreateRequest
+    from app.site_visits.service import (
+        SiteVisitOwnerConflictError,
+        create_site_visit,
+    )
+
+    with TestingSessionLocal() as setup:
+        user, organization = create_authorized_user(setup)
+        property_record = create_property(setup, organization=organization)
+        lead = create_lead(setup, organization=organization)
+        payload = SiteVisitCreateRequest.model_validate(
+            _overlap_payload(
+                property_id=property_record.id,
+                lead_id=lead.id,
+                start=_at(0),
+                end=_at(1),
+            )
+        )
+        organization_id = organization.id
+        user_id = user.id
+
+    session_a = TestingSessionLocal()
+    session_b = TestingSessionLocal()
+    outcome: dict[str, str] = {}
+
+    def schedule_b() -> None:
+        try:
+            create_site_visit(
+                session_b,
+                organization_id=organization_id,
+                current_user_id=user_id,
+                payload=payload,
+            )
+            outcome["b"] = "created"
+            session_b.commit()
+        except SiteVisitOwnerConflictError:
+            session_b.rollback()
+            outcome["b"] = "conflict"
+        finally:
+            session_b.close()
+
+    try:
+        create_site_visit(
+            session_a,
+            organization_id=organization_id,
+            current_user_id=user_id,
+            payload=payload,
+        )
+        worker = threading.Thread(target=schedule_b)
+        worker.start()
+        time.sleep(0.5)
+        assert worker.is_alive(), "second schedule should wait on the owner lock"
+        session_a.commit()
+        worker.join(timeout=15)
+        assert not worker.is_alive()
+        assert outcome.get("b") == "conflict"
+    finally:
+        session_a.close()

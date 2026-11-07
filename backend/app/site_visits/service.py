@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -17,6 +18,52 @@ from app.site_visits.schemas import (
     SiteVisitAttendanceRequest,
     SiteVisitCreateRequest,
 )
+
+# A visit without an end time occupies this much of its owner's calendar.
+# Owner-approved fallback: applies only when ends_at is missing. Explicit durations are preserved. Not a financial rule.
+SITE_VISIT_DEFAULT_DURATION = timedelta(minutes=60)
+
+SITE_VISIT_OWNER_CONFLICT_MESSAGE = (
+    "The owner already has a site visit at this time. Choose another time."
+)
+
+
+class SiteVisitOwnerConflictError(Exception):
+    """The owner already has a scheduled visit that overlaps the requested time."""
+
+
+def _effective_end(start: datetime, end: datetime | None) -> datetime:
+    return end if end is not None else start + SITE_VISIT_DEFAULT_DURATION
+
+
+def _owner_has_overlapping_visit(
+    db: Session,
+    *,
+    organization_id: UUID,
+    owner_user_id: UUID,
+    start: datetime,
+    end: datetime,
+) -> bool:
+    """Return True when the owner has a scheduled visit overlapping [start, end).
+
+    Two intervals overlap when each starts before the other ends. An existing
+    visit without an end time occupies the default duration. Cancelled,
+    completed and no-show visits do not block the owner's calendar.
+    """
+    existing_end = func.coalesce(
+        SiteVisit.ends_at,
+        SiteVisit.scheduled_at + SITE_VISIT_DEFAULT_DURATION,
+    )
+    overlap = db.scalar(
+        select(SiteVisit.id).where(
+            SiteVisit.organization_id == organization_id,
+            SiteVisit.owner_user_id == owner_user_id,
+            SiteVisit.status == SiteVisit.STATUS_SCHEDULED,
+            SiteVisit.scheduled_at < end,
+            existing_end > start,
+        ).limit(1)
+    )
+    return overlap is not None
 
 
 def create_site_visit(
@@ -53,15 +100,32 @@ def create_site_visit(
             return None
 
     owner_user_id = payload.owner_user_id or current_user_id
-    owner_statement = select(Membership.id).where(
-        Membership.user_id == owner_user_id,
-        Membership.organization_id == organization_id,
-        Membership.is_active.is_(True),
+    # The owner's membership row is locked until this transaction ends, so two
+    # schedules for the same owner cannot both pass the overlap check.
+    owner_statement = (
+        select(Membership.id)
+        .where(
+            Membership.user_id == owner_user_id,
+            Membership.organization_id == organization_id,
+            Membership.is_active.is_(True),
+        )
+        .with_for_update()
     )
     if db.scalar(owner_statement) is None:
         raise ValueError(
             "Site visit owner must be an active member of this organization."
         )
+
+    start = payload.scheduled_at
+    end = _effective_end(payload.scheduled_at, payload.ends_at)
+    if _owner_has_overlapping_visit(
+        db,
+        organization_id=organization_id,
+        owner_user_id=owner_user_id,
+        start=start,
+        end=end,
+    ):
+        raise SiteVisitOwnerConflictError(SITE_VISIT_OWNER_CONFLICT_MESSAGE)
 
     site_visit = SiteVisit(
         organization_id=organization_id,
