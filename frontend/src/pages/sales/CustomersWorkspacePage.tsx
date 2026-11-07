@@ -5,7 +5,7 @@ import type { GridColumnDef } from "../../components/grid/gridLayout";
 import type { GridFilterField } from "../../components/grid/gridFilters";
 import SiteVisitHistory from "../../components/SiteVisitHistory";
 import { RecordDialog, RecordProperty } from "../../components/record/RecordDialog";
-import { Badge, Button, Dialog, SelectField, TextField, TextareaField } from "../../components/ui";
+import { Badge, Button, ConfirmationDialog, Dialog, SelectField, TextField, TextareaField } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import { contactsApi, type Contact } from "../../services/contactApi";
 import { customerProfilesApi, type CustomerProfile } from "../../services/customerProfileApi";
@@ -119,6 +119,7 @@ export default function CustomersWorkspacePage() {
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailMessage, setDetailMessage] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [confirmStatus, setConfirmStatus] = useState(false);
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [registerContacts, setRegisterContacts] = useState<Contact[]>([]);
@@ -282,9 +283,7 @@ export default function CustomersWorkspacePage() {
 
   async function toggleStatus() {
     if (!selected) return;
-    const action = selected.is_active ? "deactivate" : "reactivate";
-    const name = displayName(selected.contact) || "this customer";
-    if (!window.confirm(`Are you sure you want to ${action} ${name}'s customer profile?`)) return;
+    setConfirmStatus(false);
     setDetailSaving(true);
     setDetailMessage("");
     try {
@@ -398,7 +397,7 @@ export default function CustomersWorkspacePage() {
                 <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} disabled={detailSaving}>
                   View visit history
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => void toggleStatus()} disabled={detailSaving}>
+                <Button variant="secondary" size="sm" onClick={() => setConfirmStatus(true)} disabled={detailSaving}>
                   {selected.is_active ? "Deactivate customer" : "Reactivate customer"}
                 </Button>
               </div>
@@ -422,6 +421,21 @@ export default function CustomersWorkspacePage() {
       >
         {selected ? <SiteVisitHistory customerProfileId={selected.id} title="Customer site visits" /> : null}
       </Dialog>
+
+      <ConfirmationDialog
+        open={confirmStatus && selected !== null}
+        title={selected?.is_active ? "Deactivate customer?" : "Reactivate customer?"}
+        message={
+          selected?.is_active
+            ? `${selectedName} will be removed from active customers. You can reactivate the profile later.`
+            : `${selectedName} will return to active customers.`
+        }
+        confirmLabel={selected?.is_active ? "Deactivate" : "Reactivate"}
+        tone={selected?.is_active ? "danger" : "default"}
+        busy={detailSaving}
+        onConfirm={() => void toggleStatus()}
+        onCancel={() => setConfirmStatus(false)}
+      />
 
       <Dialog
         open={registerOpen}

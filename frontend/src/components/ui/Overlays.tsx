@@ -26,8 +26,8 @@ export interface DialogProps {
   footer?: ReactNode;
   /** Drawers slide in from the right and use the full height. */
   placement?: "center" | "end";
-  /** Large dialogs hold two-column record layouts. */
-  size?: "md" | "lg";
+  /** Small for confirmations, medium by default, large for two-column record layouts. Small dialogs stay compact on phones too. */
+  size?: "sm" | "md" | "lg";
   /** Small label above the title, for example the record type. */
   eyebrow?: ReactNode;
   /** Status indicator shown beside the title. */
@@ -122,7 +122,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
-      className={`df-dialog df-dialog--${placement}${size === "lg" ? " df-dialog--lg" : ""}`}
+      className={`df-dialog df-dialog--${placement}${size === "lg" ? " df-dialog--lg" : ""}${size === "sm" ? " df-dialog--sm" : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       aria-busy={busy || undefined}

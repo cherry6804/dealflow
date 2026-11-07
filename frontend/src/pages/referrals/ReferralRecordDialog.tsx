@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { RecordDialog, RecordProperty } from "../../components/record/RecordDialog";
-import { Badge, Button, SelectField, TextField, TextareaField } from "../../components/ui";
+import { Badge, Button, ConfirmationDialog, SelectField, TextField, TextareaField } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import type { Contact } from "../../services/contactApi";
 import type { CustomerProfile } from "../../services/customerProfileApi";
@@ -52,6 +52,7 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
   const [errors, setErrors] = useState<ReferralFormErrors>({});
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   const customerById = new Map(lookups.customers.map((customer) => [customer.id, customer]));
@@ -88,7 +89,7 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
 
   async function deactivate() {
     if (!referral) return;
-    if (!window.confirm(`Deactivate the referral "${referral.referral_name}"?`)) return;
+    setConfirmDeactivate(false);
     setSaving(true);
     setMessage("");
     try {
@@ -110,6 +111,7 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
   const linkedDeal = referral?.deal_id ? dealById.get(referral.deal_id) : undefined;
 
   return (
+    <>
     <RecordDialog
       open
       onClose={onClose}
@@ -168,7 +170,7 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
               <RecordProperty label="Last updated">{formatShortDate(referral.updated_at)}</RecordProperty>
             </dl>
             <div className="df-sales-aside-actions">
-              <Button variant="secondary" size="sm" onClick={() => void deactivate()} disabled={saving}>
+              <Button variant="secondary" size="sm" onClick={() => setConfirmDeactivate(true)} disabled={saving}>
                 Deactivate referral
               </Button>
             </div>
@@ -176,5 +178,16 @@ export default function ReferralRecordDialog({ referral, lookups, onClose, onSav
         ) : null
       }
     />
+      <ConfirmationDialog
+        open={confirmDeactivate}
+        title="Deactivate referral?"
+        message={`"${referral?.referral_name ?? "This referral"}" will be removed from active workflows. Its history is kept.`}
+        confirmLabel="Deactivate"
+        tone="danger"
+        busy={saving}
+        onConfirm={() => void deactivate()}
+        onCancel={() => setConfirmDeactivate(false)}
+      />
+    </>
   );
 }

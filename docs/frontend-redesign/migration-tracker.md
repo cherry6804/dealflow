@@ -255,3 +255,18 @@ Requirements now uses the shared grid and a single record dialog. The dialog's s
 ## Deals grid (DFR-UI-GRID-DEALS-001)
 
 Deals uses the shared grid and one record dialog. The legacy stage, closing, negotiation and field rules are kept, and the existing payment milestones and commissions panels open from the record. Not yet checked: a live create (needs an available property), a live stage or negotiation change, light theme, and zoom levels.
+
+## Overlay system audit and shared primitives (DFR-UI-OVERLAYS-001)
+
+Audit: one native dialog primitive (`Dialog`, components/ui/Overlays.tsx) with focus, Escape, backdrop and unsaved-change rules; `RecordDialog` on top of it for records; `AnchoredPopover` for portal popovers; `Menu` and `Popover` in Overlays for contextual menus. About 14 portal-based components remain outside this system (legacy pages and panels).
+
+Added: `ConfirmationDialog` (small, danger or default confirm, Cancel/Escape/backdrop leave the action undone) and `AppDrawer` (end-placed `Dialog` for configuration panels). Added `size="sm"` to `Dialog`; small dialogs stay compact on phones.
+
+Migrated to ConfirmationDialog: customer deactivation and reactivation (Customers), referral deactivation (Referrals record). Verified in the running app on a QA customer: Escape cancels only the confirmation; deactivate and reactivate both worked and the record was restored to Active.
+
+Outstanding:
+- Native `window.confirm` still used in legacy-shared panels and pages: DealCommissionsPanel, PaymentMilestonesPanel, OrganizationRolesPanel, TeamAccessPage, AutomationRulesPage, ImportsPage, legacy ReferralsPage, legacy CustomersPage. These need the same ConfirmationDialog.
+- Record dialogs are not yet split into separate RecordDialogHeader/Content/Sidebar/Footer components; RecordDialog renders them together.
+- Per-entity record layouts beyond the current sections (Contacts, Customers, Leads, Site Visits) are not redesigned.
+- Settings and configuration: not standardized in this pass (SettingsMenu, SidebarCustomizer, ProfileMenu, notification preferences).
+- Browser zoom (80–200%) and the full width matrix were not re-run for this pass.
