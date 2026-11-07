@@ -103,3 +103,43 @@ Not done:
 - Preview fixtures. The preview uses fixture organizations and notifications. Text is English and not translated; it is dev-only.
 - Not verified: keyboard tab order across the full header, reduced-motion behaviour in a browser, and an accessibility scan (no axe package installed).
 - Console: duplicate-key warnings from the preview's command list were fixed. The remaining 502 responses come from the app's API calls, which have no backend in this environment.
+
+## Phase 1: production shell integration
+
+Status: integrated behind a build flag. Off by default, so production keeps the existing `WorkspaceLayout`.
+
+- Switch: `VITE_DEALSFLO_NEW_SHELL=true` selects `WorkspaceShellBridge`. Both layouts render `<Outlet />`, so routes do not change.
+- Data sources are the existing ones: `AppContext` for the user, organizations, organization switching and sign-out; the stored workspace preferences keyed by organization and user; and `notificationApi` for the list, unread count, mark read and mark all read.
+- Notification routing moved to `components/notificationRoutes.ts`, shared by the existing bell and the new menu, so opening a notification routes to the same resource.
+- The unread badge loads on mount, as the existing bell does. Mark read and mark all read update it.
+- Customization: the existing workspace customizer is reachable from the command palette ("Customise navigation"), and the sidebar collapse and space disclosures persist as before.
+- Permissions: `AppContext` exposes no permission list, so the shell hides nothing. Route guards and feature access checks are unchanged.
+- Labels: the existing layout has no translation layer, so the shell's English labels match its wording (`workspaceShellLabels.ts`).
+
+Not verified:
+- Authenticated browser check. Production routes require a SIBVO session, which is not available here. The shell has been tested with unit tests against a mocked `AppContext` and mocked notification API, not end to end.
+- Old page styling inside the new shell. Pages are unchanged, but the new shell does not reproduce the old `.workspace-*` layout classes. Each route needs a visual check with the flag on.
+- Bundle size. The shell code is in the production bundle (behind the flag), so the build is larger.
+
+## Phase 2: dashboard data gap report
+
+Available from `GET /dashboard/summary` (already used by the Today page):
+- Deals: counts by stage and open value by currency.
+- Follow-ups: overdue, today and upcoming counts with items.
+- Lead actions: overdue and today counts with items.
+- Access flags per section, which the dashboard must use for permission states.
+
+Available from list endpoints, which return totals and can supply counts:
+- Site visits, properties, activities, leads, notifications.
+- Agent metrics per agent (`/agents/{id}/metrics`) and agent executions per agent.
+- Human tasks.
+
+Not available as an aggregate. Each requires an API before the dashboard can show it without inventing values:
+- Revenue: won or closed revenue, revenue trend and forecast. The summary has open value only.
+- Conversion metrics, and lead performance by source or stage.
+- Team performance (per member activity or targets).
+- AI insights (a cross-agent summary). Metrics exist per agent only.
+- Property inventory aggregates by status or availability.
+- Activity aggregates over time.
+
+Phase 2 is not started. The dashboard should use the summary endpoint plus list totals first, and show the gaps above as explicit "not yet available" states.
