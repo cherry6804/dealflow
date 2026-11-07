@@ -1,0 +1,63 @@
+/* Record detail and create dialogs: two columns on desktop, stacked on phones. Tokens only. */
+
+.df-record-eyebrow {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--df-subtle);
+}
+
+.df-record-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 24px;
+  align-items: start;
+}
+
+.df-record-main,
+.df-record-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.df-record-aside {
+  padding-left: 20px;
+  border-left: 1px solid var(--df-border-soft);
+}
+
+.df-record-property {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.df-record-property dt {
+  font-size: 12px;
+  color: var(--df-muted);
+}
+
+.df-record-property dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767.98px) {
+  .df-record-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .df-record-aside {
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--df-border-soft);
+  }
+}

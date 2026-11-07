@@ -24,6 +24,8 @@ export interface DialogProps {
   footer?: ReactNode;
   /** Drawers slide in from the right and use the full height. */
   placement?: "center" | "end";
+  /** Large dialogs hold two-column record layouts. */
+  size?: "md" | "lg";
 }
 
 /**
@@ -31,7 +33,7 @@ export interface DialogProps {
  * Where showModal is missing (older engines, jsdom), the open attribute is used instead and focus is moved manually.
  * On close, focus returns to the element that opened the dialog.
  */
-export function Dialog({ open, onClose, title, closeLabel, description, children, footer, placement = "center" }: DialogProps) {
+export function Dialog({ open, onClose, title, closeLabel, description, children, footer, placement = "center", size = "md" }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
   const opener = useRef<Element | null>(null);
   const titleId = useId();
@@ -57,7 +59,7 @@ export function Dialog({ open, onClose, title, closeLabel, description, children
   return (
     <dialog
       ref={ref}
-      className={`df-dialog df-dialog--${placement}`}
+      className={`df-dialog df-dialog--${placement}${size === "lg" ? " df-dialog--lg" : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       onCancel={(event) => {

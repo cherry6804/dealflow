@@ -56,6 +56,7 @@ const TodayPage = lazy(() => import("../../pages/TodayPage"));
 const LeadsPage = lazy(() => import("../../pages/LeadsPage"));
 const FollowUpsPage = lazy(() => import("../../pages/FollowUpsPage"));
 const ContactsPage = lazy(() => import("../../pages/ContactsPage"));
+const ContactsWorkspacePage = lazy(() => import("../../pages/sales/ContactsWorkspacePage"));
 const CustomersPage = lazy(() => import("../../pages/CustomersPage"));
 const RequirementsPage = lazy(
   () => import("../../pages/RequirementsPage"),
@@ -200,7 +201,16 @@ export default function AppRouter() {
 
             {/* CRM */}
             <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/contacts" element={<ContactsPage />} />
+            <Route
+              path="/contacts"
+              element={
+                import.meta.env.VITE_DEALSFLO_SALES_CONTACTS === "true" ? (
+                  <ContactsWorkspacePage />
+                ) : (
+                  <ContactsPage />
+                )
+              }
+            />
             <Route path="/customers" element={<CustomersPage />} />
             <Route
               path="/requirements"

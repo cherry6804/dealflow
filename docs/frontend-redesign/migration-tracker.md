@@ -175,3 +175,22 @@ Status: implemented behind `VITE_DEALSFLO_NEW_SHELL` (off by default). Architect
 | Responsive and keyboard | Drawer on narrow screens; focus handling tested; browser check pending |
 | Authenticated browser verification and screenshots | Pending: needs the flag on and a signed-in session |
 | Permission-based visibility | Not implemented: no per-user permission list in the session |
+
+## Sales workspace (DFR-UI-SALES-001)
+
+Status: shared grid foundation and the Contacts pilot are built and tested. Browser verification of the pilot needs the dev server restarted with `VITE_DEALSFLO_SALES_CONTACTS=true`, which is not yet confirmed. The legacy pages remain the default.
+
+| Page | Route | State | Feature flag | Notes |
+|---|---|---|---|---|
+| Shared grid | components/grid | Built, tested | none | EnterpriseDataGrid on react-data-grid. Search, personal column panel (show, order, pin, density, restore), resizing, sorting, states, footer with count and create action. |
+| Contacts | /contacts | Pilot built, tested; not yet browser-verified | VITE_DEALSFLO_SALES_CONTACTS | Uses contactsApi list, create and update. Detail dialog with editable fields and status toggle. Owner and linked records are not in the contact contract, so they are not shown. |
+| Leads | /leads | Not started | — | Legacy page. |
+| Customers | /customers | Not started | — | Legacy page. |
+| Site Visits | /site-visits | Not started | — | Legacy page. |
+| Pipeline | /pipeline | Not started | — | Legacy page. Uses existing lead data per the approved plan. |
+
+Gaps:
+- Selection and bulk actions are not in the grid yet.
+- Client-side paging: all contacts are loaded, as the legacy page does. Server-side paging is not used.
+- Column widths are personal; pinning and reordering are personal too. Browser localStorage is device-specific and is not cross-device sync.
+- The contact record detail has no comments or activity history; the contact API does not expose them.
