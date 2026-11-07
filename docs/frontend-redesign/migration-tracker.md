@@ -150,3 +150,9 @@ Status: established. Module migration is progressive; see `design-system.md`.
 - Tokens: `styles/tokens.css` (light, on `:root`) and `styles/theme.css` (dark). Shell geometry and motion timing now live in `tokens.css`.
 - Contract tests (`styles/designTokens.test.ts`): new components reference only defined tokens; every colour token has a dark value; theme.css defines no undeclared token. The test environment now processes CSS so raw stylesheet imports can be read.
 - Legacy: about 2,650 literal colours remain in legacy stylesheets. They are removed module by module as each module migrates.
+
+## Personal configuration
+
+Status: store and isolation tests in place. Details and limits: `personal-configuration.md`.
+- Workspace preferences, grid columns and theme are personal (per user; organization where relevant).
+- Not built: saved grid views, dashboard layouts, persisted filters, column widths and pinning, shared organization or team defaults. Each needs a product decision or separate backend approval.
