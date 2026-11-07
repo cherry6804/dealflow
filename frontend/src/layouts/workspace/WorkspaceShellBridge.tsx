@@ -152,30 +152,32 @@ export default function WorkspaceShellBridge() {
         pathname={location.pathname}
         modules={ALL_MODULES}
         renderSidebar={(rail) => (
-          <WorkspaceSidebar
-            spaces={visibleSpaces}
-            pathname={location.pathname}
-            rail={rail}
-            density={layout.density}
-            label="Workspace spaces"
-            heading="Spaces"
-          />
-        )}
-        headerActions={
           <>
-            <Button
-              variant="tertiary"
-              size="sm"
-              iconOnly
-              aria-label="Customize sidebar"
-              icon={<SlidersHorizontal size={18} strokeWidth={1.8} aria-hidden="true" />}
-              onClick={() => setCustomizerOpen(true)}
-            >
-              Customize
-            </Button>
-            <SettingsMenu />
+            <div className="df-ws-sidebar-body">
+              <WorkspaceSidebar
+                spaces={visibleSpaces}
+                pathname={location.pathname}
+                rail={rail}
+                density={layout.density}
+                label="Workspace spaces"
+                heading="Spaces"
+              />
+            </div>
+            <div className="df-ws-sidebar-footer">
+              <Button
+                variant="secondary"
+                size="sm"
+                iconOnly={rail}
+                aria-label="Customize sidebar"
+                icon={<SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />}
+                onClick={() => setCustomizerOpen(true)}
+              >
+                Customize sidebar
+              </Button>
+            </div>
           </>
-        }
+        )}
+        headerActions={<SettingsMenu />}
         breadcrumbOverride={spaceBreadcrumbs(location.pathname, WORKSPACE_SHELL_LABELS.homeBreadcrumb, "/")}
         canAccess={() => true}
         commands={commands}

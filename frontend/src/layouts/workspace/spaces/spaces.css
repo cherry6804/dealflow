@@ -355,3 +355,43 @@
 .df-space-tabbar .df-space-actions {
   padding-bottom: 4px;
 }
+
+/* Sidebar body scrolls; the customize control stays anchored at the bottom. */
+.df-ws-sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.df-ws-sidebar-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--df-border-soft);
+}
+
+.df-ws-sidebar-footer .df-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.df-shell-sidebar {
+  overflow: hidden;
+}
+
+/* Header groups: left (navigation, brand, organization), centre (search), right (actions). */
+.df-shell-header-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+@media (max-width: 1023.98px) {
+  .df-shell-search-text {
+    display: none;
+  }
+}

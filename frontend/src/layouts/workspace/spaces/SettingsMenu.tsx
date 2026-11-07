@@ -48,17 +48,17 @@ export function SettingsMenu() {
         <div id={panelId} role="dialog" aria-label="Settings" className="df-ws-settings-panel">
           <section aria-labelledby={`${panelId}-notifications`}>
             <h2 id={`${panelId}-notifications`} className="df-ws-settings-heading">
-              Notifications
+              Notification settings
             </h2>
             <Link to="/notification-preferences" className="df-ws-settings-link" onClick={() => setOpen(false)}>
-              <span className="df-ws-settings-link-title">Notification settings</span>
-              <span className="df-ws-settings-link-text">Email and in-app notification preferences</span>
+              <span className="df-ws-settings-link-title">Email and in-app preferences</span>
+              <span className="df-ws-settings-link-text">Choose which updates reach your inbox and the notification panel.</span>
             </Link>
           </section>
 
           <section aria-labelledby={`${panelId}-general`}>
             <h2 id={`${panelId}-general`} className="df-ws-settings-heading">
-              General
+              General settings
             </h2>
             <div className="df-ws-settings-row">
               <div>

@@ -276,31 +276,33 @@ export default function ShellPreview() {
       basePath={BASE}
       modules={modules}
       renderSidebar={(rail) => (
-        <WorkspaceSidebar
-          spaces={arrangeSpaces(layout)}
-          pathname={route}
-          rail={rail}
-          density={layout.density}
-          label="Workspace spaces"
-          heading="Spaces"
-          basePath={BASE}
-        />
-      )}
-      headerActions={
         <>
-          <Button
-            variant="tertiary"
-            size="sm"
-            iconOnly
-            aria-label="Customize sidebar"
-            icon={<SlidersHorizontal size={18} strokeWidth={1.8} aria-hidden="true" />}
-            onClick={() => setCustomizerOpen(true)}
-          >
-            Customize
-          </Button>
-          <SettingsMenu />
+          <div className="df-ws-sidebar-body">
+            <WorkspaceSidebar
+              spaces={arrangeSpaces(layout)}
+              pathname={route}
+              rail={rail}
+              density={layout.density}
+              label="Workspace spaces"
+              heading="Spaces"
+              basePath={BASE}
+            />
+          </div>
+          <div className="df-ws-sidebar-footer">
+            <Button
+              variant="secondary"
+              size="sm"
+              iconOnly={rail}
+              aria-label="Customize sidebar"
+              icon={<SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />}
+              onClick={() => setCustomizerOpen(true)}
+            >
+              Customize sidebar
+            </Button>
+          </div>
         </>
-      }
+      )}
+      headerActions={<SettingsMenu />}
       breadcrumbOverride={spaceBreadcrumbs(route, LABELS.homeBreadcrumb, BASE)}
       canAccess={canAccess}
       permissionByModule={PREVIEW_PERMISSION_BY_MODULE}

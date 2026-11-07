@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { SidebarSections } from "../../layouts/workspace/sidebarSections";
 import type { WorkspaceModule } from "../../layouts/workspace/workspaceSpaces";
-import { ThemeToggle } from "../../theme/ThemeToggle";
 import { Dialog } from "../ui";
 import { CommandPalette, type CommandPaletteLabels } from "./CommandPalette";
 import { Breadcrumbs, SidebarNav } from "./Navigation";
@@ -191,32 +190,49 @@ export function AppShell({
       </a>
 
       <header className="df-shell-header">
-        {viewport === "mobile" ? (
-          <button
-            type="button"
-            className="df-shell-icon-button"
-            aria-label={labels.openNavigation}
-            aria-expanded={drawerOpen}
-            aria-controls="df-shell-drawer"
-            onClick={() => setDrawerPath(pathname)}
-          >
-            <MenuIcon size={18} aria-hidden="true" />
-          </button>
-        ) : null}
+        <div className="df-shell-header-start">
+          {viewport === "mobile" ? (
+            <button
+              type="button"
+              className="df-shell-icon-button"
+              aria-label={labels.openNavigation}
+              aria-expanded={drawerOpen}
+              aria-controls="df-shell-drawer"
+              onClick={() => setDrawerPath(pathname)}
+            >
+              <MenuIcon size={18} aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="df-shell-icon-button"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="df-shell-sidebar"
+              aria-label={sidebarCollapsed ? labels.expandSidebar : labels.collapseSidebar}
+              onClick={() => onSidebarCollapsedChange(!sidebarCollapsed)}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen size={18} aria-hidden="true" />
+              ) : (
+                <PanelLeftClose size={18} aria-hidden="true" />
+              )}
+            </button>
+          )}
 
-        <div className="df-shell-brand" aria-hidden="true">
-          <span className="df-shell-brand-mark">D</span>
-          {viewport === "mobile" ? null : <span className="df-shell-brand-name">{labels.productName}</span>}
+          <div className="df-shell-brand">
+            <span className="df-shell-brand-mark" aria-hidden="true">D</span>
+            <span className="df-shell-brand-name">{labels.productName}</span>
+          </div>
+
+          <OrganizationSwitcher
+            labels={labels.organization}
+            organizations={organizations}
+            selectedId={selectedOrganizationId}
+            status={organizationStatus}
+            onSelect={onSelectOrganization}
+            onRetry={onRetryOrganizations}
+          />
         </div>
-
-        <OrganizationSwitcher
-          labels={labels.organization}
-          organizations={organizations}
-          selectedId={selectedOrganizationId}
-          status={organizationStatus}
-          onSelect={onSelectOrganization}
-          onRetry={onRetryOrganizations}
-        />
 
         <button
           type="button"
@@ -226,12 +242,11 @@ export function AppShell({
           onClick={() => setPaletteOpen(true)}
         >
           <Search size={16} aria-hidden="true" />
-          {viewport === "mobile" ? null : <span>{labels.search}</span>}
-          {viewport === "mobile" ? null : <kbd aria-hidden="true">{labels.searchShortcut}</kbd>}
+          <span className="df-shell-search-text">{labels.search}</span>
+          <kbd aria-hidden="true">{labels.searchShortcut}</kbd>
         </button>
 
         <div className="df-shell-header-end">
-          {headerActions}
           <NotificationsMenu
             labels={labels.notifications}
             load={notifications.load}
@@ -240,7 +255,7 @@ export function AppShell({
             markAllRead={notifications.markAllRead}
             onOpenItem={notifications.onOpenItem}
           />
-          <ThemeToggle />
+          {headerActions}
           <ProfileMenu
             labels={labels.profile}
             name={user.name}
@@ -255,24 +270,6 @@ export function AppShell({
 
       {viewport !== "mobile" ? (
         <aside id="df-shell-sidebar" className="df-shell-sidebar" aria-label={labels.navigationTitle}>
-          <div className="df-shell-sidebar-tools">
-            {viewport === "desktop" ? (
-              <button
-                type="button"
-                className="df-shell-icon-button"
-                aria-expanded={!sidebarCollapsed}
-                aria-controls="df-shell-sidebar"
-                aria-label={sidebarCollapsed ? labels.expandSidebar : labels.collapseSidebar}
-                onClick={() => onSidebarCollapsedChange(!sidebarCollapsed)}
-              >
-                {sidebarCollapsed ? (
-                  <PanelLeftOpen size={18} aria-hidden="true" />
-                ) : (
-                  <PanelLeftClose size={18} aria-hidden="true" />
-                )}
-              </button>
-            ) : null}
-          </div>
           {sidebarNav}
         </aside>
       ) : null}

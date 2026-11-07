@@ -233,7 +233,7 @@ describe("settings menu", () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("link", { name: /Notification settings/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Email and in-app preferences/ }));
     expect(screen.getByTestId("path").textContent).toBe("/notification-preferences");
   });
 

@@ -375,11 +375,6 @@
   transition: width var(--df-motion-duration-normal) var(--df-motion-ease-standard);
 }
 
-.df-shell-sidebar-tools {
-  display: flex;
-  justify-content: flex-end;
-}
-
 .df-shell-sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -687,6 +682,10 @@
     width: 36px;
     padding: 0;
     justify-content: center;
+  }
+
+  .df-shell-search-trigger kbd {
+    display: none;
   }
 
   .df-shell-main {
