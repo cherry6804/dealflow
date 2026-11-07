@@ -49,10 +49,10 @@ Counts come from the code: `grid` = EnterpriseDataGrid or DataGrid usages, `conf
 | Route | Implementation | Flag | Grid | Record UI | confirm | portal | Status |
 |---|---|---|---|---|---|---|---|
 | /spaces/operations/activities | `SpacePlaceholderRoute` | none | — | — | — | — | Placeholder (labelled "Not yet available") |
-| /documents | `pages/DocumentsPage.tsx` (1223 lines) | none | 0 (own table/list) | own | 0 | 0 | **Legacy, highest priority**: not on the grid system; no shared empty or loading states confirmed |
-| /automation-rules | `pages/AutomationRulesPage.tsx` (1183 lines) | none | 0 | own | 1 | 2 | Legacy; confirm migrated to ConfirmationDialog; own overlays |
-| /automation-history | `pages/AutomationExecutionHistoryPage.tsx` | none | not counted | — | — | — | Legacy; not audited in depth in this pass |
-| /imports | `pages/ImportsPage.tsx` (957 lines) | none | 0 | own | 1 | 0 | Legacy; confirm migrated to ConfirmationDialog |
+| /documents | `pages/operations/documents/DocumentsWorkspacePage.tsx` | none | EnterpriseDataGrid | Dialog, RecordDialog, ConfirmationDialog | 0 | 0 | **Migrated** (DFR-UI-OPS-001): library grid, upload, detail with preview, record links. Metadata editing and deletion unsupported by the API; live upload blocked by missing malware scanner on dev |
+| /automation-rules | `pages/operations/automation/AutomationRulesWorkspace.tsx` | none | EnterpriseDataGrid | Dialog, RecordDialog, ConfirmationDialog | 0 | 0 | **Migrated** (DFR-UI-OPS-001): overview, supported rule summary, planned capabilities listed as not available, rule detail and editor. Creation blocked on dev by plan entitlement |
+| /automation-history | `pages/operations/automation/AutomationActivityPage.tsx` | none | EnterpriseDataGrid | RecordDialog | 0 | 0 | **Migrated** (DFR-UI-OPS-001): run activity with trigger, record, action outcomes and failure reason; retry stated as unavailable |
+| /imports | `pages/operations/imports/ImportCenterPage.tsx` | none | EnterpriseDataGrid | Dialog (wizard), ConfirmationDialog | 0 | 0 | **Migrated** (DFR-UI-OPS-001): import center with local history and guided wizard for contacts. Live upload blocked by missing import permission on dev |
 | /agents | `pages/AgentsPage.tsx` (673 lines) | none | 0 | own | 0 | 0 | Legacy |
 | /lead-intake | `pages/LeadIntakePage.tsx` (438 lines) | none | 0 | own | 0 | 0 | Legacy |
 | /workflows | `pages/WorkflowsPage.tsx` (860 lines) | none | 0 | own (canvas) | 0 | 0 | Legacy; canvas editor, not audited in depth |
